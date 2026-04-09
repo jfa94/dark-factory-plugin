@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/branch-protection.sh",
+            "timeout": 5,
+            "statusMessage": "Checking branch protection"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/run-tracker.sh",
+            "timeout": 5,
+            "statusMessage": "Logging action"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/stop-gate.sh",
+            "timeout": 10,
+            "statusMessage": "Checking run state"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hooks/subagent-stop-gate.sh",
+            "timeout": 10,
+            "statusMessage": "Validating subagent artifacts"
+          }
+        ]
+      }
+    ]
+  }
+}

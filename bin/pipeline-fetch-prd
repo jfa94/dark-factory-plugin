@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Fetch a PRD from a GitHub issue.
+# Usage: pipeline-fetch-prd <issue-number>
+# Exit: 0=success, 1=not found, 2=gh not authed
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command gh
+require_command jq
+
+issue="${1:?missing issue number}"
+
+# Validate issue is numeric
+if ! [[ "$issue" =~ ^[0-9]+$ ]]; then
+  log_error "invalid issue number: $issue"
+  exit 1
+fi
+
+# Check gh auth
+if ! gh auth status &>/dev/null; then
+  log_error "gh not authenticated — run 'gh auth login'"
+  exit 2
+fi
+
+# Fetch issue
+raw=$(gh issue view "$issue" --json title,body,labels,assignees) || {
+  log_error "issue not found: $issue"
+  exit 1
+}
+
+# Validate JSON
+if ! printf '%s' "$raw" | jq empty 2>/dev/null; then
+  log_error "unexpected response from gh: $raw"
+  exit 1
+fi
+
+title=$(printf '%s' "$raw" | jq -r '.title')
+labels=$(printf '%s' "$raw" | jq '[.labels[].name]')
+
+# Warn if no [PRD] marker
+has_prd=false
+if [[ "$title" == *"[PRD]"* ]]; then
+  has_prd=true
+fi
+if printf '%s' "$labels" | jq -e 'map(ascii_downcase) | index("prd")' &>/dev/null; then
+  has_prd=true
+fi
+
+if [[ "$has_prd" == "false" ]]; then
+  log_warn "issue $issue has no [PRD] marker in title or labels — proceeding anyway"
+fi
+
+# Output structured JSON
+printf '%s' "$raw" | jq \
+  --argjson issue_number "$issue" \
+  --argjson has_prd "$has_prd" \
+  '{
+    issue_number: $issue_number,
+    title: .title,
+    body: .body,
+    labels: [.labels[].name],
+    assignees: [.assignees[].login],
+    has_prd_marker: $has_prd
+  }'

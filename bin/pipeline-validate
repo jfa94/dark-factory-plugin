@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Pre-flight validation: checks git, gh auth, required agents/skills, data dir.
+# Usage: pipeline-validate [--strict] [--no-clean-check]
+# Exit: 0=all pass, 1=failure
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+strict=false
+clean_check=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strict) strict=true; shift ;;
+    --no-clean-check) clean_check=false; shift ;;
+    *) log_error "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+checks=()
+failed=false
+
+_add_check() {
+  local name="$1" status="$2" detail="$3"
+  checks+=("$(jq -n --arg n "$name" --arg s "$status" --arg d "$detail" \
+    '{name: $n, status: $s, detail: $d}')")
+  if [[ "$status" == "fail" ]]; then
+    failed=true
+    log_error "check failed: $name — $detail"
+  fi
+}
+
+# 1. Git remote
+if git remote get-url origin &>/dev/null; then
+  _add_check "git_remote" "pass" "origin configured"
+else
+  _add_check "git_remote" "fail" "no git remote 'origin' configured"
+fi
+
+# 2. Clean working tree
+if [[ "$clean_check" == "true" ]]; then
+  if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
+    _add_check "clean_tree" "pass" "working tree clean"
+  else
+    _add_check "clean_tree" "fail" "uncommitted changes in working tree"
+  fi
+else
+  _add_check "clean_tree" "skip" "skipped via --no-clean-check"
+fi
+
+# 3. gh installed + authenticated
+if ! command -v gh &>/dev/null; then
+  _add_check "gh_cli" "fail" "gh CLI not installed"
+elif ! gh auth status &>/dev/null; then
+  _add_check "gh_cli" "fail" "gh not authenticated — run 'gh auth login'"
+else
+  _add_check "gh_cli" "pass" "gh installed and authenticated"
+fi
+
+# 4. Required agents
+required_agents=("spec-reviewer" "code-reviewer")
+for agent in "${required_agents[@]}"; do
+  if [[ -f ".claude/agents/${agent}.md" ]]; then
+    _add_check "agent_${agent}" "pass" "found .claude/agents/${agent}.md"
+  else
+    _add_check "agent_${agent}" "fail" "missing .claude/agents/${agent}.md"
+  fi
+done
+
+# 5. Required skills
+if [[ -d ".claude/skills/prd-to-spec" ]]; then
+  _add_check "skill_prd_to_spec" "pass" "found .claude/skills/prd-to-spec/"
+else
+  _add_check "skill_prd_to_spec" "fail" "missing .claude/skills/prd-to-spec/"
+fi
+
+# 6. CLAUDE_PLUGIN_DATA writable
+if [[ -z "$CLAUDE_PLUGIN_DATA" ]]; then
+  _add_check "plugin_data" "fail" "CLAUDE_PLUGIN_DATA not set"
+elif [[ -w "$CLAUDE_PLUGIN_DATA" ]] || mkdir -p "$CLAUDE_PLUGIN_DATA" 2>/dev/null; then
+  _add_check "plugin_data" "pass" "CLAUDE_PLUGIN_DATA writable"
+else
+  _add_check "plugin_data" "fail" "CLAUDE_PLUGIN_DATA not writable: $CLAUDE_PLUGIN_DATA"
+fi
+
+# 7. Strict mode: optional agents
+if [[ "$strict" == "true" ]]; then
+  optional_agents=("architecture-reviewer" "security-reviewer" "test-writer" "scout" "scribe")
+  for agent in "${optional_agents[@]}"; do
+    if [[ -f ".claude/agents/${agent}.md" ]]; then
+      _add_check "agent_${agent}" "pass" "found .claude/agents/${agent}.md"
+    else
+      _add_check "agent_${agent}" "warn" "missing optional .claude/agents/${agent}.md"
+    fi
+  done
+fi
+
+# Build output
+checks_json=$(printf '%s\n' "${checks[@]}" | jq -s '.')
+valid=true
+if [[ "$failed" == "true" ]]; then
+  valid=false
+fi
+
+jq -n \
+  --argjson valid "$valid" \
+  --argjson checks "$checks_json" \
+  '{valid: $valid, checks: $checks}'
+
+if [[ "$failed" == "true" ]]; then
+  exit 1
+fi

@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# Post structured comments and labels to GitHub issues.
+# Usage: pipeline-gh-comment <issue-number> <comment-type> [--update] [--data <json>]
+# Comment types: spec-failure, run-summary, ci-escalation, conflict-escalated
+# Exit: 0=success, 1=failure
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command gh
+require_command jq
+
+issue="${1:?missing issue number}"
+comment_type="${2:?missing comment type}"
+shift 2
+
+# Validate issue is numeric
+if ! [[ "$issue" =~ ^[0-9]+$ ]]; then
+  log_error "invalid issue number: $issue"
+  exit 1
+fi
+
+update=false
+data="{}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --update) update=true; shift ;;
+    --data) data="$2"; shift 2 ;;
+    *) log_error "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+# Validate comment type
+case "$comment_type" in
+  spec-failure|run-summary|ci-escalation|conflict-escalated) ;;
+  *) log_error "invalid comment type: $comment_type"; exit 1 ;;
+esac
+
+# Marker for deduplication
+MARKER="<!-- dark-factory:${comment_type} -->"
+
+_build_body() {
+  local body=""
+  case "$comment_type" in
+    spec-failure)
+      local reason
+      reason=$(printf '%s' "$data" | jq -r '.reason // "unknown"')
+      local run_id
+      run_id=$(printf '%s' "$data" | jq -r '.run_id // "unknown"')
+      body="${MARKER}
+## Spec Generation Failed
+
+**Run:** \`${run_id}\`
+**Reason:** ${reason}
+
+The autonomous pipeline was unable to generate a valid spec from this PRD after exhausting all retries.
+
+### Next Steps
+1. Review the PRD for clarity and completeness
+2. Run the pipeline again with \`/dark-factory:run prd --issue ${issue}\`
+3. Or create the spec manually and run \`/dark-factory:run task --spec-dir <path>\`
+
+---
+*Posted by dark-factory pipeline*"
+      ;;
+
+    run-summary)
+      local summary
+      summary=$(printf '%s' "$data" | jq -r '.summary // "no summary available"')
+      local status
+      status=$(printf '%s' "$data" | jq -r '.status // "unknown"')
+      local tasks_done
+      tasks_done=$(printf '%s' "$data" | jq -r '.tasks_done // 0')
+      local tasks_total
+      tasks_total=$(printf '%s' "$data" | jq -r '.tasks_total // 0')
+      body="${MARKER}
+## Pipeline Run Summary
+
+**Status:** ${status}
+**Tasks:** ${tasks_done}/${tasks_total} completed
+
+${summary}
+
+---
+*Posted by dark-factory pipeline*"
+      ;;
+
+    ci-escalation)
+      local log_excerpt
+      log_excerpt=$(printf '%s' "$data" | jq -r '.log_excerpt // "no log available"')
+      local pr_number
+      pr_number=$(printf '%s' "$data" | jq -r '.pr_number // "unknown"')
+      local attempts
+      attempts=$(printf '%s' "$data" | jq -r '.attempts // 0')
+      body="${MARKER}
+## CI Failure — Manual Fix Required
+
+**PR:** #${pr_number}
+**Auto-fix attempts:** ${attempts}
+
+The pipeline attempted to fix CI failures automatically but was unable to resolve them.
+
+<details>
+<summary>CI Log Excerpt</summary>
+
+\`\`\`
+${log_excerpt}
+\`\`\`
+
+</details>
+
+### Next Steps
+1. Check the CI logs for the full error
+2. Fix the issue locally and push
+3. Resume the pipeline with \`/dark-factory:run resume\`
+
+---
+*Posted by dark-factory pipeline*"
+      ;;
+
+    conflict-escalated)
+      local files
+      files=$(printf '%s' "$data" | jq -r '.files // [] | join("\n- ")' 2>/dev/null)
+      local branch
+      branch=$(printf '%s' "$data" | jq -r '.branch // "unknown"')
+      body="${MARKER}
+## Merge Conflict — Manual Resolution Required
+
+**Branch:** \`${branch}\`
+
+The pipeline attempted to rebase but encountered conflicts that could not be auto-resolved.
+
+**Conflicting files:**
+- ${files}
+
+### Next Steps
+1. Check out the branch: \`git checkout ${branch}\`
+2. Rebase onto staging: \`git rebase staging\`
+3. Resolve conflicts and push
+4. Resume the pipeline with \`/dark-factory:run resume\`
+
+---
+*Posted by dark-factory pipeline*"
+      ;;
+  esac
+
+  printf '%s' "$body"
+}
+
+body=$(_build_body)
+
+# Add labels for specific types
+case "$comment_type" in
+  spec-failure)
+    gh issue edit "$issue" --add-label "needs-manual-spec" 2>/dev/null || \
+      log_warn "could not add label 'needs-manual-spec' (may not exist)"
+    ;;
+esac
+
+# Check for existing comment to update
+if [[ "$update" == "true" ]]; then
+  existing_id=$(gh api "repos/{owner}/{repo}/issues/${issue}/comments" \
+    --jq "[.[] | select(.body | contains(\"${MARKER}\")) | .id] | first // empty" 2>/dev/null)
+
+  if [[ -n "$existing_id" ]]; then
+    gh api "repos/{owner}/{repo}/issues/comments/${existing_id}" \
+      -X PATCH \
+      -f body="$body" &>/dev/null
+    log_info "updated existing $comment_type comment on issue $issue"
+    json_output action "updated" issue "$issue" type "$comment_type" comment_id "$existing_id"
+    exit 0
+  fi
+fi
+
+# Post new comment
+gh issue comment "$issue" --body "$body" &>/dev/null || {
+  log_error "failed to post comment on issue $issue"
+  exit 1
+}
+
+log_info "posted $comment_type comment on issue $issue"
+json_output action "created" issue "$issue" type "$comment_type"

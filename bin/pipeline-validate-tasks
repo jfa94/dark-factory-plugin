@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# Validate tasks.json: fields, dependency graph, cycles, topological sort, parallel groups.
+# Usage: pipeline-validate-tasks <tasks-json-path>
+# Exit: 0=valid, 1=invalid
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+tasks_file="${1:?missing tasks.json path}"
+
+errors=()
+
+# --- Basic structure validation ---
+
+if [[ ! -f "$tasks_file" ]]; then
+  errors+=("tasks.json not found: $tasks_file")
+fi
+
+if [[ ${#errors[@]} -gt 0 ]]; then
+  errors_json=$(printf '%s\n' "${errors[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+  jq -n --argjson valid false --argjson errors "$errors_json" --argjson task_count 0 \
+    '{valid: $valid, task_count: $task_count, execution_order: [], errors: $errors}'
+  exit 1
+fi
+
+if ! jq empty "$tasks_file" 2>/dev/null; then
+  errors+=("tasks.json is not valid JSON")
+fi
+
+if [[ ${#errors[@]} -eq 0 ]]; then
+  is_array=$(jq 'type == "array"' "$tasks_file")
+  if [[ "$is_array" != "true" ]]; then
+    errors+=("tasks.json must be a JSON array")
+  fi
+fi
+
+if [[ ${#errors[@]} -eq 0 ]]; then
+  task_count=$(jq 'length' "$tasks_file")
+  if [[ "$task_count" -lt 1 ]]; then
+    errors+=("tasks.json must contain at least 1 task")
+  fi
+fi
+
+if [[ ${#errors[@]} -gt 0 ]]; then
+  errors_json=$(printf '%s\n' "${errors[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+  jq -n --argjson valid false --argjson errors "$errors_json" --argjson task_count 0 \
+    '{valid: $valid, task_count: $task_count, execution_order: [], errors: $errors}'
+  exit 1
+fi
+
+# --- Field validation ---
+
+required_fields=("task_id" "title" "description" "files" "acceptance_criteria" "tests_to_write" "depends_on")
+for field in "${required_fields[@]}"; do
+  missing=$(jq --arg f "$field" '[to_entries[] | select(.value[$f] == null) | .key] | length' "$tasks_file")
+  if [[ "$missing" -gt 0 ]]; then
+    indices=$(jq -r --arg f "$field" '[to_entries[] | select(.value[$f] == null) | .key | tostring] | join(", ")' "$tasks_file")
+    errors+=("missing field '$field' in task(s) at index: $indices")
+  fi
+done
+
+# files array <= 3
+over_limit=$(jq '[to_entries[] | select((.value.files // []) | length > 3) | .key] | length' "$tasks_file")
+if [[ "$over_limit" -gt 0 ]]; then
+  indices=$(jq -r '[to_entries[] | select((.value.files // []) | length > 3) | .key | tostring] | join(", ")' "$tasks_file")
+  errors+=("files array exceeds 3 in task(s) at index: $indices")
+fi
+
+# task_id uniqueness
+unique_ids=$(jq '[.[].task_id] | unique | length' "$tasks_file")
+total_ids=$(jq '[.[].task_id] | length' "$tasks_file")
+if [[ "$unique_ids" != "$total_ids" ]]; then
+  errors+=("duplicate task_id values found")
+fi
+
+# Dangling depends_on
+dangling=$(jq '
+  [.[].task_id] as $all_ids |
+  [.[] | (.depends_on // [])[] | select(. as $d | $all_ids | index($d) | not)] | unique
+' "$tasks_file" 2>/dev/null)
+dangling_count=$(printf '%s' "$dangling" | jq 'length' 2>/dev/null || echo 0)
+if [[ "$dangling_count" -gt 0 ]]; then
+  dangling_list=$(printf '%s' "$dangling" | jq -r 'join(", ")')
+  errors+=("dangling depends_on references: $dangling_list")
+fi
+
+# Bail on field errors before graph algorithms
+if [[ ${#errors[@]} -gt 0 ]]; then
+  errors_json=$(printf '%s\n' "${errors[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+  jq -n --argjson valid false --argjson errors "$errors_json" --argjson task_count "$task_count" \
+    '{valid: $valid, task_count: $task_count, execution_order: [], errors: $errors}'
+  exit 1
+fi
+
+# --- Graph algorithms ---
+
+# Read task IDs
+task_ids=()
+while IFS= read -r tid; do
+  task_ids+=("$tid")
+done < <(jq -r '.[].task_id' "$tasks_file")
+
+# Build adjacency structures
+declare -A in_degree
+declare -A dependents  # task → space-separated list of tasks depending on it
+declare -A deps_map    # task → space-separated list of its dependencies
+
+for tid in "${task_ids[@]}"; do
+  in_degree["$tid"]=0
+  dependents["$tid"]=""
+  deps_map["$tid"]=""
+done
+
+# Read all dependency edges in one jq call
+while IFS=$'\t' read -r tid dep; do
+  [[ -z "$dep" ]] && continue
+  deps_map["$tid"]+="$dep "
+  in_degree["$tid"]=$(( ${in_degree["$tid"]} + 1 ))
+  dependents["$dep"]+="$tid "
+done < <(jq -r '.[] | .task_id as $tid | (.depends_on // [])[] | [$tid, .] | @tsv' "$tasks_file" 2>/dev/null || true)
+
+# --- Cycle detection (DFS) ---
+
+declare -A color  # 0=white, 1=gray, 2=black
+for tid in "${task_ids[@]}"; do
+  color["$tid"]=0
+done
+
+has_cycle=false
+cycle_info=""
+
+_dfs() {
+  local node="$1"
+  color["$node"]=1
+
+  for dep in ${deps_map["$node"]}; do
+    if [[ "${color[$dep]}" -eq 1 ]]; then
+      has_cycle=true
+      cycle_info="$node → $dep"
+      return
+    elif [[ "${color[$dep]}" -eq 0 ]]; then
+      _dfs "$dep" || true
+      [[ "$has_cycle" == "true" ]] && return
+    fi
+  done
+
+  color["$node"]=2
+}
+
+for tid in "${task_ids[@]}"; do
+  if [[ "${color[$tid]}" -eq 0 ]]; then
+    _dfs "$tid"
+    [[ "$has_cycle" == "true" ]] && break
+  fi
+done
+
+if [[ "$has_cycle" == "true" ]]; then
+  errors+=("circular dependency detected: $cycle_info")
+  errors_json=$(printf '%s\n' "${errors[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+  jq -n --argjson valid false --argjson errors "$errors_json" --argjson task_count "$task_count" \
+    '{valid: $valid, task_count: $task_count, execution_order: [], errors: $errors}'
+  exit 1
+fi
+
+# --- Topological sort (Kahn's) with parallel group assignment ---
+
+# Reset in-degrees (reuse from above)
+queue=()
+for tid in "${task_ids[@]}"; do
+  if [[ "${in_degree[$tid]}" -eq 0 ]]; then
+    queue+=("$tid")
+  fi
+done
+
+execution_order=()
+group=0
+processed=0
+
+while [[ ${#queue[@]} -gt 0 ]]; do
+  next_queue=()
+
+  for tid in "${queue[@]}"; do
+    execution_order+=("{\"task_id\":\"$tid\",\"parallel_group\":$group}")
+    processed=$((processed + 1))
+
+    for dependent in ${dependents["$tid"]}; do
+      in_degree["$dependent"]=$(( ${in_degree["$dependent"]} - 1 ))
+      if [[ "${in_degree[$dependent]}" -eq 0 ]]; then
+        next_queue+=("$dependent")
+      fi
+    done
+  done
+
+  queue=("${next_queue[@]}")
+  group=$((group + 1))
+done
+
+if [[ "$processed" -ne "$task_count" ]]; then
+  errors+=("topological sort incomplete: processed $processed of $task_count tasks")
+  errors_json=$(printf '%s\n' "${errors[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+  jq -n --argjson valid false --argjson errors "$errors_json" --argjson task_count "$task_count" \
+    '{valid: $valid, task_count: $task_count, execution_order: [], errors: $errors}'
+  exit 1
+fi
+
+# Build execution order JSON
+order_json=$(printf '%s\n' "${execution_order[@]}" | jq -s '.')
+
+jq -n \
+  --argjson valid true \
+  --argjson task_count "$task_count" \
+  --argjson execution_order "$order_json" \
+  '{valid: $valid, task_count: $task_count, execution_order: $execution_order, errors: []}'

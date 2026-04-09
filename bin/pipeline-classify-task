@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Classify task complexity → model/turns config.
+# Usage: pipeline-classify-task <task-json>
+# Exit: 0=success
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+task_json="${1:?missing task JSON}"
+
+file_count=$(printf '%s' "$task_json" | jq '(.files // []) | length')
+dep_count=$(printf '%s' "$task_json" | jq '(.depends_on // []) | length')
+
+# File tier: 1=simple, 2=medium, 3+=complex
+if [[ "$file_count" -le 1 ]]; then
+  file_rank=0
+elif [[ "$file_count" -le 2 ]]; then
+  file_rank=1
+else
+  file_rank=2
+fi
+
+# Dep tier: 0=simple, 1-2=medium, 3+=complex
+if [[ "$dep_count" -eq 0 ]]; then
+  dep_rank=0
+elif [[ "$dep_count" -le 2 ]]; then
+  dep_rank=1
+else
+  dep_rank=2
+fi
+
+# Tier = max(file_rank, dep_rank)
+if [[ "$file_rank" -ge "$dep_rank" ]]; then
+  rank="$file_rank"
+else
+  rank="$dep_rank"
+fi
+
+case "$rank" in
+  0) tier="simple";  model="haiku";  max_turns=40 ;;
+  1) tier="medium";  model="sonnet"; max_turns=60 ;;
+  *) tier="complex"; model="opus";   max_turns=80 ;;
+esac
+
+jq -n \
+  --arg tier "$tier" \
+  --arg model "$model" \
+  --argjson maxTurns "$max_turns" \
+  --arg reasoning "${file_count} file(s), ${dep_count} dep(s) → ${tier}" \
+  '{tier: $tier, model: $model, maxTurns: $maxTurns, reasoning: $reasoning}'

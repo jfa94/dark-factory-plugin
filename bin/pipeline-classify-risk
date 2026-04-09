@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Classify task risk from file paths → review rounds + extra reviewers.
+# Usage: pipeline-classify-risk <task-json>
+# Exit: 0=success
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+task_json="${1:?missing task JSON}"
+
+files=$(printf '%s' "$task_json" | jq -r '(.files // [])[]')
+
+tier="routine"
+matched=()
+
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+
+  pattern=""
+  case "$file" in
+    */auth/*)           pattern="*/auth/*";           tier="security" ;;
+    */security/*)       pattern="*/security/*";       tier="security" ;;
+    */migration/*)      pattern="*/migration/*";      tier="security" ;;
+    */payment/*)        pattern="*/payment/*";        tier="security" ;;
+    */crypto/*)         pattern="*/crypto/*";         tier="security" ;;
+    .env|.env.*|*/.env|*/.env.*) pattern="*/.env*"; tier="security" ;;
+    */middleware/auth*)  pattern="*/middleware/auth*"; tier="security" ;;
+    */api/*)            pattern="*/api/*";            [[ "$tier" != "security" ]] && tier="feature" ;;
+    */routes/*)         pattern="*/routes/*";         [[ "$tier" != "security" ]] && tier="feature" ;;
+    */models/*)         pattern="*/models/*";         [[ "$tier" != "security" ]] && tier="feature" ;;
+    */services/*)       pattern="*/services/*";       [[ "$tier" != "security" ]] && tier="feature" ;;
+    */hooks/*)          pattern="*/hooks/*";          [[ "$tier" != "security" ]] && tier="feature" ;;
+  esac
+
+  [[ -n "$pattern" ]] && matched+=("$pattern")
+done <<< "$files"
+
+case "$tier" in
+  security) review_rounds=6; extra_reviewers='["security-reviewer","architecture-reviewer"]' ;;
+  feature)  review_rounds=4; extra_reviewers='["architecture-reviewer"]' ;;
+  routine)  review_rounds=2; extra_reviewers='[]' ;;
+esac
+
+if [[ ${#matched[@]} -gt 0 ]]; then
+  matched_json=$(printf '%s\n' "${matched[@]}" | jq -R -s 'split("\n") | map(select(length > 0)) | unique')
+else
+  matched_json='[]'
+fi
+
+first_file=$(printf '%s' "$task_json" | jq -r '(.files // [])[0] // "no files"')
+
+jq -n \
+  --arg tier "$tier" \
+  --argjson review_rounds "$review_rounds" \
+  --argjson extra_reviewers "$extra_reviewers" \
+  --argjson matched_patterns "$matched_json" \
+  --arg reasoning "files include ${first_file} → ${tier} tier" \
+  '{tier: $tier, review_rounds: $review_rounds, extra_reviewers: $extra_reviewers, matched_patterns: $matched_patterns, reasoning: $reasoning}'

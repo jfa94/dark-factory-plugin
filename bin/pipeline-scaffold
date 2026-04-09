@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Create project scaffolding files if absent (idempotent).
+# Usage: pipeline-scaffold <project-root> [--force]
+# Exit: 0=success
+
+source "$(dirname "$0")/pipeline-lib.sh"
+
+root="${1:?missing project root}"
+shift
+
+force=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force) force=true; shift ;;
+    *) log_error "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+created=()
+
+_create_if_absent() {
+  local path="$1" content="$2"
+  if [[ "$force" == "true" ]] || [[ ! -f "$path" ]]; then
+    mkdir -p "$(dirname "$path")"
+    printf '%s\n' "$content" > "$path"
+    created+=("$path")
+    log_info "created $path"
+  fi
+}
+
+_create_if_absent "$root/claude-progress.json" '{
+  "issues": {},
+  "last_updated": null
+}'
+
+_create_if_absent "$root/feature-status.json" '{
+  "features": {},
+  "last_updated": null
+}'
+
+_create_if_absent "$root/init.sh" '#!/usr/bin/env bash
+# Project bootstrap — install deps and set env vars
+set -euo pipefail
+
+if [[ -f "pnpm-lock.yaml" ]]; then
+  pnpm install
+elif [[ -f "bun.lockb" ]] || [[ -f "bun.lock" ]]; then
+  bun install
+elif [[ -f "yarn.lock" ]]; then
+  yarn install
+elif [[ -f "package-lock.json" ]]; then
+  npm install
+fi
+
+echo "Project initialized."'
+chmod +x "$root/init.sh" 2>/dev/null || true
+
+_create_if_absent "$root/.github/workflows/quality-gate.yml" 'name: Quality Gate
+on:
+  pull_request:
+    branches: [staging, main, develop]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test -- --coverage'
+
+# .gitignore management
+gitignore="$root/.gitignore"
+entries=(
+  "# dark-factory plugin state"
+  ".claude-plugin-data/"
+  "*.worktree"
+)
+if [[ -f "$gitignore" ]]; then
+  for entry in "${entries[@]}"; do
+    if ! grep -qF "$entry" "$gitignore" 2>/dev/null; then
+      printf '\n%s' "$entry" >> "$gitignore"
+      log_info "appended to .gitignore: $entry"
+    fi
+  done
+else
+  printf '%s\n' "${entries[@]}" > "$gitignore"
+  created+=("$gitignore")
+fi
+
+if [[ ${#created[@]} -gt 0 ]]; then
+  created_json=$(printf '%s\n' "${created[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
+else
+  created_json='[]'
+fi
+
+jq -n \
+  --argjson files_created "$created_json" \
+  --argjson count "${#created[@]}" \
+  '{files_created: $files_created, count: $count}'

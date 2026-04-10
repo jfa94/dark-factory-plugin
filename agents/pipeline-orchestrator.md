@@ -35,53 +35,103 @@ This phase runs once at the beginning of a `prd` or `discover` mode run:
 S1. pipeline-fetch-prd <issue-number>             → PRD body + metadata
 S2. Spawn spec-generator agent with PRD body
     → spec-generator calls pipeline-validate-spec internally
-    → Retries up to 5x on validation failure
-S3. pipeline-validate-tasks <spec-dir/tasks.json> → {execution_order, parallel_groups}
-    → Store execution_order in run state for task scheduling
-S4. If humanReviewLevel >= 3: pause for human spec approval
+    → spec-generator calls spec-reviewer (bundled) and retries up to 5x on validation failure
+S3. pipeline-validate-tasks <spec-dir/tasks.json>
+    → Output: {valid, task_count, execution_order: [{task_id, parallel_group}, ...], errors}
+    → Note: parallel_group is an integer field on each execution_order entry, not a
+      separate top-level array.
+S4. Seed task state from tasks.json:
+    For each task in tasks.json:
+      pipeline-state write <run-id> '.tasks.<task_id>' '{"status":"pending","depends_on":[...],"files":[...],...}'
+    pipeline-state write <run-id> .execution_order '<execution_order JSON>'
+    → This makes pipeline-state deps-satisfied work (it reads .tasks[tid].depends_on)
+S5. If humanReviewLevel >= 3: pause for human spec approval
 ```
 
-For `task` mode: skip S1-S2, read spec from `--spec-dir` argument, run S3.
+For `task` mode: skip S1-S2, read spec from `--spec-dir` argument, run S3-S4.
 
-## Execution Sequence (Per Task)
+## Execution Sequence
 
-Iterate tasks in topological order from `pipeline-validate-tasks` output, grouped by `parallel_group`.
+The pipeline runs tasks in two nested loops:
+- **Outer loop**: iterate `parallel_group` integers in ascending order (groups are sequential)
+- **Inner loop**: batch tasks within a group, spawn task-executors in parallel per batch
+
+### Group iteration (outer loop)
+
+```
+Load execution_order from state: pipeline-state read <run-id> .execution_order
+Determine distinct parallel_group values, sorted ascending: [0, 1, 2, ...]
+maxConcurrent = read_config '.parallel.maxConcurrent' (default 3)
+
+For each group G (in ascending order):
+  tasks_in_group = [entry.task_id for entry in execution_order if entry.parallel_group == G]
+  Chunk tasks_in_group into batches of size maxConcurrent
+  For each batch:
+    Run the "Per-batch preparation" steps below for each task (sequential)
+    Spawn executors in parallel (see "Concurrent spawning" below)
+    Wait for all executors in the batch to finish
+    Run "Post-executor quality + review" steps for each task (sequential per task)
+  All tasks in group must be done or needs_human_review before moving to next group
+```
+
+### Per-batch preparation (sequential for each task before spawning)
 
 ```
  1. pipeline-circuit-breaker <run-id>              → exit if tripped
- 2. pipeline-state deps-satisfied <run-id> <T>     → poll until deps met
+ 2. pipeline-state deps-satisfied <run-id> <T>     → skip if not; poll at group boundary
  3. pipeline-quota-check                           → usage data
- 4. pipeline-classify-task <task-json>              → {tier, model, maxTurns}
- 5. pipeline-classify-risk <task-json>              → {risk_tier, review_rounds}
- 6. pipeline-model-router --quota <Q> --tier <risk_tier>
+ 4. pipeline-classify-task '<task-json>'            → {tier, model, maxTurns}
+ 5. pipeline-classify-risk '<task-json>'            → {risk_tier, review_rounds}
+ 6. pipeline-model-router --quota '<Q>' --tier <risk_tier>
     → {provider, model, action}
     → If action=wait: sleep wait_minutes, retry from step 3
     → If action=end_gracefully: drain in-flight, mark partial, go to cleanup
- 7. pipeline-build-prompt <task> <spec> --holdout 20%
+ 7. pipeline-build-prompt <task-file> <spec> --holdout 20%
  8. pipeline-state task-status <run-id> <T> executing
- 9. Spawn task-executor agent (worktree isolation, model/turns from step 4)
-10. [wait for executor completion]
-11. Run format + lint: <pkg-manager> format; <pkg-manager> lint:fix (non-fatal)
-12. If changes: git add -u; git commit "auto: format + lint fixes"
+```
+
+### Concurrent spawning
+
+**Spawn concurrent task-executor agents by emitting multiple Agent tool calls in a single assistant message.** Claude Code invokes them in parallel natively — no background-job mechanism is needed.
+
+```
+Emit one assistant message with N Agent() tool calls:
+  Agent({subagent_type: "task-executor", isolation: "worktree", description: "Execute T1", prompt: "..."})
+  Agent({subagent_type: "task-executor", isolation: "worktree", description: "Execute T2", prompt: "..."})
+  ... up to maxConcurrent calls in the same message
+Wait for all N calls to return.
+```
+
+Each task-executor runs in its own worktree; model/maxTurns come from step 4 of its preparation block; env var overrides (ANTHROPIC_BASE_URL for Ollama) come from step 6.
+
+### Post-executor quality + review (sequential per task after batch completes)
+
+```
+ 9. Run format + lint in task worktree:
+    <pkg-manager> format; <pkg-manager> lint:fix (non-fatal)
+10. If changes: git add -u; git commit "auto: format + lint fixes"
 --- Quality Gates ---
-13. pipeline-coverage-gate <before> <after>         → block if decreased
-14. Pass holdout criteria to task-reviewer for verification
-15. Mutation testing (feature/security only):
+11. pipeline-coverage-gate <before> <after>         → block if decreased
+12. Pass holdout criteria to task-reviewer for verification
+13. Mutation testing (feature/security only):
     <pkg-manager> test:mutation → if <80%, spawn test-writer agent
 --- Adversarial Review ---
-16. pipeline-detect-reviewer                        → {reviewer, command}
-17. Spawn task-reviewer agent (or invoke Codex)
+14. pipeline-detect-reviewer                        → {reviewer, command}
+15. Spawn task-reviewer agent (or invoke Codex)
+16. If risk_tier == "security": also spawn code-reviewer (bundled plugin agent)
+17. (Optional) If security-reviewer / architecture-reviewer exist in user's .claude/agents/,
+    also spawn them for the security tier
 18. pipeline-parse-review                           → {verdict, findings}
 19. If REQUEST_CHANGES + rounds remaining:
     pipeline-build-prompt --fix-instructions <findings>
-    → go to step 9 (re-spawn executor)
+    → re-spawn task-executor for this task only (sequential, not batched)
 20. If APPROVE: pipeline-state task-status <run-id> <T> done
 21. If max rounds exhausted:
     pipeline-state task-status <run-id> <T> needs_human_review
-    Continue with other tasks
+    Continue with next task in batch
 --- PR ---
 22. pr_number=$(gh pr create --base staging)
-    Store pr_number in task state
+    pipeline-state write <run-id> '.tasks.<T>.pr_number' <pr_number>
 23. pipeline-wait-pr <pr_number> (if humanReviewLevel <= 1)
     → Exit 3 (CI fail):
       pipeline-state task-status <run-id> <T> ci_fixing
@@ -91,7 +141,11 @@ Iterate tasks in topological order from `pipeline-validate-tasks` output, groupe
     → Exit 4 (conflict):
       pipeline-gh-comment <issue> conflict-escalated
       Mark needs_human_review
---- After All Tasks ---
+```
+
+### After all groups complete
+
+```
 24. pipeline-summary <run-id> --post-to-issue
 25. pipeline-cleanup <run-id> --close-issues --delete-branches
     --remove-worktrees --clean-spec --spec-dir <path>
@@ -113,13 +167,13 @@ Adjust behavior based on `humanReviewLevel` from plugin config:
 
 ## Parallel Execution
 
-Tasks in the same parallel group (from `pipeline-validate-tasks` output) can run concurrently:
+See "Execution Sequence" above — the group-iteration and concurrent-spawning logic are fully described there. Key points:
 
-1. Read `execution_order` from task validation output
-2. Group tasks by `parallel_group`
-3. For each group: spawn task-executor agents as background agents with worktree isolation
-4. Max concurrent = `parallel.maxConcurrent` from config (default 3)
-5. Wait for all tasks in group to complete before moving to next group
+- `execution_order` is loaded from state after the spec phase.
+- Tasks with the same `parallel_group` integer run concurrently as a batch of size `maxConcurrent`.
+- Concurrent spawning is done by emitting N `Agent()` tool calls in a single assistant message — Claude Code handles the parallelism natively.
+- Groups are strictly sequential: no task from group N+1 starts until every task in group N is `done` or `needs_human_review`.
+- Quality gates and adversarial review run sequentially per task AFTER the batch's parallel execution phase completes.
 
 ## Resume
 
@@ -176,14 +230,13 @@ When `action: end_gracefully`:
 
 For tasks classified as `security` risk tier:
 
-1. Run standard task-reviewer
-2. Check if `security-reviewer` agent exists in user's `.claude/agents/`
-   - If present: spawn it for a parallel security-focused review
-   - If absent: log warning, continue with standard review only
-3. Check if `architecture-reviewer` agent exists in user's `.claude/agents/`
-   - If present: spawn it for architectural validation
-   - If absent: log warning, continue without
-4. All spawned reviewers must approve before proceeding
+1. Spawn `task-reviewer` (always — bundled in plugin)
+2. Spawn `code-reviewer` (always for security tier — bundled in plugin). The code-reviewer is specialized for injection vectors, auth/authz, secrets, crypto, and input validation at trust boundaries.
+3. (Optional) Check if `security-reviewer` exists in user's `.claude/agents/`; if present, spawn it for additional user-defined security checks.
+4. (Optional) Check if `architecture-reviewer` exists in user's `.claude/agents/`; if present, spawn it for architectural validation.
+5. **All spawned reviewers must approve** before proceeding. If any returns REQUEST_CHANGES, the task re-enters the fix loop.
+
+The plugin ships `task-reviewer` and `code-reviewer`, so the first two are always available. The user-provided agents (3, 4) are additive and optional.
 
 ## State Management
 

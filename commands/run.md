@@ -31,13 +31,32 @@ Check if this session has the required safety settings:
 echo "${DARK_FACTORY_AUTONOMOUS_MODE:-}"
 ```
 
-If `DARK_FACTORY_AUTONOMOUS_MODE` is not `1`, stop and tell the user:
+If `DARK_FACTORY_AUTONOMOUS_MODE` is not `1`, materialize a relaunchable settings file and tell the user how to relaunch:
+
+```bash
+# Resolve plugin root from the installed pipeline-state binary
+plugin_root=$(dirname "$(dirname "$(which pipeline-state)")")
+mkdir -p "$CLAUDE_PLUGIN_DATA"
+
+# Substitute absolute paths into the autonomous settings template.
+# The template ships with a relative hook path — we rewrite it to an absolute path
+# so that `claude --settings <file>` works regardless of the user's cwd.
+merged_settings="$CLAUDE_PLUGIN_DATA/merged-settings.json"
+jq --arg root "$plugin_root" \
+  '.hooks.PreToolUse[0].hooks[0].command = ($root + "/hooks/branch-protection.sh")' \
+  "$plugin_root/templates/settings.autonomous.json" \
+  > "$merged_settings"
+
+echo "Generated: $merged_settings"
+```
+
+Then stop and show the user:
 
 > This pipeline requires autonomous mode settings for safe operation.
 >
-> Relaunch Claude Code with the bundled settings:
+> Relaunch Claude Code with the generated settings file:
 > ```
-> claude --settings <plugin-data>/merged-settings.json
+> claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json
 > ```
 >
 > Or set `DARK_FACTORY_AUTONOMOUS_MODE=1` in your environment to acknowledge autonomous operation.

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "hooks/branch-protection.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/branch-protection.sh",
             "timeout": 5,
             "statusMessage": "Checking branch protection"
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "hooks/run-tracker.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/run-tracker.sh",
             "timeout": 5,
             "statusMessage": "Logging action"
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "hooks/stop-gate.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.sh",
             "timeout": 10,
             "statusMessage": "Checking run state"
           }
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "hooks/subagent-stop-gate.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-gate.sh",
             "timeout": 10,
             "statusMessage": "Validating subagent artifacts"
           }

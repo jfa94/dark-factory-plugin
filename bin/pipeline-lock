@@ -67,7 +67,10 @@ case "$action" in
     done
 
     info=$(_lock_info) || true
-    holder_pid=$(printf '%s' "${info:-{}}" | jq -r '.pid // "unknown"')
+    if [[ -z "$info" ]]; then
+      info='{}'
+    fi
+    holder_pid=$(printf '%s' "$info" | jq -r '.pid // "unknown"')
     log_error "lock acquisition timed out after ${TIMEOUT}s (held by PID $holder_pid)"
     json_output locked "false" holder_pid "$holder_pid" action "timeout"
     exit 1

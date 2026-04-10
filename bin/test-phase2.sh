@@ -59,6 +59,24 @@ EOF
   "issue edit"*)
     exit 0
     ;;
+  "api "*"/comments "*"--jq "*)
+    # Stateful mock: return an existing comment with the marker if the fixture file exists
+    if [[ -f "${MOCK_GH_FIXTURE:-/dev/null}" ]]; then
+      cat "$MOCK_GH_FIXTURE"
+    else
+      echo ""
+    fi
+    ;;
+  "api "*"/comments "*)
+    if [[ -f "${MOCK_GH_FIXTURE:-/dev/null}" ]]; then
+      cat "$MOCK_GH_FIXTURE"
+    else
+      echo "[]"
+    fi
+    ;;
+  "api "*"-X PATCH"*|"api "*"PATCH"*)
+    exit 0
+    ;;
   api*)
     echo "[]"
     ;;
@@ -229,9 +247,7 @@ test_project=$(mktemp -d)
 cd "$test_project"
 git init -q
 git remote add origin "https://github.com/test/test.git"
-mkdir -p .claude/agents .claude/skills/prd-to-spec
-echo "# spec-reviewer" > .claude/agents/spec-reviewer.md
-echo "# code-reviewer" > .claude/agents/code-reviewer.md
+mkdir -p .claude/skills/prd-to-spec
 echo "# prd-to-spec" > .claude/skills/prd-to-spec/SKILL.md
 git add -A && git commit -q -m "init"
 
@@ -239,23 +255,25 @@ output=$(pipeline-validate 2>/dev/null)
 valid=$(echo "$output" | jq -r '.valid')
 assert_eq "valid project passes" "true" "$valid"
 
-# Check individual checks present
+# Check count: git_remote, clean_tree, gh_cli, skill_prd_to_spec, plugin_data = 5
 check_count=$(echo "$output" | jq '.checks | length')
-assert_eq "has expected check count" "7" "$check_count"
+assert_eq "has expected check count" "5" "$check_count"
 
-# Missing agent
-rm .claude/agents/spec-reviewer.md
+# Missing skill
+rm -rf .claude/skills/prd-to-spec
 output=$(pipeline-validate 2>/dev/null) || true
 valid=$(echo "$output" | jq -r '.valid')
-assert_eq "fails on missing agent" "false" "$valid"
+assert_eq "fails on missing skill" "false" "$valid"
 
 # Restore and test strict mode
-echo "# spec-reviewer" > .claude/agents/spec-reviewer.md
-git add -A && git diff --cached --quiet || git commit -q -m "restore"
+mkdir -p .claude/skills/prd-to-spec
+echo "# prd-to-spec" > .claude/skills/prd-to-spec/SKILL.md
+git add -A
+git diff --cached --quiet || git commit -q -m "restore"
 output=$(pipeline-validate --strict --no-clean-check 2>/dev/null)
 check_count=$(echo "$output" | jq '.checks | length')
-# 7 base + 5 optional agents = 12
-assert_eq "strict mode adds optional checks" "12" "$check_count"
+# 5 base + 5 optional agents = 10
+assert_eq "strict mode adds optional checks" "10" "$check_count"
 
 echo ""
 echo "=== pipeline-gh-comment ==="
@@ -274,6 +292,33 @@ assert_eq "run-summary comment posted" "created" "$action"
 
 # Test invalid comment type
 assert_exit "rejects invalid comment type" 1 pipeline-gh-comment 42 "invalid-type"
+
+# --- --update path ---
+
+# Case 1: existing comment found → action == "updated"
+export MOCK_GH_FIXTURE=$(mktemp)
+cat > "$MOCK_GH_FIXTURE" <<'FIXTURE'
+12345
+FIXTURE
+output=$(pipeline-gh-comment 42 spec-failure --update --data '{"reason":"retry","run_id":"run-002"}' 2>/dev/null)
+action=$(echo "$output" | jq -r '.action')
+assert_eq "update path finds existing comment" "updated" "$action"
+comment_id=$(echo "$output" | jq -r '.comment_id')
+assert_eq "update returns comment_id" "12345" "$comment_id"
+
+# Case 2: --update with no existing comment → falls through to create
+rm -f "$MOCK_GH_FIXTURE"
+unset MOCK_GH_FIXTURE
+output=$(pipeline-gh-comment 42 spec-failure --update --data '{"reason":"first time","run_id":"run-003"}' 2>/dev/null)
+action=$(echo "$output" | jq -r '.action')
+assert_eq "update falls through to create" "created" "$action"
+
+# Case 3: ci-escalation comment type
+output=$(pipeline-gh-comment 42 ci-escalation --data '{"log_excerpt":"build failed","pr_number":123,"attempts":2}' 2>/dev/null)
+action=$(echo "$output" | jq -r '.action')
+assert_eq "ci-escalation comment posted" "created" "$action"
+type=$(echo "$output" | jq -r '.type')
+assert_eq "ci-escalation type correct" "ci-escalation" "$type"
 
 echo ""
 echo "================================"

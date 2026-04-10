@@ -57,15 +57,8 @@ else
   _add_check "gh_cli" "pass" "gh installed and authenticated"
 fi
 
-# 4. Required agents
-required_agents=("spec-reviewer" "code-reviewer")
-for agent in "${required_agents[@]}"; do
-  if [[ -f ".claude/agents/${agent}.md" ]]; then
-    _add_check "agent_${agent}" "pass" "found .claude/agents/${agent}.md"
-  else
-    _add_check "agent_${agent}" "fail" "missing .claude/agents/${agent}.md"
-  fi
-done
+# 4. Required agents — bundled by plugin (spec-reviewer, code-reviewer, task-reviewer, etc.)
+# No user-side check needed: plugin install guarantees presence.
 
 # 5. Required skills
 if [[ -d ".claude/skills/prd-to-spec" ]]; then

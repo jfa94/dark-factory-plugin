@@ -5,6 +5,29 @@ set -euo pipefail
 export CLAUDE_PLUGIN_DATA=$(mktemp -d)
 export PATH="$(cd "$(dirname "$0")" && pwd):$PATH"
 
+# Mock gh for --close-issues tests
+MOCK_DIR=$(mktemp -d)
+cat > "$MOCK_DIR/gh" << 'MOCK_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "issue close 404")
+    echo "Could not resolve issue" >&2
+    exit 1
+    ;;
+  "issue close "*)
+    exit 0
+    ;;
+  "auth status")
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+MOCK_GH
+chmod +x "$MOCK_DIR/gh"
+export PATH="$MOCK_DIR:$PATH"
+
 pass=0
 fail=0
 
@@ -326,6 +349,106 @@ assert_eq "no spec-dir graceful" "false" "$(printf '%s' "$output" | jq -r '.spec
 
 # ============================================================
 echo ""
+echo "=== pipeline-cleanup (--remove-worktrees) ==="
+
+_create_test_run "test-worktrees-1" '{
+  "run_id": "test-worktrees-1",
+  "status": "partial",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done", "worktree": "/nonexistent/path/t1"},
+    "T2": {"status": "failed", "worktree": "/nonexistent/path/t2"}
+  },
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 1},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+
+# Worktree dir does not exist → graceful skip (existing code: if [[ -d "$worktree" ]])
+output=$(pipeline-cleanup "test-worktrees-1" --remove-worktrees 2>/dev/null)
+assert_eq "nonexistent worktree skipped" "0" "$(printf '%s' "$output" | jq -r '.worktrees_removed')"
+
+# Failed task worktree must be skipped regardless of existence
+_create_test_run "test-worktrees-2" '{
+  "run_id": "test-worktrees-2",
+  "status": "partial",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "failed", "worktree": "/tmp/some-worktree"}
+  },
+  "circuit_breaker": {"tasks_completed": 0, "consecutive_failures": 1},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-worktrees-2" --remove-worktrees 2>/dev/null)
+assert_eq "failed task worktree skipped" "0" "$(printf '%s' "$output" | jq -r '.worktrees_removed')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-cleanup (--close-issues) ==="
+
+# Case 1: all tasks done + issue_numbers populated → issues_closed == 1
+_create_test_run "test-close-1" '{
+  "run_id": "test-close-1",
+  "status": "completed",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [42], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done"},
+    "T2": {"status": "done"}
+  },
+  "circuit_breaker": {"tasks_completed": 2, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-close-1" --close-issues 2>/dev/null)
+assert_eq "all done → issue closed" "1" "$(printf '%s' "$output" | jq -r '.issues_closed')"
+
+# Case 2: partial tasks → no close
+_create_test_run "test-close-2" '{
+  "run_id": "test-close-2",
+  "status": "partial",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [42], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done"},
+    "T2": {"status": "failed"}
+  },
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 1},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-close-2" --close-issues 2>/dev/null)
+assert_eq "partial → no close" "0" "$(printf '%s' "$output" | jq -r '.issues_closed')"
+
+# Case 3: gh fails on a specific issue → issues_closed == 0
+_create_test_run "test-close-3" '{
+  "run_id": "test-close-3",
+  "status": "completed",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [404], "resumed_from": null},
+  "tasks": {"T1": {"status": "done"}},
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-close-3" --close-issues 2>/dev/null)
+assert_eq "gh fail → no close" "0" "$(printf '%s' "$output" | jq -r '.issues_closed')"
+
+# ============================================================
+echo ""
 echo "=== pipeline-wait-pr (help/flags) ==="
 
 # Test unknown flag
@@ -338,6 +461,6 @@ echo "  Passed: $pass"
 echo "  Failed: $fail"
 echo "  Total:  $((pass + fail))"
 
-rm -rf "$CLAUDE_PLUGIN_DATA"
+rm -rf "$CLAUDE_PLUGIN_DATA" "$MOCK_DIR"
 
 [[ $fail -eq 0 ]] && exit 0 || exit 1

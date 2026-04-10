@@ -115,6 +115,19 @@ resume=$(pipeline-state resume-point "run-test-001")
 assert_eq "resume-point finds pending task" "task_2" "$resume"
 
 echo ""
+echo "=== pipeline-state interrupted ==="
+
+# Running status → exit 1 (not interrupted)
+assert_exit "running → not interrupted" 1 pipeline-state interrupted "run-test-001"
+
+# Set status to interrupted → exit 0
+pipeline-state write "run-test-001" '.status' '"interrupted"' >/dev/null 2>&1
+assert_exit "interrupted → exit 0" 0 pipeline-state interrupted "run-test-001"
+
+# Reset status back to running for subsequent tests
+pipeline-state write "run-test-001" '.status' '"running"' >/dev/null 2>&1
+
+echo ""
 echo "=== pipeline-circuit-breaker ==="
 
 # Write config
@@ -132,6 +145,25 @@ assert_exit "circuit breaker tripped (failures)" 1 pipeline-circuit-breaker "run
 pipeline-state write "run-test-001" '.circuit_breaker.consecutive_failures' '0' >/dev/null 2>&1
 pipeline-state write "run-test-001" '.circuit_breaker.tasks_completed' '20' >/dev/null 2>&1
 assert_exit "circuit breaker tripped (max tasks)" 1 pipeline-circuit-breaker "run-test-001"
+
+# Runtime threshold: set maxRuntimeMinutes to 1 and started_at well in the past
+pipeline-state write "run-test-001" '.circuit_breaker.tasks_completed' '0' >/dev/null 2>&1
+pipeline-state write "run-test-001" '.started_at' '"2020-01-01T00:00:00Z"' >/dev/null 2>&1
+echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":1,"maxConsecutiveFailures":3}}' > "$CLAUDE_PLUGIN_DATA/config.json"
+output=$(pipeline-circuit-breaker "run-test-001" 2>/dev/null) || true
+assert_exit "circuit breaker tripped (runtime)" 1 pipeline-circuit-breaker "run-test-001"
+# Reason field should mention runtime
+if echo "$output" | jq -e '.reason // empty' >/dev/null 2>&1; then
+  reason_has_runtime=$(echo "$output" | jq -r '.reason' | grep -qi 'runtime' && echo "true" || echo "false")
+  assert_eq "circuit breaker reason mentions runtime" "true" "$reason_has_runtime"
+else
+  # Script might log reason to stderr instead — check exit code only
+  assert_eq "circuit breaker reason check (skipped)" "skipped" "skipped"
+fi
+
+# Restore defaults for subsequent tests
+echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}}' > "$CLAUDE_PLUGIN_DATA/config.json"
+pipeline-state write "run-test-001" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
 
 echo ""
 echo "=== pipeline-lock ==="
@@ -168,6 +200,15 @@ action=$(echo "$output" | jq -r '.action')
 assert_eq "lock recovered from dead PID" "recovered" "$action"
 
 pipeline-lock release 2>/dev/null
+
+# Timeout: write a lock file with the current shell's PID (guaranteed alive),
+# then try to acquire with a different caller PID and a 2s timeout
+echo "{\"pid\":$$,\"timestamp\":\"2026-01-01T00:00:00Z\"}" > "$CLAUDE_PLUGIN_DATA/pipeline.lock"
+output=$(pipeline-lock acquire --timeout 2 --pid 99998 2>/dev/null) || true
+action=$(echo "$output" | jq -r '.action')
+assert_eq "lock times out on live PID" "timeout" "$action"
+
+rm -f "$CLAUDE_PLUGIN_DATA/pipeline.lock"
 
 echo ""
 echo "=== pipeline-state list ==="

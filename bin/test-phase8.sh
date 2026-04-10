@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Phase 8 verification tests — pipeline-orchestrator agent structural validation
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ORCH="$PLUGIN_ROOT/agents/pipeline-orchestrator.md"
+
+pass=0
+fail=0
+
+assert_eq() {
+  local label="$1" expected="$2" actual="$3"
+  if [[ "$expected" == "$actual" ]]; then
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $label (expected '$expected', got '$actual')"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_contains() {
+  local label="$1" needle="$2" file="$3"
+  if grep -qF "$needle" "$file"; then
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $label (file does not contain '$needle')"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_file_exists() {
+  local label="$1" file="$2"
+  if [[ -f "$file" ]]; then
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $label ('$file' does not exist)"
+    fail=$((fail + 1))
+  fi
+}
+
+# ============================================================
+echo "=== pipeline-orchestrator.md — file exists ==="
+
+assert_file_exists "orchestrator file exists" "$ORCH"
+
+# ============================================================
+echo ""
+echo "=== frontmatter validation ==="
+
+# Extract frontmatter (between first two --- lines)
+frontmatter=$(awk '/^---$/{c++; next} c==1{print}' "$ORCH")
+
+assert_contains "model: opus" "model: opus" "$ORCH"
+assert_contains "maxTurns: 9999" "maxTurns: 9999" "$ORCH"
+
+desc=$(printf '%s' "$frontmatter" | grep -E '^description:' || echo "")
+assert_eq "description non-empty" "true" "$([[ -n "$desc" ]] && echo true || echo false)"
+
+when=$(printf '%s' "$frontmatter" | grep -E '^whenToUse:' || echo "")
+assert_eq "whenToUse non-empty" "true" "$([[ -n "$when" ]] && echo true || echo false)"
+
+# tools list
+for tool in Bash Read Write Edit Grep Glob Agent; do
+  if printf '%s' "$frontmatter" | grep -q "^\s*-\s*${tool}\s*$"; then
+    echo "  PASS: tools contains $tool"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: tools missing $tool"
+    fail=$((fail + 1))
+  fi
+done
+
+# ============================================================
+echo ""
+echo "=== required sections ==="
+
+sections=(
+  "## Core Principle"
+  "## Startup"
+  "## Spec Generation Phase"
+  "## Execution Sequence"
+  "## Human Review Levels"
+  "## Parallel Execution"
+  "## Resume"
+  "## Failure Handling"
+  "## Circuit Breaker"
+  "## Rate Limit Recovery"
+  "## Security Tier Extra Review"
+  "## State Management"
+  "## Rules"
+)
+
+for section in "${sections[@]}"; do
+  if grep -qF "$section" "$ORCH"; then
+    echo "  PASS: section $section"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: missing section $section"
+    fail=$((fail + 1))
+  fi
+done
+
+# ============================================================
+echo ""
+echo "=== script reference integrity ==="
+
+# Every pipeline-* script mentioned in the orchestrator must exist in bin/
+scripts=(
+  pipeline-state
+  pipeline-circuit-breaker
+  pipeline-fetch-prd
+  pipeline-validate-spec
+  pipeline-validate-tasks
+  pipeline-quota-check
+  pipeline-classify-task
+  pipeline-classify-risk
+  pipeline-model-router
+  pipeline-build-prompt
+  pipeline-coverage-gate
+  pipeline-detect-reviewer
+  pipeline-parse-review
+  pipeline-gh-comment
+  pipeline-wait-pr
+  pipeline-summary
+  pipeline-cleanup
+)
+
+for script in "${scripts[@]}"; do
+  if grep -q "\b${script}\b" "$ORCH"; then
+    if [[ -f "$PLUGIN_ROOT/bin/$script" ]]; then
+      echo "  PASS: $script referenced and exists"
+      pass=$((pass + 1))
+    else
+      echo "  FAIL: $script referenced but not in bin/"
+      fail=$((fail + 1))
+    fi
+  else
+    echo "  FAIL: $script not referenced in orchestrator"
+    fail=$((fail + 1))
+  fi
+done
+
+# ============================================================
+echo ""
+echo "=== agent references ==="
+
+# Must reference the bundled reviewer agents
+assert_contains "references task-executor" "task-executor" "$ORCH"
+assert_contains "references task-reviewer" "task-reviewer" "$ORCH"
+assert_contains "references spec-generator" "spec-generator" "$ORCH"
+assert_contains "references code-reviewer for security tier" "code-reviewer" "$ORCH"
+
+# Each agent file must exist in the plugin
+for agent in task-executor task-reviewer spec-generator code-reviewer spec-reviewer; do
+  assert_file_exists "agent file $agent.md exists" "$PLUGIN_ROOT/agents/$agent.md"
+done
+
+# ============================================================
+echo ""
+echo "=== parallel execution semantics ==="
+
+# The orchestrator must describe emitting multiple Agent calls in a single message
+assert_contains "documents parallel Agent spawn" "multiple Agent tool calls in a single" "$ORCH"
+assert_contains "references parallel_group" "parallel_group" "$ORCH"
+assert_contains "references execution_order" "execution_order" "$ORCH"
+assert_contains "references maxConcurrent" "maxConcurrent" "$ORCH"
+
+# ============================================================
+echo ""
+echo "=== Results ==="
+echo "  Passed: $pass"
+echo "  Failed: $fail"
+echo "  Total:  $((pass + fail))"
+
+[[ $fail -eq 0 ]] && exit 0 || exit 1

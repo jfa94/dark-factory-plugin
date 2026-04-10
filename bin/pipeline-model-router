@@ -162,10 +162,11 @@ if [[ "$five_hour_over" == "true" ]] && [[ "$seven_day_over" != "true" ]]; then
     exit 0
   fi
 
-  # No Ollama — compute wait time to next 5-hour window boundary from midnight UTC
+  # No Ollama — compute wait time to next 5-hour window boundary from midnight UTC.
+  # Force base-10 with 10# prefix to avoid bash interpreting leading zeros as octal.
   hour_now=$(date -u +%H)
   min_now=$(date -u +%M)
-  min_in_day=$(( hour_now * 60 + min_now ))
+  min_in_day=$(( 10#$hour_now * 60 + 10#$min_now ))
   next_boundary_min=$(( ((min_in_day / 300) + 1) * 300 ))
   minutes_remaining=$(( next_boundary_min - min_in_day ))
 

@@ -17,6 +17,56 @@ require_command jq
 action="${1:?missing action}"
 shift
 
+# Parse a jq-style dotted/bracketed path into a JSON array for use with setpath.
+# Accepts: .foo, .foo.bar, .foo.bar[0].baz
+# Each identifier segment must match ^[a-zA-Z_][a-zA-Z0-9_]*$; index segments ^[0-9]+$.
+# Returns a JSON array string on stdout, exits 1 on invalid input.
+_parse_state_key() {
+  local raw="$1"
+  # Fast-fail: reject any character that isn't part of a valid path.
+  # Negated class [^].a-zA-Z0-9_[] means "any char NOT in {], ., alphanums, _, [}".
+  # Putting ] first inside [^...] is the POSIX-portable way to include literal ].
+  if [[ "$raw" =~ [^].a-zA-Z0-9_[] ]]; then
+    log_error "invalid key (disallowed characters): $(printf '%s' "$raw" | cat -v)"
+    return 1
+  fi
+  if [[ "$raw" != .* ]]; then
+    log_error "key must start with '.' (got: $raw)"
+    return 1
+  fi
+  local path="${raw#.}"
+  if [[ -z "$path" ]]; then
+    log_error "key must not be bare '.'"
+    return 1
+  fi
+  # Normalise bracket indices to dot-separated: .foo[0].bar → .foo.0.bar
+  path="${path//\[/.}"
+  path="${path//\]/}"
+  IFS='.' read -ra segs <<< "$path"
+  local json_array='['
+  local first=1
+  for seg in "${segs[@]}"; do
+    if [[ -z "$seg" ]]; then
+      log_error "empty path segment in key: $raw"
+      return 1
+    fi
+    if [[ "$seg" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+      [[ $first -eq 0 ]] && json_array+=','
+      json_array+="\"$seg\""
+      first=0
+    elif [[ "$seg" =~ ^[0-9]+$ ]]; then
+      [[ $first -eq 0 ]] && json_array+=','
+      json_array+="$seg"
+      first=0
+    else
+      log_error "invalid path segment '$seg' in key: $raw"
+      return 1
+    fi
+  done
+  json_array+=']'
+  printf '%s' "$json_array"
+}
+
 _state_file() {
   local run_id="$1"
   printf '%s/runs/%s/state.json' "$CLAUDE_PLUGIN_DATA" "$run_id"
@@ -51,20 +101,15 @@ case "$action" in
     f=$(_state_file "$run_id")
     state=$(_read_state_file "$run_id")
 
-    # Validate key to prevent jq injection — only allow safe jq path expressions.
-    # Allowed: alphanumerics, _, ., [, ], " — reject anything else (|, ;, space, $, etc.)
-    if [[ "$key" == *';'* ]] || [[ "$key" == *'|'* ]] || [[ "$key" == *'$'* ]] || \
-       [[ "$key" == *' '* ]] || [[ "$key" == *'('* ]] || [[ "$key" == *'@'* ]] || \
-       [[ "$key" == *'='* ]] || [[ "$key" == *'!'* ]] || [[ "$key" == *'+'* ]]; then
-      log_error "invalid key (unsafe characters): $key"
-      exit 1
-    fi
+    # Parse and validate key via allowlist — rejects any segment that isn't a
+    # plain identifier or numeric index, preventing jq expression injection.
+    jq_path=$(_parse_state_key "$key") || exit 1
 
     # Determine if value is valid JSON; if so, use argjson
     if printf '%s' "$value" | jq empty 2>/dev/null; then
-      updated=$(printf '%s' "$state" | jq --argjson v "$value" "$key = \$v")
+      updated=$(printf '%s' "$state" | jq --argjson path "$jq_path" --argjson v "$value" 'setpath($path; $v)')
     else
-      updated=$(printf '%s' "$state" | jq --arg v "$value" "$key = \$v")
+      updated=$(printf '%s' "$state" | jq --argjson path "$jq_path" --arg v "$value" 'setpath($path; $v)')
     fi
 
     # Update the updated_at timestamp

@@ -219,6 +219,38 @@ count=$(echo "$list_output" | jq 'length')
 assert_eq "list shows 2 runs" "2" "$count"
 
 echo ""
+echo "=== task_01_01: pipeline-state write injection hardening ==="
+
+# Injection attempts must be rejected (exit non-zero)
+assert_exit "write rejects key with backtick" 1 \
+  pipeline-state write "run-test-001" '.tasks.`env`' '"x"'
+
+assert_exit "write rejects key with pipe operator" 1 \
+  pipeline-state write "run-test-001" '.status | env' '"x"'
+
+assert_exit "write rejects key with error() call" 1 \
+  pipeline-state write "run-test-001" '.x,error("pwn")' '"x"'
+
+assert_exit "write rejects key with double-quote" 1 \
+  pipeline-state write "run-test-001" '.tasks."injected"' '"x"'
+
+assert_exit "write rejects key with newline" 1 \
+  pipeline-state write "run-test-001" $'.status\n| env' '"x"'
+
+# Legitimate paths must be accepted and update correctly
+assert_exit "write accepts simple dotted path" 0 \
+  pipeline-state write "run-test-001" '.spec.injtest' '"ok"'
+
+val=$(pipeline-state read "run-test-001" '.spec.injtest')
+assert_eq "setpath correctly updates nested key" "ok" "$val"
+
+assert_exit "write accepts array-index path" 0 \
+  pipeline-state write "run-test-001" '.spec.rounds[0]' '"r0"'
+
+val=$(pipeline-state read "run-test-001" '.spec.rounds[0]')
+assert_eq "setpath correctly updates array index" "r0" "$val"
+
+echo ""
 echo "=== pipeline-lib.sh utilities ==="
 
 source "$(dirname "$0")/pipeline-lib.sh"

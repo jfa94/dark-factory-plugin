@@ -204,7 +204,7 @@ pipeline-lock release 2>/dev/null
 # Timeout: write a lock file with the current shell's PID (guaranteed alive),
 # then try to acquire with a different caller PID and a 2s timeout
 echo "{\"pid\":$$,\"timestamp\":\"2026-01-01T00:00:00Z\"}" > "$CLAUDE_PLUGIN_DATA/pipeline.lock"
-output=$(pipeline-lock acquire --timeout 2 --pid 99998 2>/dev/null) || true
+output=$(DARK_FACTORY_LOCK_TEST_PID=99998 pipeline-lock acquire --timeout 2 2>/dev/null) || true
 action=$(echo "$output" | jq -r '.action')
 assert_eq "lock times out on live PID" "timeout" "$action"
 
@@ -217,6 +217,38 @@ pipeline-init "run-test-002" --mode discover >/dev/null 2>&1
 list_output=$(pipeline-state list)
 count=$(echo "$list_output" | jq 'length')
 assert_eq "list shows 2 runs" "2" "$count"
+
+echo ""
+echo "=== task_01_04: pipeline-init --issue numeric validation ==="
+
+# Non-numeric values must be rejected with exit 1
+assert_exit "pipeline-init --issue abc fails" 1 \
+  pipeline-init "run-issue-bad-1" --issue "abc"
+
+assert_exit "pipeline-init --issue 42abc fails (non-numeric suffix)" 1 \
+  pipeline-init "run-issue-bad-2" --issue "42abc"
+
+assert_exit "pipeline-init --issue '42,injected:1' fails (injection attempt)" 1 \
+  pipeline-init "run-issue-bad-3" --issue '42,"poisoned":1'
+
+# Valid numeric issue must succeed and be stored correctly
+pipeline-init "run-issue-ok" --issue 42 --mode prd >/dev/null 2>&1
+issue_val=$(jq -r '.input.issue_numbers[0]' "$CLAUDE_PLUGIN_DATA/runs/run-issue-ok/state.json")
+assert_eq "pipeline-init --issue 42 stores correct value" "42" "$issue_val"
+
+echo ""
+echo "=== task_01_05: pipeline-lock --pid flag restriction ==="
+
+# --pid flag must no longer be accepted (removed in favour of env var)
+assert_exit "pipeline-lock acquire --pid 1 is rejected" 1 \
+  pipeline-lock acquire --pid 1
+
+# Without --pid, acquire still works using $$ (covered by the existing lock tests above)
+# Regression: without any --pid, acquires and releases cleanly
+output=$(pipeline-lock acquire 2>/dev/null)
+action=$(printf '%s' "$output" | jq -r '.action')
+assert_eq "lock acquire without --pid succeeds" "acquired" "$action"
+pipeline-lock release >/dev/null 2>&1
 
 echo ""
 echo "=== task_01_01: pipeline-state write injection hardening ==="

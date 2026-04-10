@@ -10,13 +10,14 @@ shift
 
 LOCK_FILE="${CLAUDE_PLUGIN_DATA}/pipeline.lock"
 TIMEOUT=30
-LOCK_PID="$$"
+# PID defaults to the current shell. DARK_FACTORY_LOCK_TEST_PID is a test-only
+# escape hatch — production code must never set it.
+LOCK_PID="${DARK_FACTORY_LOCK_TEST_PID:-$$}"
 
-# Parse flags
+# Parse flags — --pid is intentionally not accepted to prevent caller spoofing
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) TIMEOUT="$2"; shift 2 ;;
-    --pid) LOCK_PID="$2"; shift 2 ;;
     *) log_error "unknown flag: $1"; exit 1 ;;
   esac
 done

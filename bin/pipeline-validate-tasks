@@ -66,6 +66,12 @@ if [[ "$over_limit" -gt 0 ]]; then
   errors+=("files array exceeds 3 in task(s) at index: $indices")
 fi
 
+# task_id format: only alphanumerics, underscore, hyphen allowed
+bad_ids=$(jq -r '[.[].task_id | select(test("[^a-zA-Z0-9_-]"))] | join(", ")' "$tasks_file" 2>/dev/null || true)
+if [[ -n "$bad_ids" ]]; then
+  errors+=("task_id contains disallowed characters (only [a-zA-Z0-9_-] allowed): $bad_ids")
+fi
+
 # task_id uniqueness
 unique_ids=$(jq '[.[].task_id] | unique | length' "$tasks_file")
 total_ids=$(jq '[.[].task_id] | length' "$tasks_file")
@@ -180,7 +186,8 @@ while [[ ${#queue[@]} -gt 0 ]]; do
   next_queue=()
 
   for tid in "${queue[@]}"; do
-    execution_order+=("{\"task_id\":\"$tid\",\"parallel_group\":$group}")
+    entry=$(jq -n --arg tid "$tid" --argjson group "$group" '{task_id: $tid, parallel_group: $group}')
+    execution_order+=("$entry")
     processed=$((processed + 1))
 
     for dependent in ${dependents["$tid"]}; do

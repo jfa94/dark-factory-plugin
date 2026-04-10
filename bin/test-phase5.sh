@@ -279,6 +279,24 @@ assert_exit "cleanup missing state exits 1" 1 pipeline-cleanup "nonexistent-run"
 echo ""
 echo "=== pipeline-cleanup (spec cleanup gated on all tasks done) ==="
 
+# The spec-cleanup path calls `git rev-parse --show-toplevel` to confine rm -rf
+# to the project root. We stub git so tests run in a fully isolated sandbox.
+spec_sandbox=$(mktemp -d)
+fake_proj="$spec_sandbox/proj"
+mkdir -p "$fake_proj"
+
+SPEC_MOCK_DIR=$(mktemp -d)
+cat > "$SPEC_MOCK_DIR/git" << GITEOF
+#!/usr/bin/env bash
+if [[ "\$1" == "rev-parse" && "\$2" == "--show-toplevel" ]]; then
+  printf '%s' "$fake_proj"
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+GITEOF
+chmod +x "$SPEC_MOCK_DIR/git"
+export PATH="$SPEC_MOCK_DIR:$PATH"
+
 _create_test_run "test-cleanup-3" '{
   "run_id": "test-cleanup-3",
   "status": "partial",
@@ -295,17 +313,21 @@ _create_test_run "test-cleanup-3" '{
   "cost": {"total_tokens": 0, "estimated_usd": 0}
 }'
 
-# Create a spec dir
-spec_dir="${CLAUDE_PLUGIN_DATA}/test-spec"
+# spec_dir is OUTSIDE the fake project root — partial run so guard is not reached
+outside_spec="$spec_sandbox/outside-spec"
+mkdir -p "$outside_spec"
+echo "spec content" > "$outside_spec/spec.md"
+
+output=$(pipeline-cleanup "test-cleanup-3" --clean-spec --spec-dir "$outside_spec" 2>/dev/null)
+assert_eq "spec not cleaned (partial)" "false" "$(printf '%s' "$output" | jq -r '.spec_cleaned')"
+assert_eq "spec dir still exists" "true" \
+  "$([[ -d "$outside_spec" ]] && echo true || echo false)"
+
+# Now test with all tasks done — spec dir must be inside fake_proj for guard to allow it
+spec_dir="$fake_proj/spec"
 mkdir -p "$spec_dir"
 echo "spec content" > "$spec_dir/spec.md"
 
-output=$(pipeline-cleanup "test-cleanup-3" --clean-spec --spec-dir "$spec_dir" 2>/dev/null)
-assert_eq "spec not cleaned (partial)" "false" "$(printf '%s' "$output" | jq -r '.spec_cleaned')"
-assert_eq "spec dir still exists" "true" \
-  "$([[ -d "$spec_dir" ]] && echo true || echo false)"
-
-# Now test with all tasks done
 _create_test_run "test-cleanup-4" '{
   "run_id": "test-cleanup-4",
   "status": "completed",
@@ -346,6 +368,81 @@ _create_test_run "test-cleanup-5" '{
 
 output=$(pipeline-cleanup "test-cleanup-5" --clean-spec 2>/dev/null)
 assert_eq "no spec-dir graceful" "false" "$(printf '%s' "$output" | jq -r '.spec_cleaned')"
+
+# ============================================================
+echo ""
+echo "=== task_01_03: pipeline-cleanup --spec-dir path guard ==="
+# The guard (already implemented in bin/pipeline-cleanup lines 154-198) must
+# reject spec dirs that resolve outside the git project root.
+# All paths here are children of spec_sandbox — never real / or ~.
+
+_create_test_run "test-specguard-1" '{
+  "run_id": "test-specguard-1",
+  "status": "completed",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {"T1": {"status": "done"}},
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+
+# 1. Outside the sandbox project root → rejected
+outside_dir="$spec_sandbox/outside"
+mkdir -p "$outside_dir"
+set +e
+pipeline-cleanup "test-specguard-1" --clean-spec --spec-dir "$outside_dir" >/dev/null 2>&1
+_rc=$?
+set -e
+assert_eq "spec-dir outside project root is rejected" "1" "$_rc"
+
+# 2. Symlink whose target is outside the sandbox project root → rejected
+symlink_dir="$fake_proj/symlink-spec"
+ln -sf "$outside_dir" "$symlink_dir"
+set +e
+pipeline-cleanup "test-specguard-1" --clean-spec --spec-dir "$symlink_dir" >/dev/null 2>&1
+_rc=$?
+set -e
+assert_eq "symlink to outside project root is rejected" "1" "$_rc"
+rm -f "$symlink_dir"
+
+# 3. Path with ".." that escapes the project root → rejected
+mkdir -p "$fake_proj/subdir"
+dotdot_path="$fake_proj/subdir/../../outside"
+mkdir -p "$spec_sandbox/outside"
+set +e
+pipeline-cleanup "test-specguard-1" --clean-spec --spec-dir "$dotdot_path" >/dev/null 2>&1
+_rc=$?
+set -e
+assert_eq "dotdot path escaping project root is rejected" "1" "$_rc"
+
+# 4. Empty spec-dir → treated as "not specified" (warn + skip, spec_cleaned=false)
+output=$(pipeline-cleanup "test-specguard-1" --clean-spec --spec-dir "" 2>/dev/null)
+assert_eq "empty spec-dir skips gracefully" "false" "$(printf '%s' "$output" | jq -r '.spec_cleaned')"
+
+# 5. In-project spec dir → accepted (spec is removed)
+# Re-create the run — test 4 (empty spec-dir) runs the full cleanup including archive.
+_create_test_run "test-specguard-2" '{
+  "run_id": "test-specguard-2",
+  "status": "completed",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {"T1": {"status": "done"}},
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+valid_spec="$fake_proj/valid-spec"
+mkdir -p "$valid_spec"
+echo "content" > "$valid_spec/spec.md"
+output=$(pipeline-cleanup "test-specguard-2" --clean-spec --spec-dir "$valid_spec" 2>/dev/null)
+assert_eq "in-project spec-dir is accepted" "true" "$(printf '%s' "$output" | jq -r '.spec_cleaned')"
+assert_eq "in-project spec-dir is removed" "false" \
+  "$([[ -d "$valid_spec" ]] && echo true || echo false)"
 
 # ============================================================
 echo ""
@@ -461,6 +558,6 @@ echo "  Passed: $pass"
 echo "  Failed: $fail"
 echo "  Total:  $((pass + fail))"
 
-rm -rf "$CLAUDE_PLUGIN_DATA" "$MOCK_DIR"
+rm -rf "$CLAUDE_PLUGIN_DATA" "$MOCK_DIR" "$spec_sandbox" "$SPEC_MOCK_DIR"
 
 [[ $fail -eq 0 ]] && exit 0 || exit 1

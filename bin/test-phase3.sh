@@ -322,6 +322,42 @@ assert_eq "fix instructions present" "true" "$( echo "$output" | grep -q "Review
 assert_eq "fix finding present" "true" "$( echo "$output" | grep -q "Missing null check" && echo true || echo false )"
 
 echo ""
+echo "=== task_01_02: pipeline-validate-tasks task_id injection hardening ==="
+
+# task_id with embedded double quote — must be rejected (valid=false or exit 1)
+cat > "$tasks_dir/bad-quote.json" << 'BEOF'
+[{"task_id":"t1\"injected","title":"X","description":"X","files":[],"acceptance_criteria":[],"tests_to_write":[],"depends_on":[]}]
+BEOF
+output=$(pipeline-validate-tasks "$tasks_dir/bad-quote.json" 2>/dev/null) || true
+assert_eq "rejects task_id with double quote" "false" "$(echo "$output" | jq -r '.valid')"
+
+# task_id with embedded newline (written via printf to avoid shell interpretation)
+printf '[{"task_id":"t1\ninjected","title":"X","description":"X","files":[],"acceptance_criteria":[],"tests_to_write":[],"depends_on":[]}]\n' \
+  > "$tasks_dir/bad-newline.json"
+output=$(pipeline-validate-tasks "$tasks_dir/bad-newline.json" 2>/dev/null) || true
+assert_eq "rejects task_id with newline" "false" "$(echo "$output" | jq -r '.valid')"
+
+# task_id with semicolon (shell-injection attempt)
+cat > "$tasks_dir/bad-semi.json" << 'BEOF'
+[{"task_id":"t1;rm -rf /","title":"X","description":"X","files":[],"acceptance_criteria":[],"tests_to_write":[],"depends_on":[]}]
+BEOF
+output=$(pipeline-validate-tasks "$tasks_dir/bad-semi.json" 2>/dev/null) || true
+assert_eq "rejects task_id with semicolon" "false" "$(echo "$output" | jq -r '.valid')"
+
+# Valid task IDs produce valid JSON execution_order
+cat > "$tasks_dir/valid-ids.json" << 'BEOF'
+[
+  {"task_id":"task-1","title":"T1","description":"D","files":["a.ts"],"acceptance_criteria":["ok"],"tests_to_write":["t"],"depends_on":[]},
+  {"task_id":"task_2","title":"T2","description":"D","files":["b.ts"],"acceptance_criteria":["ok"],"tests_to_write":["t"],"depends_on":["task-1"]}
+]
+BEOF
+output=$(pipeline-validate-tasks "$tasks_dir/valid-ids.json" 2>/dev/null)
+assert_eq "valid IDs accepted" "true" "$(echo "$output" | jq -r '.valid')"
+# Verify the execution_order is valid JSON with jq-safe task_id values
+eo_valid=$(echo "$output" | jq '.execution_order | map(.task_id) | all(type == "string")' 2>/dev/null || echo "false")
+assert_eq "execution_order task_ids are JSON strings" "true" "$eo_valid"
+
+echo ""
 echo "================================"
 echo "Results: $pass passed, $fail failed"
 echo "================================"

@@ -47,6 +47,10 @@ mkdir -p "$run_dir"/{holdouts,reviews}
 # Build issue_numbers array
 issue_numbers="[]"
 if [[ -n "$issue" ]]; then
+  if ! [[ "$issue" =~ ^[0-9]+$ ]]; then
+    log_error "invalid issue number (must be a positive integer): $issue"
+    exit 1
+  fi
   issue_numbers=$(printf '[%s]' "$issue")
 fi
 

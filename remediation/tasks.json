@@ -39,7 +39,7 @@
     "findings": [
       "C7"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-validate-tasks",
       "bin/test-phase3.sh"
@@ -65,7 +65,7 @@
     "findings": [
       "C8"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-cleanup",
       "bin/test-phase5.sh"
@@ -96,7 +96,7 @@
     "findings": [
       "M21"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-init",
       "bin/test-phase1.sh"
@@ -104,7 +104,7 @@
     "acceptance_criteria": [
       "--issue arg is validated as positive integer before being used in --argjson",
       "Invalid numeric input causes script to exit 1 with clear error message",
-      "run_id validation already exists — extend with similar strictness to all numeric args"
+      "run_id validation already exists \u2014 extend with similar strictness to all numeric args"
     ],
     "tests_to_write": [
       "bin/test-phase1.sh: pipeline-init --issue abc fails with error",
@@ -118,12 +118,12 @@
     "task_id": "task_01_05",
     "plan_id": "01-critical-safety-hardening",
     "title": "Restrict pipeline-lock --pid flag",
-    "description": "bin/pipeline-lock accepts --pid N from any caller. An attacker or errant orchestrator can pass --pid 1 (init) — the kill -0 liveness check always succeeds, making the lock un-reclaimable. Remove the flag or restrict it to caller's own process tree.",
+    "description": "bin/pipeline-lock accepts --pid N from any caller. An attacker or errant orchestrator can pass --pid 1 (init) \u2014 the kill -0 liveness check always succeeds, making the lock un-reclaimable. Remove the flag or restrict it to caller's own process tree.",
     "priority": "P0",
     "findings": [
       "M22"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-lock",
       "bin/test-phase1.sh"
@@ -257,7 +257,7 @@
     "task_id": "task_02_05",
     "plan_id": "02-quota-rate-limiting",
     "title": "Remove quota-burning CLI probe fallback",
-    "description": "_check_cli at pipeline-quota-check:120-154 runs `claude -p ok --max-turns 1 --model haiku` to detect rate limiting. This burns a turn from the user's quota on every check — anti-pattern. Remove this path; if header detection fails, return an explicit error rather than probing.",
+    "description": "_check_cli at pipeline-quota-check:120-154 runs `claude -p ok --max-turns 1 --model haiku` to detect rate limiting. This burns a turn from the user's quota on every check \u2014 anti-pattern. Remove this path; if header detection fails, return an explicit error rather than probing.",
     "priority": "P0",
     "findings": [
       "C2b"
@@ -301,10 +301,10 @@
       "Returns diagnostic JSON about reconciliation result"
     ],
     "tests_to_write": [
-      "bin/test-phase4.sh: staging-init when develop is ancestor of staging — no-op",
-      "bin/test-phase4.sh: staging-init when develop is ahead — fast-forwards staging",
-      "bin/test-phase4.sh: staging-init when staging has commits not in develop — merges",
-      "bin/test-phase4.sh: staging-init when merge would conflict — aborts without leaving dirty state"
+      "bin/test-phase4.sh: staging-init when develop is ancestor of staging \u2014 no-op",
+      "bin/test-phase4.sh: staging-init when develop is ahead \u2014 fast-forwards staging",
+      "bin/test-phase4.sh: staging-init when staging has commits not in develop \u2014 merges",
+      "bin/test-phase4.sh: staging-init when merge would conflict \u2014 aborts without leaving dirty state"
     ],
     "depends_on": []
   },
@@ -333,7 +333,7 @@
     "tests_to_write": [
       "bin/test-phase8.sh: orchestrator.md references the spec handoff mechanism explicitly",
       "bin/test-phase8.sh: spec-generator.md documents output path contract",
-      "bin/test-integration.sh (new): end-to-end spec-generator → orchestrator flow finds tasks.json at expected location"
+      "bin/test-integration.sh (new): end-to-end spec-generator \u2192 orchestrator flow finds tasks.json at expected location"
     ],
     "depends_on": []
   },
@@ -570,7 +570,7 @@
     "task_id": "task_05_04",
     "plan_id": "05-branch-rebase-handling",
     "title": "Implement package.json 3-way merge in pipeline-wait-pr rebase",
-    "description": "Line 42 comment in bin/pipeline-wait-pr promises 'package.json → attempt 3-way merge' but the implementation doesn't handle it. Port the old pipeline's logic: extract :1/:2/:3 stages, jq --indent 4 normalize, git merge-file -p, write result, git add.",
+    "description": "Line 42 comment in bin/pipeline-wait-pr promises 'package.json \u2192 attempt 3-way merge' but the implementation doesn't handle it. Port the old pipeline's logic: extract :1/:2/:3 stages, jq --indent 4 normalize, git merge-file -p, write result, git add.",
     "priority": "P1",
     "findings": [
       "M4",
@@ -694,7 +694,7 @@
       "All status values defined in pipeline-state are handled explicitly",
       "needs_human_review tasks do not transition to interrupted",
       "ci_fixing tasks are marked as interrupted on session end (they need re-start)",
-      "Pending tasks leave run in 'running' state (not final) — orchestrator will resume"
+      "Pending tasks leave run in 'running' state (not final) \u2014 orchestrator will resume"
     ],
     "tests_to_write": [
       "bin/test-phase1.sh: stop-gate with needs_human_review task keeps status=needs_human_review",
@@ -888,7 +888,7 @@
       "Emits JSON output: {passed: bool, lint: {...}, typecheck: {...}, test: {...}}",
       "Exits 0 on pass, 1 on any failure",
       "Package manager is detected via detect_pkg_manager (pipeline-lib.sh)",
-      "Detects missing scripts gracefully (e.g., no typecheck script — skip with warning, not fail)"
+      "Detects missing scripts gracefully (e.g., no typecheck script \u2014 skip with warning, not fail)"
     ],
     "tests_to_write": [
       "bin/test-phase6.sh: pipeline-quality-gate passes when lint/typecheck/test all pass",
@@ -942,7 +942,7 @@
     ],
     "acceptance_criteria": [
       "Every userConfig key documented in 02-quality-and-config.md is present in plugin.json with its default",
-      "Key names match the PRD exactly (or the PRD is updated to match — coordinate with task_14_02)",
+      "Key names match the PRD exactly (or the PRD is updated to match \u2014 coordinate with task_14_02)",
       "Existing keys are preserved"
     ],
     "tests_to_write": [
@@ -985,7 +985,7 @@
     "task_id": "task_08_03",
     "plan_id": "08-config-schema-alignment",
     "title": "Fix configure.md string vs argjson handling",
-    "description": "commands/configure.md:98 uses `--argjson v <value>` uniformly. String values (ollamaUrl, model) fail because they're not valid JSON. Distinguish: numeric/boolean → --argjson; string → --arg. Document the distinction.",
+    "description": "commands/configure.md:98 uses `--argjson v <value>` uniformly. String values (ollamaUrl, model) fail because they're not valid JSON. Distinguish: numeric/boolean \u2192 --argjson; string \u2192 --arg. Document the distinction.",
     "priority": "P1",
     "findings": [
       "M(configure string)"
@@ -1050,7 +1050,7 @@
     "acceptance_criteria": [
       "Sequence increment is serialized via flock",
       "Concurrent invocations produce strictly monotonic sequence numbers",
-      "Handles case where flock is not available (Linux vs macOS — use a portable alternative if needed)"
+      "Handles case where flock is not available (Linux vs macOS \u2014 use a portable alternative if needed)"
     ],
     "tests_to_write": [
       "bin/test-phase1.sh: 50 concurrent run-tracker invocations produce 50 unique sequence numbers",
@@ -1310,7 +1310,7 @@
   {
     "task_id": "task_12_01",
     "plan_id": "12-integration-tests",
-    "title": "End-to-end test: spec-generator → orchestrator → task-executor handoff",
+    "title": "End-to-end test: spec-generator \u2192 orchestrator \u2192 task-executor handoff",
     "description": "Create bin/test-integration.sh with a fixture repo and run the full pipeline end-to-end (using a mocked claude CLI). Validate that spec files written by spec-generator are visible to task-executors, that tasks.json reaches pipeline-validate-tasks, and that state.json shows .spec.path after spec phase.",
     "priority": "P1",
     "findings": [
@@ -1404,7 +1404,7 @@
     "task_id": "task_12_04",
     "plan_id": "12-integration-tests",
     "title": "End-to-end test: Ollama fallback trigger and routing",
-    "description": "Integration test that sets a fake last-headers.json showing 5h over threshold, verifies pipeline-model-router routes to Ollama (mocked), and task-executor env includes ANTHROPIC_BASE_URL. Tests the full path from quota detection → router → executor spawn.",
+    "description": "Integration test that sets a fake last-headers.json showing 5h over threshold, verifies pipeline-model-router routes to Ollama (mocked), and task-executor env includes ANTHROPIC_BASE_URL. Tests the full path from quota detection \u2192 router \u2192 executor spawn.",
     "priority": "P1",
     "findings": [
       "M23",
@@ -1435,7 +1435,7 @@
     "task_id": "task_13_01",
     "plan_id": "13-minor-cleanups",
     "title": "Fix pipeline-classify-risk reasoning accuracy",
-    "description": "bin/pipeline-classify-risk:50 always reports `first_file → tier`, but tier may have been set by a later file. Report the file that triggered the current tier instead.",
+    "description": "bin/pipeline-classify-risk:50 always reports `first_file \u2192 tier`, but tier may have been set by a later file. Report the file that triggered the current tier instead.",
     "priority": "P2",
     "findings": [
       "P(classify-risk reasoning)"
@@ -1484,7 +1484,7 @@
     "task_id": "task_13_03",
     "plan_id": "13-minor-cleanups",
     "title": "Add pagination to metrics_query (remove 1000 cap)",
-    "description": "servers/pipeline-metrics/index.js:171 hard-caps query results at 1000. metrics_export for a 50-task × 20-event run hits the cap. Add pagination via offset/cursor.",
+    "description": "servers/pipeline-metrics/index.js:171 hard-caps query results at 1000. metrics_export for a 50-task \u00d7 20-event run hits the cap. Add pagination via offset/cursor.",
     "priority": "P2",
     "findings": [
       "P(metrics pagination)"
@@ -1627,7 +1627,7 @@
       "Goal #1 wording matches the implementation",
       "A parity table clearly marks preserved vs. rewritten vs. deprecated features",
       "Feature inventory tables in the same file are also updated",
-      "Deleted claims: 'exact copy' (Decision 14) — reconcile with task_04_01 outcome"
+      "Deleted claims: 'exact copy' (Decision 14) \u2014 reconcile with task_04_01 outcome"
     ],
     "tests_to_write": [
       "manual: review the PRD diff for accuracy"

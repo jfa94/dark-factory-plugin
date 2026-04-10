@@ -23,9 +23,13 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import Database from "better-sqlite3";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
+import { mkdirSync } from "fs";
 
 const DB_PATH = process.env.METRICS_DB || resolve("metrics.db");
+
+// Ensure parent directory exists
+mkdirSync(dirname(DB_PATH), { recursive: true });
 
 // Initialize database
 const db = new Database(DB_PATH);
@@ -242,7 +246,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: args = {} } = request.params;
   let result;
   switch (name) {
     case "metrics_record":

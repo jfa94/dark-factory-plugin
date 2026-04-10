@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lock manager — prevents two orchestrator instances from running simultaneously.
 # Secondary safety mechanism (primary is worktree isolation).
-# Usage: pipeline-lock <acquire|release|recover|status> [--timeout <seconds>]
+# Usage: pipeline-lock <acquire|release|recover|status> [--timeout <seconds>] [--pid <pid>]
 
 source "$(dirname "$0")/pipeline-lib.sh"
 
@@ -10,11 +10,13 @@ shift
 
 LOCK_FILE="${CLAUDE_PLUGIN_DATA}/pipeline.lock"
 TIMEOUT=30
+LOCK_PID="$$"
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) TIMEOUT="$2"; shift 2 ;;
+    --pid) LOCK_PID="$2"; shift 2 ;;
     *) log_error "unknown flag: $1"; exit 1 ;;
   esac
 done
@@ -37,9 +39,9 @@ case "$action" in
 
     while [[ $elapsed -lt $TIMEOUT ]]; do
       # Try to create lock atomically
-      if ( set -o noclobber; printf '{"pid":%d,"timestamp":"%s"}' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_FILE" ) 2>/dev/null; then
-        log_info "lock acquired (PID $$)"
-        json_output locked "true" pid "$$" action "acquired"
+      if ( set -o noclobber; printf '{"pid":%d,"timestamp":"%s"}' "$LOCK_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_FILE" ) 2>/dev/null; then
+        log_info "lock acquired (PID $LOCK_PID)"
+        json_output locked "true" pid "$LOCK_PID" action "acquired"
         exit 0
       fi
 
@@ -47,9 +49,9 @@ case "$action" in
       info=$(_lock_info) || { sleep 1; elapsed=$((elapsed + 1)); continue; }
       holder_pid=$(printf '%s' "$info" | jq -r '.pid')
 
-      if [[ "$holder_pid" == "$$" ]]; then
-        log_info "lock already held by us (PID $$)"
-        json_output locked "true" pid "$$" action "reentrant"
+      if [[ "$holder_pid" == "$LOCK_PID" ]]; then
+        log_info "lock already held by us (PID $LOCK_PID)"
+        json_output locked "true" pid "$LOCK_PID" action "reentrant"
         exit 0
       fi
 
@@ -102,9 +104,9 @@ case "$action" in
 
     # Dead PID — take ownership
     rm -f "$LOCK_FILE"
-    printf '{"pid":%d,"timestamp":"%s","recovered_from":%s}' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$holder_pid" > "$LOCK_FILE"
+    printf '{"pid":%d,"timestamp":"%s","recovered_from":%s}' "$LOCK_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$holder_pid" > "$LOCK_FILE"
     log_info "recovered lock from dead PID $holder_pid"
-    json_output locked "true" pid "$$" recovered_from "$holder_pid" action "recovered"
+    json_output locked "true" pid "$LOCK_PID" recovered_from "$holder_pid" action "recovered"
     ;;
 
   status)

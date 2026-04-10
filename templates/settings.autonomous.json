@@ -12,6 +12,8 @@
       "Bash(pnpm *)",
       "Bash(npm *)",
       "Bash(npx *)",
+      "Bash(yarn *)",
+      "Bash(bun *)",
       "Read",
       "Write",
       "Edit",

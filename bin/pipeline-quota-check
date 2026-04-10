@@ -80,15 +80,11 @@ _check_oauth() {
   local daily_threshold
   daily_threshold=$((day_of_week * 100 / 7))
 
-  local five_hour_over="false"
-  if [[ $(printf '%s > %s\n' "$five_hour" "$hourly_threshold" | bc 2>/dev/null) == "1" ]]; then
-    five_hour_over="true"
-  fi
+  local five_hour_over
+  five_hour_over=$(jq -n --argjson a "$five_hour" --argjson b "$hourly_threshold" 'if $a > $b then "true" else "false" end' -r)
 
-  local seven_day_over="false"
-  if [[ $(printf '%s > %s\n' "$seven_day" "$daily_threshold" | bc 2>/dev/null) == "1" ]]; then
-    seven_day_over="true"
-  fi
+  local seven_day_over
+  seven_day_over=$(jq -n --argjson a "$seven_day" --argjson b "$daily_threshold" 'if $a > $b then "true" else "false" end' -r)
 
   jq -n \
     --argjson five_hour "$five_hour" \

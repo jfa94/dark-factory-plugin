@@ -92,11 +92,7 @@ If the user specifies a setting to change:
    ```
    If unreachable, warn the user but still save the setting.
 
-3. **Write the updated config**:
-   ```bash
-   pipeline-state write <run-id> .<key> <value>
-   ```
-   Or write directly to `${CLAUDE_PLUGIN_DATA}/config.json` if no active run:
+3. **Write the updated config** (always to config.json, never to run state):
    ```bash
    tmpfile=$(mktemp "${CLAUDE_PLUGIN_DATA}/config.XXXXXX")
    jq --arg k "<key>" --argjson v <value> '.[$k] = $v' "${CLAUDE_PLUGIN_DATA}/config.json" > "$tmpfile"

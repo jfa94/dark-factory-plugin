@@ -16,6 +16,7 @@ run_dir=$(readlink "$current_link" 2>/dev/null) || exit 0
 audit_file="$run_dir/audit.jsonl"
 
 if [[ ! -f "$audit_file" ]]; then
+  echo "[run-tracker] WARNING: audit.jsonl missing for active run $(basename "$run_dir")" >&2
   exit 0
 fi
 

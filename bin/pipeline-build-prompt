@@ -59,17 +59,21 @@ if [[ "$holdout_percent" -gt 0 ]] && [[ "$total_criteria" -gt 1 ]]; then
     [to_entries[] | select(.key as $k | $idx | index($k) == null) | .value]
   ')
 
-  # Save holdout to file
-  run_id=$(current_run_id 2>/dev/null || echo "unknown")
-  holdout_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}/holdouts"
-  mkdir -p "$holdout_dir"
-  jq -n \
-    --arg task_id "$task_id" \
-    --argjson criteria "$holdout_criteria" \
-    --argjson total "$total_criteria" \
-    --argjson withheld "$holdout_count" \
-    '{task_id: $task_id, withheld_criteria: $criteria, total_criteria: $total, withheld_count: $withheld}' \
-    > "$holdout_dir/${task_id}.json"
+  # Save holdout to file (only if active run exists)
+  run_id=$(current_run_id 2>/dev/null) || true
+  if [[ -z "$run_id" ]]; then
+    log_warn "no active run, holdout file not saved"
+  else
+    holdout_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}/holdouts"
+    mkdir -p "$holdout_dir"
+    jq -n \
+      --arg task_id "$task_id" \
+      --argjson criteria "$holdout_criteria" \
+      --argjson total "$total_criteria" \
+      --argjson withheld "$holdout_count" \
+      '{task_id: $task_id, withheld_criteria: $criteria, total_criteria: $total, withheld_count: $withheld}' \
+      > "$holdout_dir/${task_id}.json"
+  fi
 
   log_info "holdout: withheld $holdout_count of $total_criteria criteria for $task_id"
 fi

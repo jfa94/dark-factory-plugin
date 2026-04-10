@@ -41,7 +41,7 @@ task_summary=$(printf '%s' "$state" | jq '{
 # Extract timing
 started_at=$(printf '%s' "$state" | jq -r '.started_at // empty')
 ended_at=$(printf '%s' "$state" | jq -r '.ended_at // empty')
-duration_minutes=""
+duration_minutes="null"
 
 if [[ -n "$started_at" ]] && [[ -n "$ended_at" ]] && [[ "$ended_at" != "null" ]]; then
   # Compute duration — try macOS date -jf first, fall back to GNU date -d

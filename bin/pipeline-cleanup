@@ -151,7 +151,7 @@ if [[ "$clean_spec" == "true" ]]; then
     done_tasks=$(printf '%s' "$state" | jq '[.tasks | to_entries[] | select(.value.status == "done")] | length')
 
     if [[ "$done_tasks" -eq "$total_tasks" ]] && [[ "$total_tasks" -gt 0 ]]; then
-      git rm -rf "$spec_dir" 2>/dev/null || rm -rf "$spec_dir"
+      rm -rf "$spec_dir"
       log_info "cleaned spec dir: $spec_dir"
       spec_cleaned=true
     else

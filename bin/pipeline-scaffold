@@ -85,7 +85,7 @@ entries=(
 if [[ -f "$gitignore" ]]; then
   for entry in "${entries[@]}"; do
     if ! grep -qF "$entry" "$gitignore" 2>/dev/null; then
-      printf '\n%s' "$entry" >> "$gitignore"
+      printf '\n%s\n' "$entry" >> "$gitignore"
       log_info "appended to .gitignore: $entry"
     fi
   done

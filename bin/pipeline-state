@@ -51,6 +51,15 @@ case "$action" in
     f=$(_state_file "$run_id")
     state=$(_read_state_file "$run_id")
 
+    # Validate key to prevent jq injection — only allow safe jq path expressions.
+    # Allowed: alphanumerics, _, ., [, ], " — reject anything else (|, ;, space, $, etc.)
+    if [[ "$key" == *';'* ]] || [[ "$key" == *'|'* ]] || [[ "$key" == *'$'* ]] || \
+       [[ "$key" == *' '* ]] || [[ "$key" == *'('* ]] || [[ "$key" == *'@'* ]] || \
+       [[ "$key" == *'='* ]] || [[ "$key" == *'!'* ]] || [[ "$key" == *'+'* ]]; then
+      log_error "invalid key (unsafe characters): $key"
+      exit 1
+    fi
+
     # Determine if value is valid JSON; if so, use argjson
     if printf '%s' "$value" | jq empty 2>/dev/null; then
       updated=$(printf '%s' "$state" | jq --argjson v "$value" "$key = \$v")
@@ -74,7 +83,7 @@ case "$action" in
 
     # Validate status
     case "$status" in
-      pending|executing|reviewing|done|failed|interrupted|needs_human_review) ;;
+      pending|executing|reviewing|done|failed|interrupted|needs_human_review|ci_fixing) ;;
       *) log_error "invalid task status: $status"; exit 1 ;;
     esac
 

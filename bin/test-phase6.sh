@@ -41,7 +41,7 @@ assert_eq "has PostToolUse" "1" "$(jq '.hooks.PostToolUse | length' "$hooks_json
 assert_eq "has Stop" "1" "$(jq '.hooks.Stop | length' "$hooks_json")"
 assert_eq "has SubagentStop" "1" "$(jq '.hooks.SubagentStop | length' "$hooks_json")"
 assert_eq "PreToolUse matches Bash" "^Bash\$" "$(jq -r '.hooks.PreToolUse[0].matcher' "$hooks_json")"
-assert_eq "PostToolUse matches multi" "Bash|Write|Edit" "$(jq -r '.hooks.PostToolUse[0].matcher' "$hooks_json")"
+assert_eq "PostToolUse matches multi" "^(Bash|Write|Edit)$" "$(jq -r '.hooks.PostToolUse[0].matcher' "$hooks_json")"
 
 # ============================================================
 echo ""

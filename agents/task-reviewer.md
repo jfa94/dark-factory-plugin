@@ -6,7 +6,6 @@ whenToUse: "When the pipeline needs to review code changes from a task executor"
 skills:
   - review-protocol
 tools:
-  - Bash
   - Read
   - Grep
   - Glob

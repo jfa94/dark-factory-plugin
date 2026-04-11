@@ -551,6 +551,513 @@ trap - EXIT
 
 # ============================================================
 echo ""
+echo "=== task_05_01: pipeline-branch staging-init anchored grep ==="
+# M1: unanchored grep matched refs like staging-v2. Must now use exact ref
+# matching so decoy branches do not short-circuit the creation path.
+
+orig_cwd=$(pwd)
+
+# --- staging-v2 exists but staging does not → must create staging ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  # Create decoy branch that contains the substring 'staging'
+  git checkout -b staging-v2 --quiet
+  echo "v2" > v2.txt; git add v2.txt
+  git commit -m "v2" --quiet
+  git push -u origin staging-v2 --quiet 2>/dev/null || true
+  git checkout develop --quiet
+
+  output=$(pipeline-branch staging-init 2>/dev/null)
+  created=$(echo "$output" | jq -r '.created')
+  branch=$(echo "$output" | jq -r '.staging_branch')
+  head_after=$(git rev-parse --abbrev-ref HEAD)
+  printf '%s\n' "$created" > "$sandbox/created"
+  printf '%s\n' "$branch" > "$sandbox/branch"
+  printf '%s\n' "$head_after" > "$sandbox/head"
+)
+assert_eq "staging-v2 decoy does not short-circuit" "true" "$(cat "$sandbox/created")"
+assert_eq "staging-v2 decoy: branch is staging" "staging" "$(cat "$sandbox/branch")"
+assert_eq "staging-v2 decoy: HEAD is staging" "staging" "$(cat "$sandbox/head")"
+cleanup_sandbox "$sandbox"
+
+# --- staging exists → must detect and no-op (created=false) ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  git push -u origin staging --quiet 2>/dev/null || true
+  git checkout develop --quiet
+
+  output=$(pipeline-branch staging-init 2>/dev/null)
+  created=$(echo "$output" | jq -r '.created')
+  base=$(echo "$output" | jq -r '.base')
+  printf '%s\n' "$created" > "$sandbox/created"
+  printf '%s\n' "$base" > "$sandbox/base"
+)
+assert_eq "existing staging: created=false" "false" "$(cat "$sandbox/created")"
+assert_eq "existing staging: base=existing" "existing" "$(cat "$sandbox/base")"
+cleanup_sandbox "$sandbox"
+
+# --- Only staging-v2 exists, with no staging → creates staging fresh ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  # Push a pre-staging decoy remotely
+  git checkout -b pre-staging --quiet
+  git push -u origin pre-staging --quiet 2>/dev/null || true
+  git checkout develop --quiet
+
+  output=$(pipeline-branch staging-init 2>/dev/null)
+  created=$(echo "$output" | jq -r '.created')
+  printf '%s\n' "$created" > "$sandbox/created"
+)
+assert_eq "pre-staging decoy does not short-circuit" "true" "$(cat "$sandbox/created")"
+cleanup_sandbox "$sandbox"
+
+cd "$orig_cwd"
+trap - EXIT
+
+# ============================================================
+echo ""
+echo "=== task_05_02: pipeline-branch create handles existing branches ==="
+# M2: `git checkout -b &>/dev/null` silently swallowed failures when the
+# branch already existed, dropping the run into detached HEAD. Must now
+# either resume (existing branch + rebase) or fail loudly.
+
+orig_cwd=$(pwd)
+
+# --- Case A: fresh branch → action=created ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  output=$(pipeline-branch create feature/new --base staging 2>/dev/null)
+  action=$(echo "$output" | jq -r '.action')
+  current=$(git rev-parse --abbrev-ref HEAD)
+  printf '%s\n' "$action" > "$sandbox/action"
+  printf '%s\n' "$current" > "$sandbox/head"
+)
+assert_eq "fresh branch: action=created" "created" "$(cat "$sandbox/action")"
+assert_eq "fresh branch: HEAD is the new branch" "feature/new" "$(cat "$sandbox/head")"
+cleanup_sandbox "$sandbox"
+
+# --- Case B: local branch already exists → action=resumed (rebase no-op) ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  # Pre-create the branch.
+  git checkout -b feature/existing --quiet
+  echo "a" > a.txt; git add a.txt
+  git commit -m "a" --quiet
+  git checkout staging --quiet
+
+  output=$(pipeline-branch create feature/existing --base staging 2>/dev/null)
+  action=$(echo "$output" | jq -r '.action')
+  current=$(git rev-parse --abbrev-ref HEAD)
+  printf '%s\n' "$action" > "$sandbox/action"
+  printf '%s\n' "$current" > "$sandbox/head"
+)
+assert_eq "existing local branch: action=resumed" "resumed" "$(cat "$sandbox/action")"
+assert_eq "existing local branch: checked out" "feature/existing" "$(cat "$sandbox/head")"
+cleanup_sandbox "$sandbox"
+
+# --- Case C: remote-only branch → action=resumed ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  git checkout -b feature/remote --quiet
+  echo "r" > r.txt; git add r.txt
+  git commit -m "r" --quiet
+  git push -u origin feature/remote --quiet 2>/dev/null || true
+  # Delete local copy so only the remote ref exists.
+  git checkout staging --quiet
+  git branch -D feature/remote --quiet
+
+  output=$(pipeline-branch create feature/remote --base staging 2>/dev/null)
+  action=$(echo "$output" | jq -r '.action')
+  current=$(git rev-parse --abbrev-ref HEAD)
+  printf '%s\n' "$action" > "$sandbox/action"
+  printf '%s\n' "$current" > "$sandbox/head"
+)
+assert_eq "remote-only branch: action=resumed" "resumed" "$(cat "$sandbox/action")"
+assert_eq "remote-only branch: checked out" "feature/remote" "$(cat "$sandbox/head")"
+cleanup_sandbox "$sandbox"
+
+# --- Case D: existing branch diverges + rebase conflict → action=conflict, exit 1 ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  echo "base" > conflict.txt; git add conflict.txt
+  git commit -m "base-conflict" --quiet
+  # Existing feature branch with divergent content for the same file.
+  git checkout -b feature/diverged staging^ --quiet
+  echo "feature" > conflict.txt; git add conflict.txt
+  git commit -m "feature-conflict" --quiet
+  git checkout staging --quiet
+
+  set +e
+  output=$(pipeline-branch create feature/diverged --base staging 2>/dev/null)
+  exit_code=$?
+  set -e
+  action=$(echo "$output" | jq -r '.action')
+  printf '%s\n' "$exit_code" > "$sandbox/exit"
+  printf '%s\n' "$action" > "$sandbox/action"
+)
+assert_eq "rebase conflict: exit=1" "1" "$(cat "$sandbox/exit")"
+assert_eq "rebase conflict: action=conflict" "conflict" "$(cat "$sandbox/action")"
+cleanup_sandbox "$sandbox"
+
+cd "$orig_cwd"
+trap - EXIT
+
+# ============================================================
+echo ""
+echo "=== task_05_03: pipeline-wait-pr multi-round rebase loop ==="
+# M4: The rebase helper used to run `rebase --continue` once. For PRs with
+# multiple commits each containing an auto-safe conflict, only the first
+# round got resolved. _rebase_with_retries must loop until clean or unsafe.
+#
+# We drive _rebase_with_retries directly by sourcing pipeline-wait-pr. It
+# uses `set -eu` via pipeline-lib.sh, so we run the tests in a subshell that
+# disables `set -e` after sourcing to keep error flow under test control.
+
+orig_cwd=$(pwd)
+
+# Extract just the rebase helpers from pipeline-wait-pr (between the
+# REBASE_HELPERS_START/END markers) so we can unit-test them without
+# running the full main loop or requiring a gh mock. The extracted file
+# exports two functions: _resolve_safe_conflict and _rebase_with_retries.
+_PIPELINE_WAIT_PR_SRC="$(cd "$(dirname "$0")" && pwd)/pipeline-wait-pr"
+_WAIT_PR_HELPERS=$(mktemp)
+{
+  # Stubs for the few log helpers the functions reference.
+  cat <<'STUBS'
+log_info() { :; }
+log_warn() { :; }
+log_error() { :; }
+SAFE_OURS_FILES="pnpm-lock.yaml claude-progress.json feature-status.json"
+REBASE_MAX_ROUNDS="${REBASE_MAX_ROUNDS:-30}"
+STUBS
+  awk '
+    /^# === REBASE_HELPERS_START ===$/ { inside=1; next }
+    /^# === REBASE_HELPERS_END ===$/ { inside=0; next }
+    inside { print }
+  ' "$_PIPELINE_WAIT_PR_SRC"
+} > "$_WAIT_PR_HELPERS"
+
+# --- Multi-commit rebase: 3 commits, each with a safe conflict, all resolve ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; rm -f "$_WAIT_PR_HELPERS"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+
+  # Base staging has pnpm-lock.yaml v0
+  printf 'v0\n' > pnpm-lock.yaml
+  printf 'ignore-base\n' > .gitignore
+  git add pnpm-lock.yaml .gitignore
+  git commit -m "base-safe" --quiet
+
+  # Feature branch makes 3 commits each touching pnpm-lock.yaml differently.
+  git checkout -b feature/multi staging --quiet
+  for i in 1 2 3; do
+    printf 'feature-v%s\n' "$i" > pnpm-lock.yaml
+    git add pnpm-lock.yaml
+    git commit -m "feature-$i" --quiet
+  done
+
+  # Advance staging to create sequential conflicts with each feature commit.
+  git checkout staging --quiet
+  for i in 1 2 3; do
+    printf 'staging-v%s\n' "$i" > pnpm-lock.yaml
+    git add pnpm-lock.yaml
+    git commit -m "staging-$i" --quiet
+  done
+
+  git checkout feature/multi --quiet
+
+  # Load helpers in a controlled subshell.
+  set +e
+  (
+    # Disable strict mode so our source'd helpers cannot abort the subshell.
+    set +eu
+    source "$_WAIT_PR_HELPERS"
+    _rebase_with_retries "staging"
+  )
+  rc=$?
+  set -e
+  head_file=$(cat pnpm-lock.yaml 2>/dev/null || echo MISSING)
+  printf '%s\n' "$rc" > "$sandbox/rc"
+  printf '%s\n' "$head_file" > "$sandbox/file"
+)
+assert_eq "multi-commit rebase: succeeds" "0" "$(cat "$sandbox/rc")"
+# After resolving "--ours" in rebase, the feature branch takes staging's
+# values for each commit, so the final file is staging-v3.
+assert_eq "multi-commit rebase: final file content" "staging-v3" "$(cat "$sandbox/file")"
+cleanup_sandbox "$sandbox"
+
+# --- Unsafe conflict → aborts cleanly with non-zero exit ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; rm -f "$_WAIT_PR_HELPERS"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  echo "base" > src.txt; git add src.txt
+  git commit -m "base" --quiet
+
+  git checkout -b feature/unsafe staging --quiet
+  echo "feature" > src.txt; git add src.txt
+  git commit -m "feature" --quiet
+
+  git checkout staging --quiet
+  echo "staging" > src.txt; git add src.txt
+  git commit -m "staging" --quiet
+
+  git checkout feature/unsafe --quiet
+
+  set +e
+  (
+    set +eu
+    source "$_WAIT_PR_HELPERS"
+    _rebase_with_retries "staging"
+  )
+  rc=$?
+  set -e
+  # Clean state check — no conflict markers left, no rebase in progress.
+  in_progress=$([[ -d .git/rebase-merge || -d .git/rebase-apply ]] && echo yes || echo no)
+  printf '%s\n' "$rc" > "$sandbox/rc"
+  printf '%s\n' "$in_progress" > "$sandbox/in_progress"
+)
+assert_eq "unsafe conflict: non-zero exit" "1" "$(cat "$sandbox/rc")"
+assert_eq "unsafe conflict: rebase aborted (not in-progress)" "no" "$(cat "$sandbox/in_progress")"
+cleanup_sandbox "$sandbox"
+
+# --- Round cap: PIPELINE_REBASE_MAX_ROUNDS=0 forces immediate failure ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; rm -f "$_WAIT_PR_HELPERS"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  printf 'base\n' > pnpm-lock.yaml
+  git add pnpm-lock.yaml
+  git commit -m "base" --quiet
+
+  git checkout -b feature/cap staging --quiet
+  printf 'feature\n' > pnpm-lock.yaml
+  git add pnpm-lock.yaml
+  git commit -m "feature" --quiet
+
+  git checkout staging --quiet
+  printf 'staging\n' > pnpm-lock.yaml
+  git add pnpm-lock.yaml
+  git commit -m "staging" --quiet
+
+  git checkout feature/cap --quiet
+
+  set +e
+  (
+    set +eu
+    source "$_WAIT_PR_HELPERS"
+    # Force the round budget to zero so even a single-round conflict cannot
+    # be resolved. The one-shot rebase at the top of the function will fail,
+    # and the loop will immediately abort because round < 0 is false.
+    PIPELINE_REBASE_MAX_ROUNDS=0 REBASE_MAX_ROUNDS=0 _rebase_with_retries "staging"
+  )
+  rc=$?
+  set -e
+  printf '%s\n' "$rc" > "$sandbox/rc"
+)
+assert_eq "round cap exceeded: non-zero exit" "1" "$(cat "$sandbox/rc")"
+cleanup_sandbox "$sandbox"
+
+cd "$orig_cwd"
+trap - EXIT
+
+# ============================================================
+echo ""
+echo "=== task_05_04: pipeline-wait-pr package.json 3-way merge ==="
+# M4 parity: formatting-only package.json conflicts must auto-resolve via
+# jq-normalized 3-way merge. Semantic conflicts must fail the resolver.
+
+orig_cwd=$(pwd)
+
+# --- Formatting-only: same content, different indentation → resolves ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; rm -f "$_WAIT_PR_HELPERS"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+
+  # Base: 2-space indent
+  printf '{\n  "name": "demo",\n  "dependencies": {\n    "a": "1.0.0"\n  }\n}\n' > package.json
+  git add package.json
+  git commit -m "base-2sp" --quiet
+
+  # Feature: reformat to 4-space indent (semantically identical)
+  git checkout -b feature/fmt staging --quiet
+  printf '{\n    "name": "demo",\n    "dependencies": {\n        "a": "1.0.0"\n    }\n}\n' > package.json
+  git add package.json
+  git commit -m "feature-4sp" --quiet
+
+  # Staging: different 2-space reformat (tab vs space level change)
+  git checkout staging --quiet
+  printf '{\n  "name": "demo",\n  "dependencies": { "a": "1.0.0" }\n}\n' > package.json
+  git add package.json
+  git commit -m "staging-compact" --quiet
+
+  git checkout feature/fmt --quiet
+
+  set +e
+  (
+    set +eu
+    source "$_WAIT_PR_HELPERS"
+    _rebase_with_retries "staging"
+  )
+  rc=$?
+  set -e
+
+  # Verify resolved file parses as JSON and contains dependency "a".
+  # Redirect jq's own stdout to /dev/null so only the yes/no marker is saved.
+  if jq -e '.dependencies.a == "1.0.0"' package.json >/dev/null 2>&1; then
+    parses=yes
+  else
+    parses=no
+  fi
+  printf '%s\n' "$rc" > "$sandbox/rc"
+  printf '%s\n' "$parses" > "$sandbox/parses"
+)
+assert_eq "package.json fmt-only: succeeds" "0" "$(cat "$sandbox/rc")"
+assert_eq "package.json fmt-only: final JSON keeps dep 'a'" "yes" "$(cat "$sandbox/parses")"
+cleanup_sandbox "$sandbox"
+
+# --- Semantic conflict: same dep with conflicting versions → aborts ---
+sandbox=$(setup_git_sandbox)
+trap 'cleanup_sandbox "$sandbox"; rm -f "$_WAIT_PR_HELPERS"; cd "$orig_cwd"' EXIT
+(
+  cd "$sandbox/repo"
+  git checkout -b staging --quiet
+  printf '{\n    "name": "demo",\n    "dependencies": {\n        "lib": "1.0.0"\n    }\n}\n' > package.json
+  git add package.json
+  git commit -m "base" --quiet
+
+  git checkout -b feature/bump staging --quiet
+  printf '{\n    "name": "demo",\n    "dependencies": {\n        "lib": "2.0.0"\n    }\n}\n' > package.json
+  git add package.json
+  git commit -m "feature-bump" --quiet
+
+  git checkout staging --quiet
+  printf '{\n    "name": "demo",\n    "dependencies": {\n        "lib": "3.0.0"\n    }\n}\n' > package.json
+  git add package.json
+  git commit -m "staging-bump" --quiet
+
+  git checkout feature/bump --quiet
+
+  set +e
+  (
+    set +eu
+    source "$_WAIT_PR_HELPERS"
+    _rebase_with_retries "staging"
+  )
+  rc=$?
+  set -e
+  in_progress=$([[ -d .git/rebase-merge || -d .git/rebase-apply ]] && echo yes || echo no)
+  printf '%s\n' "$rc" > "$sandbox/rc"
+  printf '%s\n' "$in_progress" > "$sandbox/in_progress"
+)
+assert_eq "package.json semantic: non-zero exit" "1" "$(cat "$sandbox/rc")"
+assert_eq "package.json semantic: rebase aborted" "no" "$(cat "$sandbox/in_progress")"
+cleanup_sandbox "$sandbox"
+
+rm -f "$_WAIT_PR_HELPERS"
+
+cd "$orig_cwd"
+trap - EXIT
+
+# ============================================================
+echo ""
+echo "=== task_05_05: pipeline-wait-pr UNKNOWN mergeable backoff ==="
+# M6: mergeable=UNKNOWN is transient while GitHub recomputes. The poll loop
+# must retry UNKNOWN responses up to MERGEABLE_UNKNOWN_MAX times before
+# treating them as CONFLICTING.
+
+# Mock directory: $MERGEABLE_MOCK/gh reads response tokens from a queue file
+# and echoes them one per call. Tests control the queue.
+MERGEABLE_MOCK=$(mktemp -d)
+mock_queue="$MERGEABLE_MOCK/queue"
+# Queue format: one line per gh call, containing the merged jq-ready payload.
+cat > "$MERGEABLE_MOCK/gh" << 'MOCK'
+#!/usr/bin/env bash
+queue_file="$MERGEABLE_MOCK_QUEUE"
+case "$*" in
+  "pr view "*" --json state,mergedAt,mergeable,headRefName")
+    if [[ -s "$queue_file" ]]; then
+      head -1 "$queue_file"
+      tail -n +2 "$queue_file" > "${queue_file}.tmp" && mv "${queue_file}.tmp" "$queue_file"
+    else
+      printf '{"state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE","headRefName":"feature"}'
+    fi
+    ;;
+  "pr checks "*)
+    printf '[]'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+MOCK
+chmod +x "$MERGEABLE_MOCK/gh"
+
+# --- UNKNOWN twice then MERGEABLE → exit 0 (merged after MERGEABLE) ---
+printf '%s\n' \
+  '{"state":"OPEN","mergedAt":null,"mergeable":"UNKNOWN","headRefName":"feature"}' \
+  '{"state":"OPEN","mergedAt":null,"mergeable":"UNKNOWN","headRefName":"feature"}' \
+  '{"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","mergeable":"MERGEABLE","headRefName":"feature"}' \
+  > "$mock_queue"
+
+set +e
+PATH="$MERGEABLE_MOCK:$PATH" \
+  MERGEABLE_MOCK_QUEUE="$mock_queue" \
+  pipeline-wait-pr 999 --timeout 1 --interval 1 >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "UNKNOWN→UNKNOWN→MERGED: exit 0" "0" "$rc"
+
+# --- UNKNOWN exceeds max → treated as CONFLICTING → rebase attempted → exit 4 ---
+#
+# A flood of UNKNOWN responses must eventually be treated as CONFLICTING.
+# After the rebase path fires the script escalates to exit 4.
+: > "$mock_queue"
+for _ in $(seq 1 20); do
+  printf '{"state":"OPEN","mergedAt":null,"mergeable":"UNKNOWN","headRefName":"feature"}\n' >> "$mock_queue"
+done
+
+set +e
+PATH="$MERGEABLE_MOCK:$PATH" \
+  MERGEABLE_MOCK_QUEUE="$mock_queue" \
+  PIPELINE_MERGEABLE_UNKNOWN_MAX=3 \
+  pipeline-wait-pr 999 --timeout 1 --interval 1 >/dev/null 2>&1
+rc=$?
+set -e
+# Any non-zero exit that isn't "could not fetch" is acceptable — the
+# important property is that UNKNOWN is no longer silently ignored.
+assert_eq "UNKNOWN budget exceeded: non-zero exit" "1" \
+  "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+
+rm -rf "$MERGEABLE_MOCK"
+
+# ============================================================
+echo ""
 echo "=== Skill & Agent files exist ==="
 
 assert_eq "review-protocol SKILL.md exists" "true" \

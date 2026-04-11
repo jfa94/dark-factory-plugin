@@ -47,42 +47,65 @@ branches_skipped=0
 worktrees_removed=0
 issues_closed=0
 spec_cleaned=false
+branch_warnings=()
 
 # --- Delete branches ---
 if [[ "$delete_branches" == "true" ]]; then
+  require_command gh
   log_info "cleaning up branches..."
 
-  # Iterate tasks, delete branches for done tasks with PR info
+  # Iterate tasks, delete branches only for tasks whose PR is MERGED.
+  # Task status of `done` can mean "review approved" — with humanReviewLevel
+  # >= 1 the PR is still open at that point. Deleting then would break the PR.
   while IFS= read -r task_entry; do
     task_id=$(printf '%s' "$task_entry" | jq -r '.key')
     task_status=$(printf '%s' "$task_entry" | jq -r '.value.status')
     branch=$(printf '%s' "$task_entry" | jq -r '.value.branch // empty')
+    pr_number=$(printf '%s' "$task_entry" | jq -r '.value.pr_number // empty')
 
     if [[ -z "$branch" ]]; then
       continue
     fi
 
-    if [[ "$task_status" == "done" ]]; then
-      deleted_any=false
-
-      # Delete remote branch
-      if git push origin --delete "$branch" 2>/dev/null; then
-        log_info "deleted remote branch: $branch"
-        deleted_any=true
-      fi
-
-      # Delete local branch
-      if git branch -d "$branch" 2>/dev/null; then
-        log_info "deleted local branch: $branch"
-        deleted_any=true
-      fi
-
-      if [[ "$deleted_any" == "true" ]]; then
-        branches_deleted=$((branches_deleted + 1))
-      fi
-    else
-      log_warn "skipping unmerged branch: $branch (task $task_id status=$task_status)"
+    if [[ "$task_status" != "done" ]]; then
+      log_warn "skipping unfinished branch: $branch (task $task_id status=$task_status)"
       branches_skipped=$((branches_skipped + 1))
+      branch_warnings+=("task=$task_id branch=$branch status=$task_status")
+      continue
+    fi
+
+    # Task is done — but only delete if the PR is actually MERGED.
+    if [[ -z "$pr_number" || "$pr_number" == "null" ]]; then
+      log_warn "skipping branch with no PR: $branch (task $task_id)"
+      branches_skipped=$((branches_skipped + 1))
+      branch_warnings+=("task=$task_id branch=$branch reason=no_pr")
+      continue
+    fi
+
+    pr_state=$(gh pr view "$pr_number" --json state -q .state 2>/dev/null || echo "UNKNOWN")
+    if [[ "$pr_state" != "MERGED" ]]; then
+      log_warn "skipping branch with $pr_state PR #$pr_number: $branch"
+      branches_skipped=$((branches_skipped + 1))
+      branch_warnings+=("task=$task_id branch=$branch pr=$pr_number state=$pr_state")
+      continue
+    fi
+
+    deleted_any=false
+
+    # Delete remote branch
+    if git push origin --delete "$branch" 2>/dev/null; then
+      log_info "deleted remote branch: $branch"
+      deleted_any=true
+    fi
+
+    # Delete local branch
+    if git branch -d "$branch" 2>/dev/null; then
+      log_info "deleted local branch: $branch"
+      deleted_any=true
+    fi
+
+    if [[ "$deleted_any" == "true" ]]; then
+      branches_deleted=$((branches_deleted + 1))
     fi
   done < <(printf '%s' "$state" | jq -c '.tasks | to_entries[]')
 fi
@@ -241,6 +264,11 @@ if [[ -d "$run_dir" ]]; then
 fi
 
 # Output results
+warnings_json="[]"
+if (( ${#branch_warnings[@]} > 0 )); then
+  warnings_json=$(printf '%s\n' "${branch_warnings[@]}" | jq -R . | jq -s .)
+fi
+
 jq -n \
   --arg run_id "$run_id" \
   --argjson branches_deleted "$branches_deleted" \
@@ -249,6 +277,7 @@ jq -n \
   --argjson issues_closed "$issues_closed" \
   --argjson spec_cleaned "$spec_cleaned" \
   --arg archive_path "$archive_dir" \
+  --argjson warnings "$warnings_json" \
   '{
     run_id: $run_id,
     branches_deleted: $branches_deleted,
@@ -256,5 +285,6 @@ jq -n \
     worktrees_removed: $worktrees_removed,
     issues_closed: $issues_closed,
     spec_cleaned: $spec_cleaned,
-    archive_path: $archive_path
+    archive_path: $archive_path,
+    warnings: $warnings
   }'

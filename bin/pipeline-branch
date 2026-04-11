@@ -15,7 +15,7 @@ case "$action" in
     base_branch="${DARK_FACTORY_BASE_BRANCH:-develop}"
     reconcile_status="skipped"
 
-    if git ls-remote --heads origin staging 2>/dev/null | grep -q staging; then
+    if git ls-remote --exit-code --heads origin staging &>/dev/null; then
       git fetch origin staging &>/dev/null || true
       git checkout staging &>/dev/null
       git pull origin staging &>/dev/null || true
@@ -23,7 +23,7 @@ case "$action" in
       # Reconcile staging with base branch to prevent drift between runs.
       # Fast-forward if possible, otherwise non-ff merge, otherwise fail cleanly.
       base_ref=""
-      if git ls-remote --heads origin "$base_branch" 2>/dev/null | grep -q "$base_branch"; then
+      if git ls-remote --exit-code --heads origin "$base_branch" &>/dev/null; then
         git fetch origin "$base_branch" &>/dev/null || true
         base_ref="origin/$base_branch"
       elif git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
@@ -55,7 +55,7 @@ case "$action" in
                   created "false" \
                   reconcile "$reconcile_status"
     else
-      if git ls-remote --heads origin "$base_branch" 2>/dev/null | grep -q "$base_branch"; then
+      if git ls-remote --exit-code --heads origin "$base_branch" &>/dev/null; then
         base="$base_branch"
         git fetch origin "$base_branch" &>/dev/null
         git checkout -b staging "origin/$base_branch" &>/dev/null
@@ -118,8 +118,51 @@ case "$action" in
         *) log_error "unknown flag: $1"; exit 1 ;;
       esac
     done
-    git checkout -b "$name" "$base" &>/dev/null
-    json_output branch "$name" base "$base" action "created"
+
+    _create_resume_rebase() {
+      # Try to rebase onto $base; emit a structured action=conflict on failure.
+      # Route git's own stderr to the script's stderr via log_* so it never
+      # contaminates the JSON on stdout.
+      if ! git rebase "$base" >&2; then
+        git rebase --abort >&2 2>/dev/null || true
+        json_output branch "$name" base "$base" action "conflict" \
+                    error "rebase_conflict"
+        exit 1
+      fi
+    }
+
+    if git show-ref --verify --quiet "refs/heads/$name"; then
+      # Local branch exists — resume path: check out + rebase.
+      if ! git checkout "$name" >&2; then
+        json_output branch "$name" base "$base" action "checkout_failed" \
+                    error "checkout_failed"
+        exit 1
+      fi
+      _create_resume_rebase
+      json_output branch "$name" base "$base" action "resumed"
+    elif git ls-remote --exit-code --heads origin "$name" &>/dev/null; then
+      # Remote-only branch — fetch, track, rebase.
+      if ! git fetch origin "$name" >&2; then
+        json_output branch "$name" base "$base" action "fetch_failed" \
+                    error "fetch_failed"
+        exit 1
+      fi
+      if ! git checkout -b "$name" "origin/$name" >&2; then
+        json_output branch "$name" base "$base" action "checkout_failed" \
+                    error "checkout_failed"
+        exit 1
+      fi
+      _create_resume_rebase
+      json_output branch "$name" base "$base" action "resumed"
+    else
+      # Fresh branch from base.
+      if ! git checkout -b "$name" "$base" >&2; then
+        json_output branch "$name" base "$base" action "create_failed" \
+                    error "checkout_failed"
+        exit 1
+      fi
+      json_output branch "$name" base "$base" action "created"
+    fi
     ;;
 
   worktree-create)
@@ -143,7 +186,7 @@ case "$action" in
     name="${1:?missing branch name}"
     if git show-ref --verify --quiet "refs/heads/$name" 2>/dev/null; then
       exit 0
-    elif git ls-remote --heads origin "$name" 2>/dev/null | grep -q "$name"; then
+    elif git ls-remote --exit-code --heads origin "$name" &>/dev/null; then
       exit 0
     else
       exit 1

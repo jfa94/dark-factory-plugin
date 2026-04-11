@@ -5,11 +5,16 @@ set -euo pipefail
 export CLAUDE_PLUGIN_DATA=$(mktemp -d)
 export PATH="$(cd "$(dirname "$0")" && pwd):$PATH"
 
-# Mock gh for --close-issues tests
+# Mock gh for --close-issues tests and PR-state gating tests.
+#
+# PR-state responses are driven by an on-disk map $MOCK_DIR/pr-state/<N> so
+# individual tests can override per-PR state without mutating the script.
+# Defaults to MERGED when no file exists; missing state file = UNKNOWN.
 MOCK_DIR=$(mktemp -d)
-cat > "$MOCK_DIR/gh" << 'MOCK_GH'
+mkdir -p "$MOCK_DIR/pr-state"
+cat > "$MOCK_DIR/gh" << MOCK_GH
 #!/usr/bin/env bash
-case "$*" in
+case "\$*" in
   "issue close 404")
     echo "Could not resolve issue" >&2
     exit 1
@@ -18,6 +23,16 @@ case "$*" in
     exit 0
     ;;
   "auth status")
+    exit 0
+    ;;
+  "pr view "*" --json state -q .state")
+    pr_num=\$(printf '%s' "\$*" | awk '{print \$3}')
+    state_file="$MOCK_DIR/pr-state/\$pr_num"
+    if [[ -f "\$state_file" ]]; then
+      cat "\$state_file"
+    else
+      echo MERGED
+    fi
     exit 0
     ;;
   *)
@@ -257,7 +272,7 @@ _create_test_run "test-cleanup-2" '{
   "updated_at": "2026-01-01T01:00:00Z",
   "input": {"issue_numbers": [], "resumed_from": null},
   "tasks": {
-    "T1": {"status": "done", "branch": "dark-factory/test/t1"},
+    "T1": {"status": "done", "pr_number": 1001, "branch": "dark-factory/test/t1"},
     "T2": {"status": "failed", "branch": "dark-factory/test/t2"},
     "T3": {"status": "needs_human_review", "branch": "dark-factory/test/t3"}
   },
@@ -265,7 +280,9 @@ _create_test_run "test-cleanup-2" '{
   "cost": {"total_tokens": 0, "estimated_usd": 0}
 }'
 
-# Run with --delete-branches (branches don't actually exist in git, so push/delete will silently fail)
+# Default PR mock returns MERGED, so T1 is eligible for deletion (push/branch
+# -d silently fail since branches don't actually exist). T2/T3 are skipped
+# because their task status is not 'done'.
 output=$(pipeline-cleanup "test-cleanup-2" --delete-branches 2>/dev/null)
 assert_eq "cleanup branches_skipped" "2" "$(printf '%s' "$output" | jq -r '.branches_skipped')"
 
@@ -543,6 +560,106 @@ _create_test_run "test-close-3" '{
 }'
 output=$(pipeline-cleanup "test-close-3" --close-issues 2>/dev/null)
 assert_eq "gh fail → no close" "0" "$(printf '%s' "$output" | jq -r '.issues_closed')"
+
+# ============================================================
+echo ""
+echo "=== task_05_06: pipeline-cleanup --delete-branches gates on PR state ==="
+# M19: 'done' means "task approved", not "PR merged". --delete-branches
+# must only delete branches whose PR is actually MERGED, otherwise the PR
+# review gets wiped out.
+#
+# The gh mock reads PR state from $MOCK_DIR/pr-state/<pr_num>. Defaults to
+# MERGED when no override file exists.
+
+# --- Case 1: open PR → skipped with warning ---
+printf 'OPEN' > "$MOCK_DIR/pr-state/7001"
+_create_test_run "test-delete-open" '{
+  "run_id": "test-delete-open",
+  "status": "partial",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done", "pr_number": 7001, "branch": "dark-factory/test/open-pr"}
+  },
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-delete-open" --delete-branches 2>/dev/null)
+assert_eq "open PR: branches_deleted=0" "0" "$(printf '%s' "$output" | jq -r '.branches_deleted')"
+assert_eq "open PR: branches_skipped=1" "1" "$(printf '%s' "$output" | jq -r '.branches_skipped')"
+assert_eq "open PR: warnings array non-empty" "1" \
+  "$(printf '%s' "$output" | jq -r '.warnings | length')"
+# Warning message mentions the OPEN state.
+assert_contains "open PR: warning mentions state=OPEN" "state=OPEN" \
+  "$(printf '%s' "$output" | jq -r '.warnings[0]')"
+rm -f "$MOCK_DIR/pr-state/7001"
+
+# --- Case 2: merged PR → branch deleted (push/branch -d silently fail) ---
+printf 'MERGED' > "$MOCK_DIR/pr-state/7002"
+_create_test_run "test-delete-merged" '{
+  "run_id": "test-delete-merged",
+  "status": "completed",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done", "pr_number": 7002, "branch": "dark-factory/test/merged-pr"}
+  },
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-delete-merged" --delete-branches 2>/dev/null)
+assert_eq "merged PR: branches_skipped=0" "0" "$(printf '%s' "$output" | jq -r '.branches_skipped')"
+assert_eq "merged PR: warnings empty" "0" \
+  "$(printf '%s' "$output" | jq -r '.warnings | length')"
+rm -f "$MOCK_DIR/pr-state/7002"
+
+# --- Case 3: closed unmerged PR → skipped ---
+printf 'CLOSED' > "$MOCK_DIR/pr-state/7003"
+_create_test_run "test-delete-closed" '{
+  "run_id": "test-delete-closed",
+  "status": "partial",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done", "pr_number": 7003, "branch": "dark-factory/test/closed-pr"}
+  },
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-delete-closed" --delete-branches 2>/dev/null)
+assert_eq "closed PR: branches_skipped=1" "1" "$(printf '%s' "$output" | jq -r '.branches_skipped')"
+assert_contains "closed PR: warning mentions state=CLOSED" "state=CLOSED" \
+  "$(printf '%s' "$output" | jq -r '.warnings[0]')"
+rm -f "$MOCK_DIR/pr-state/7003"
+
+# --- Case 4: task done with no PR number → skipped with no_pr reason ---
+_create_test_run "test-delete-nopr" '{
+  "run_id": "test-delete-nopr",
+  "status": "completed",
+  "mode": "prd",
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T01:00:00Z",
+  "updated_at": "2026-01-01T01:00:00Z",
+  "input": {"issue_numbers": [], "resumed_from": null},
+  "tasks": {
+    "T1": {"status": "done", "branch": "dark-factory/test/orphan"}
+  },
+  "circuit_breaker": {"tasks_completed": 1, "consecutive_failures": 0},
+  "cost": {"total_tokens": 0, "estimated_usd": 0}
+}'
+output=$(pipeline-cleanup "test-delete-nopr" --delete-branches 2>/dev/null)
+assert_eq "no PR: branches_skipped=1" "1" "$(printf '%s' "$output" | jq -r '.branches_skipped')"
+assert_contains "no PR: warning mentions no_pr" "reason=no_pr" \
+  "$(printf '%s' "$output" | jq -r '.warnings[0]')"
 
 # ============================================================
 echo ""

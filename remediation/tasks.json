@@ -507,7 +507,7 @@
     "findings": [
       "M1"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-branch",
       "bin/test-phase4.sh"
@@ -532,7 +532,7 @@
     "findings": [
       "M2"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-branch",
       "bin/test-phase4.sh"
@@ -560,7 +560,7 @@
     "findings": [
       "M4"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-wait-pr",
       "bin/test-phase4.sh"
@@ -589,7 +589,7 @@
       "M4",
       "parity: package.json 3-way merge"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-wait-pr",
       "bin/test-phase4.sh"
@@ -617,7 +617,7 @@
     "findings": [
       "M6"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-wait-pr",
       "bin/test-phase4.sh"
@@ -642,7 +642,7 @@
     "findings": [
       "M19"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-cleanup",
       "bin/test-phase5.sh"

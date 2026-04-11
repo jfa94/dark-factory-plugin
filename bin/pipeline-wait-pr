@@ -38,8 +38,11 @@ start_time=$(date +%s)
 # Auto-safe rebase: files we know how to resolve
 # - pnpm-lock.yaml, claude-progress.json, feature-status.json → ours
 # - .gitignore → union merge
-# - package.json → attempt 3-way merge
+# - package.json → jq-normalized 3-way merge
 SAFE_OURS_FILES="pnpm-lock.yaml claude-progress.json feature-status.json"
+REBASE_MAX_ROUNDS="${PIPELINE_REBASE_MAX_ROUNDS:-30}"
+# Count of UNKNOWN mergeable polls before treating as CONFLICTING.
+MERGEABLE_UNKNOWN_MAX="${PIPELINE_MERGEABLE_UNKNOWN_MAX:-12}"
 
 _elapsed() {
   local now
@@ -54,6 +57,142 @@ _check_pr_status() {
 _check_pr_checks() {
   gh pr checks "$pr" --json name,state,conclusion 2>/dev/null
 }
+
+# === REBASE_HELPERS_START ===
+# Resolve one auto-safe conflict file in the current rebase. Returns 0 on
+# success, 1 if the file is not auto-safe (caller must abort the rebase).
+_resolve_safe_conflict() {
+  local cf="$1"
+
+  for sf in $SAFE_OURS_FILES; do
+    if [[ "$cf" == "$sf" ]]; then
+      git checkout --ours -- "$cf" 2>/dev/null || return 1
+      git add -- "$cf" 2>/dev/null || return 1
+      return 0
+    fi
+  done
+
+  case "$cf" in
+    .gitignore)
+      local tmp_union
+      tmp_union=$(mktemp)
+      { git show REBASE_HEAD:.gitignore 2>/dev/null || true
+        git show HEAD:.gitignore 2>/dev/null || true
+      } > "$tmp_union"
+      sort -u "$tmp_union" > "$cf"
+      rm -f "$tmp_union"
+      git add -- "$cf" 2>/dev/null || return 1
+      return 0
+      ;;
+    package.json)
+      # 3-way merge using jq --indent 4 to normalize formatting across
+      # base/ours/theirs, then git merge-file. Preserves semantic changes,
+      # resolves whitespace/indent-only conflicts.
+      local _pkg_tmp
+      _pkg_tmp=$(mktemp -d)
+      if git show ":1:package.json" 2>/dev/null \
+            | jq --indent 4 '.' > "$_pkg_tmp/base.json" 2>/dev/null \
+         && git show ":2:package.json" 2>/dev/null \
+            | jq --indent 4 '.' > "$_pkg_tmp/ours.json" 2>/dev/null \
+         && git show ":3:package.json" 2>/dev/null \
+            | jq --indent 4 '.' > "$_pkg_tmp/theirs.json" 2>/dev/null \
+         && git merge-file -p \
+              "$_pkg_tmp/ours.json" "$_pkg_tmp/base.json" "$_pkg_tmp/theirs.json" \
+              > "$_pkg_tmp/merged.json" 2>/dev/null; then
+        cp "$_pkg_tmp/merged.json" package.json
+        git add -- package.json 2>/dev/null
+        rm -rf "$_pkg_tmp"
+        log_info "auto-resolved package.json formatting conflict"
+        return 0
+      fi
+      rm -rf "$_pkg_tmp"
+      log_warn "package.json has semantic conflicts — cannot auto-resolve"
+      return 1
+      ;;
+  esac
+  return 1
+}
+
+# Multi-round rebase loop. Runs up to REBASE_MAX_ROUNDS rounds of
+# rebase/conflict-resolve/continue, handling auto-safe file conflicts each
+# round. Returns 0 on success, 1 on abort.
+_rebase_with_retries() {
+  local base_ref="$1"
+
+  if git rebase --empty=drop "$base_ref" 2>/dev/null; then
+    return 0
+  fi
+
+  local round=0
+  while (( round < REBASE_MAX_ROUNDS )); do
+    round=$((round + 1))
+
+    local conflict_files
+    conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null) || true
+
+    if [[ -z "$conflict_files" ]]; then
+      # No conflict markers — commit became empty. Skip it.
+      if GIT_EDITOR=true git rebase --skip 2>/dev/null; then
+        return 0
+      fi
+      continue
+    fi
+
+    local has_unsafe=false
+    while IFS= read -r cf; do
+      [[ -z "$cf" ]] && continue
+      local safe=false
+      for sf in $SAFE_OURS_FILES; do
+        if [[ "$cf" == "$sf" ]]; then safe=true; break; fi
+      done
+      [[ "$cf" == ".gitignore" || "$cf" == "package.json" ]] && safe=true
+      if [[ "$safe" != "true" ]]; then
+        has_unsafe=true
+        break
+      fi
+    done <<< "$conflict_files"
+
+    if [[ "$has_unsafe" == "true" ]]; then
+      log_error "rebase round $round: unsafe conflict files: $conflict_files"
+      git rebase --abort 2>/dev/null || true
+      return 1
+    fi
+
+    log_warn "rebase round $round: auto-resolving safe conflicts"
+    local resolve_ok=true
+    while IFS= read -r cf; do
+      [[ -z "$cf" ]] && continue
+      if ! _resolve_safe_conflict "$cf"; then
+        resolve_ok=false
+        break
+      fi
+    done <<< "$conflict_files"
+
+    if [[ "$resolve_ok" != "true" ]]; then
+      git rebase --abort 2>/dev/null || true
+      return 1
+    fi
+
+    if GIT_EDITOR=true git rebase --continue 2>/dev/null; then
+      return 0
+    fi
+
+    # --continue failed — detect empty-commit case (no new conflict markers).
+    local post
+    post=$(git diff --name-only --diff-filter=U 2>/dev/null) || true
+    if [[ -z "$post" ]]; then
+      if GIT_EDITOR=true git rebase --skip 2>/dev/null; then
+        return 0
+      fi
+    fi
+    # Otherwise loop again to resolve the next round of conflicts.
+  done
+
+  log_error "rebase exceeded $REBASE_MAX_ROUNDS rounds"
+  git rebase --abort 2>/dev/null || true
+  return 1
+}
+# === REBASE_HELPERS_END ===
 
 _attempt_rebase() {
   local head_branch
@@ -70,67 +209,17 @@ _attempt_rebase() {
   # Check out the PR branch
   git checkout "$head_branch" 2>/dev/null || return 1
 
-  local rebase_ok=true
-  if ! git rebase "origin/staging" 2>/dev/null; then
-    # Check if conflicts are in safe files
+  if ! _rebase_with_retries "origin/staging"; then
     local conflicted_files
     conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null)
+    git rebase --abort 2>/dev/null || true
+    git checkout "$current_branch" 2>/dev/null
 
-    if [[ -z "$conflicted_files" ]]; then
-      git rebase --abort 2>/dev/null
-      git checkout "$current_branch" 2>/dev/null
-      return 1
-    fi
-
-    local has_unsafe=false
-    while IFS= read -r cf; do
-      local is_safe=false
-
-      # Check ours-strategy files
-      for sf in $SAFE_OURS_FILES; do
-        if [[ "$cf" == "$sf" ]]; then
-          git checkout --ours "$cf" 2>/dev/null
-          git add "$cf" 2>/dev/null
-          is_safe=true
-          break
-        fi
-      done
-
-      # Check .gitignore (union merge: combine both sides, deduplicate)
-      if [[ "$cf" == ".gitignore" ]]; then
-        local tmp_union
-        tmp_union=$(mktemp)
-        { git show REBASE_HEAD:.gitignore 2>/dev/null || true; git show HEAD:.gitignore 2>/dev/null || true; } > "$tmp_union"
-        sort -u "$tmp_union" > "$cf"
-        rm -f "$tmp_union"
-        git add "$cf" 2>/dev/null
-        is_safe=true
-      fi
-
-      if [[ "$is_safe" != "true" ]]; then
-        has_unsafe=true
-        break
-      fi
-    done <<< "$conflicted_files"
-
-    if [[ "$has_unsafe" == "true" ]]; then
-      git rebase --abort 2>/dev/null
-      git checkout "$current_branch" 2>/dev/null
-
-      # Output conflict info
-      jq -n \
-        --arg branch "$head_branch" \
-        --arg files "$conflicted_files" \
-        '{branch: $branch, conflicted_files: ($files | split("\n") | map(select(length > 0)))}'
-      return 1
-    fi
-
-    # All conflicts resolved, continue rebase
-    GIT_EDITOR=true git rebase --continue 2>/dev/null || {
-      git rebase --abort 2>/dev/null
-      git checkout "$current_branch" 2>/dev/null
-      return 1
-    }
+    jq -n \
+      --arg branch "$head_branch" \
+      --arg files "$conflicted_files" \
+      '{branch: $branch, conflicted_files: ($files | split("\n") | map(select(length > 0)))}'
+    return 1
   fi
 
   # Push the rebased branch
@@ -147,6 +236,7 @@ _attempt_rebase() {
 # --- Main poll loop ---
 
 rebase_attempted=false
+unknown_count=0
 
 while true; do
   elapsed=$(_elapsed)
@@ -182,6 +272,23 @@ while true; do
     log_error "PR #${pr} closed without merge"
     jq -n --arg pr "$pr" '{status: "closed", pr: $pr}'
     exit 2
+  fi
+
+  # GitHub may return UNKNOWN for a few polls while it computes the merge
+  # status (typical window: 5-30s after a push). Re-poll with a bounded
+  # budget instead of treating UNKNOWN as a definitive state.
+  if [[ "$mergeable" == "UNKNOWN" || -z "$mergeable" || "$mergeable" == "null" ]]; then
+    unknown_count=$((unknown_count + 1))
+    if (( unknown_count >= MERGEABLE_UNKNOWN_MAX )); then
+      log_warn "PR #${pr} mergeable=UNKNOWN after $unknown_count polls — treating as CONFLICTING"
+      mergeable="CONFLICTING"
+    else
+      log_info "PR #${pr} mergeable=UNKNOWN, waiting ($unknown_count/$MERGEABLE_UNKNOWN_MAX)"
+      sleep 10
+      continue
+    fi
+  else
+    unknown_count=0
   fi
 
   # Check for merge conflicts

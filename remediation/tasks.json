@@ -823,7 +823,7 @@
     "description": "commands/configure.md:98 uses `--argjson v <value>` uniformly. String values (ollamaUrl, model) fail because they're not valid JSON. Distinguish: numeric/boolean → --argjson; string → --arg. Document the distinction.",
     "priority": "P1",
     "findings": ["M(configure string)"],
-    "status": "pending",
+    "status": "done",
     "files": ["commands/configure.md"],
     "acceptance_criteria": [
       "Documentation and example use --arg for strings, --argjson for numbers/booleans",
@@ -842,7 +842,7 @@
     "description": "The PRD uses 'quality.holdoutPercent' but plugin.json uses 'holdout.percent'. PRD uses 'quality.mutationScoreTarget' but plugin.json uses 'mutationTesting.scoreThreshold'. Pick one naming and fix the other. Coordinate with task_14_02 (PRD honesty updates).",
     "priority": "P1",
     "findings": ["M(config drift)"],
-    "status": "pending",
+    "status": "done",
     "files": [
       ".claude-plugin/plugin.json",
       "02-quality-and-config.md",

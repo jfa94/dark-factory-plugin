@@ -38,11 +38,11 @@ If no specific setting was requested, show all settings grouped by category:
 
 ### Circuit Breaker
 
-| Setting                                 | Current | Default | Description                              |
-| --------------------------------------- | ------- | ------- | ---------------------------------------- |
-| `circuitBreaker.maxTasks`               | -       | 20      | Max tasks per run                        |
-| `circuitBreaker.maxRuntimeMinutes`      | -       | 360     | Max runtime in minutes                   |
-| `circuitBreaker.maxConsecutiveFailures` | -       | 3       | Max consecutive failures before stopping |
+| Setting                  | Current | Default | Description                              |
+| ------------------------ | ------- | ------- | ---------------------------------------- |
+| `maxTasks`               | -       | 20      | Max tasks per run                        |
+| `maxRuntimeMinutes`      | -       | 360     | Max runtime in minutes                   |
+| `maxConsecutiveFailures` | -       | 3       | Max consecutive failures before stopping |
 
 ### Review
 
@@ -55,12 +55,13 @@ If no specific setting was requested, show all settings grouped by category:
 
 ### Quality Gates
 
-| Setting                          | Current | Default | Description                        |
-| -------------------------------- | ------- | ------- | ---------------------------------- |
-| `holdout.enabled`                | -       | true    | Enable holdout validation          |
-| `holdout.percent`                | -       | 20      | Percentage of criteria to withhold |
-| `mutationTesting.enabled`        | -       | true    | Enable mutation testing            |
-| `mutationTesting.scoreThreshold` | -       | 80      | Minimum mutation score             |
+| Setting                           | Current | Default                  | Description                                                   |
+| --------------------------------- | ------- | ------------------------ | ------------------------------------------------------------- |
+| `quality.holdoutPercent`          | -       | 20                       | Percentage of criteria to withhold (set 0 to disable holdout) |
+| `quality.holdoutPassRate`         | -       | 80                       | Minimum % of withheld criteria that must be satisfied         |
+| `quality.mutationScoreTarget`     | -       | 80                       | Minimum mutation score percentage                             |
+| `quality.mutationTestingTiers`    | -       | `["feature","security"]` | Risk tiers requiring mutation testing (empty array disables)  |
+| `quality.coverageMustNotDecrease` | -       | true                     | Block tasks that decrease test coverage                       |
 
 ### Local LLM (Ollama)
 
@@ -72,9 +73,9 @@ If no specific setting was requested, show all settings grouped by category:
 
 ### Parallel Execution
 
-| Setting                  | Current | Default | Description                   |
-| ------------------------ | ------- | ------- | ----------------------------- |
-| `parallel.maxConcurrent` | -       | 3       | Max concurrent task executors |
+| Setting            | Current | Default | Description                   |
+| ------------------ | ------- | ------- | ----------------------------- |
+| `maxParallelTasks` | -       | 3       | Max concurrent task executors |
 
 Fill in the "Current" column with actual values from the loaded config.
 
@@ -82,15 +83,22 @@ Fill in the "Current" column with actual values from the loaded config.
 
 If the user specifies a setting to change:
 
-1. **Validate the value** — check type and range:
+1. **Validate the value** — check type and range against the canonical schema in
+   `.claude-plugin/plugin.json`. Examples (canonical key names — these are the
+   ones the rest of the plugin reads):
    - `humanReviewLevel`: integer 0-4
-   - `circuitBreaker.*`: positive integers
-   - `review.*Rounds`: positive integers
-   - `holdout.percent`: integer 1-50
-   - `mutationTesting.scoreThreshold`: integer 50-100
-   - `localLlm.enabled`: boolean
-   - `localLlm.ollamaUrl`: valid URL (starts with http)
-   - `parallel.maxConcurrent`: integer 1-10
+   - `maxTasks`, `maxRuntimeMinutes`, `maxConsecutiveFailures`: positive integers
+   - `maxParallelTasks`: integer 1-10
+   - `review.routineRounds` / `review.featureRounds` / `review.securityRounds`: positive integers
+   - `review.preferCodex`: boolean
+   - `quality.holdoutPercent`: integer 0-50
+   - `quality.holdoutPassRate`: integer 50-100
+   - `quality.mutationScoreTarget`: integer 50-100
+   - `quality.coverageMustNotDecrease`: boolean
+   - `localLlm.enabled`, `localLlm.useLiteLlm`: boolean
+   - `localLlm.ollamaUrl`, `localLlm.liteLlmUrl`: valid URL (starts with http)
+   - `localLlm.model`: non-empty string
+   - `execution.defaultModel`: one of `haiku`, `sonnet`, `opus`
 
 2. **For `localLlm` changes**: probe Ollama availability:
 
@@ -101,21 +109,43 @@ If the user specifies a setting to change:
    If unreachable, warn the user but still save the setting.
 
 3. **Write the updated config** (always to config.json, never to run state).
-   The key is a dotted path like `circuitBreaker.maxTasks`. Split it into a path
-   array and use `setpath` so the assignment creates a nested object instead of a
-   flat key with a literal dot in its name. `setpath` also auto-creates any
-   missing intermediate objects.
+   The key is a dotted path like `review.routineRounds` or `localLlm.ollamaUrl`.
+   Split it into a path array and use `setpath` so the assignment creates a
+   nested object instead of a flat key with a literal dot in its name. `setpath`
+   also auto-creates any missing intermediate objects.
+
+   **CRITICAL: pick the right jq flag for the value type.**
+   - `--argjson` parses the value as JSON. Use it for **numbers and booleans**
+     (e.g. `20`, `0.9`, `true`). Passing a string here will fail because raw
+     strings aren't valid JSON.
+   - `--arg` passes the value as a string. Use it for **string-typed settings**
+     (e.g. `localLlm.ollamaUrl`, `localLlm.model`, `execution.defaultModel`).
+
+   Number / boolean (use `--argjson`):
 
    ```bash
    tmpfile=$(mktemp "${CLAUDE_PLUGIN_DATA}/config.XXXXXX")
-   jq --arg k "<key>" --argjson v <value> \
+   jq --arg k "review.routineRounds" --argjson v 3 \
      'setpath(($k | split(".")); $v)' \
      "${CLAUDE_PLUGIN_DATA}/config.json" > "$tmpfile"
    mv -f "$tmpfile" "${CLAUDE_PLUGIN_DATA}/config.json"
    ```
 
-   Example: `k=circuitBreaker.maxTasks`, `v=20` produces
-   `{"circuitBreaker":{"maxTasks":20}}` — NOT `{"circuitBreaker.maxTasks":20}`.
+   String (use `--arg`):
+
+   ```bash
+   tmpfile=$(mktemp "${CLAUDE_PLUGIN_DATA}/config.XXXXXX")
+   jq --arg k "localLlm.ollamaUrl" --arg v "http://192.168.1.50:11434" \
+     'setpath(($k | split(".")); $v)' \
+     "${CLAUDE_PLUGIN_DATA}/config.json" > "$tmpfile"
+   mv -f "$tmpfile" "${CLAUDE_PLUGIN_DATA}/config.json"
+   ```
+
+   Example: `k=review.routineRounds`, `v=3` produces
+   `{"review":{"routineRounds":3}}` — NOT `{"review.routineRounds":3}`.
+
+   For arrays (e.g. `quality.mutationTestingTiers`), pass the JSON literal via
+   `--argjson v '["feature","security"]'`.
 
 4. **Confirm the change** — show the updated value.
 

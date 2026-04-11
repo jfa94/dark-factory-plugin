@@ -184,7 +184,7 @@ echo "=== pipeline-circuit-breaker ==="
 
 # Write config
 mkdir -p "$CLAUDE_PLUGIN_DATA"
-echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}}' > "$CLAUDE_PLUGIN_DATA/config.json"
+echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
 
 # Should be safe (1 task completed, 0 failures)
 assert_exit "circuit breaker safe" 0 pipeline-circuit-breaker "run-test-001"
@@ -201,7 +201,7 @@ assert_exit "circuit breaker tripped (max tasks)" 1 pipeline-circuit-breaker "ru
 # Runtime threshold: set maxRuntimeMinutes to 1 and started_at well in the past
 pipeline-state write "run-test-001" '.circuit_breaker.tasks_completed' '0' >/dev/null 2>&1
 pipeline-state write "run-test-001" '.started_at' '"2020-01-01T00:00:00Z"' >/dev/null 2>&1
-echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":1,"maxConsecutiveFailures":3}}' > "$CLAUDE_PLUGIN_DATA/config.json"
+echo '{"maxTasks":20,"maxRuntimeMinutes":1,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
 output=$(pipeline-circuit-breaker "run-test-001" 2>/dev/null) || true
 assert_exit "circuit breaker tripped (runtime)" 1 pipeline-circuit-breaker "run-test-001"
 # Reason field should mention runtime
@@ -214,7 +214,7 @@ else
 fi
 
 # Restore defaults for subsequent tests
-echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}}' > "$CLAUDE_PLUGIN_DATA/config.json"
+echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
 pipeline-state write "run-test-001" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
 
 echo ""
@@ -356,7 +356,7 @@ else
   past_240m=$(date -u -v-240M +%Y-%m-%dT%H:%M:%SZ)
 fi
 pipeline-state write "run-cb-pause" '.started_at' "\"$past_240m\"" >/dev/null 2>&1
-echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":180,"maxConsecutiveFailures":3}}' \
+echo '{"maxTasks":20,"maxRuntimeMinutes":180,"maxConsecutiveFailures":3}' \
   > "$CLAUDE_PLUGIN_DATA/config.json"
 
 # Without pause: breaker should trip (240 > 180).
@@ -392,7 +392,7 @@ runtime=$(printf '%s' "$output" | jq -r '.runtime_minutes')
 assert_eq "breaker clamps runtime at 0 when pause > wall clock" "0" "$runtime"
 
 # Restore defaults for subsequent tests and reset state.
-echo '{"circuitBreaker":{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}}' \
+echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' \
   > "$CLAUDE_PLUGIN_DATA/config.json"
 
 echo ""

@@ -102,7 +102,7 @@ The pipeline runs tasks in two nested loops:
 ```
 Load execution_order from state: pipeline-state read <run-id> .execution_order
 Determine distinct parallel_group values, sorted ascending: [0, 1, 2, ...]
-maxConcurrent = read_config '.parallel.maxConcurrent' (default 3)
+maxConcurrent = read_config '.maxParallelTasks' (default 3)
 
 For each group G (in ascending order):
   tasks_in_group = [entry.task_id for entry in execution_order if entry.parallel_group == G]

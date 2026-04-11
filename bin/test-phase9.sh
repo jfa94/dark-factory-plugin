@@ -147,31 +147,105 @@ CFG_FILE="$CFG_DIR/config.json"
 echo '{}' > "$CFG_FILE"
 
 CFG_TMP=$(mktemp "$CFG_DIR/config.XXXXXX")
-jq --arg k "circuitBreaker.maxTasks" --argjson v 20 \
+jq --arg k "review.routineRounds" --argjson v 3 \
   'setpath(($k | split(".")); $v)' \
   "$CFG_FILE" > "$CFG_TMP"
 mv -f "$CFG_TMP" "$CFG_FILE"
 
-nested_value=$(jq -r '.circuitBreaker.maxTasks // "missing"' "$CFG_FILE")
-assert_eq "setpath creates nested circuitBreaker.maxTasks" "20" "$nested_value"
+nested_value=$(jq -r '.review.routineRounds // "missing"' "$CFG_FILE")
+assert_eq "setpath creates nested review.routineRounds" "3" "$nested_value"
 
-flat_value=$(jq -r '."circuitBreaker.maxTasks" // "missing"' "$CFG_FILE")
+flat_value=$(jq -r '."review.routineRounds" // "missing"' "$CFG_FILE")
 assert_eq "no flat key with literal dot in name" "missing" "$flat_value"
 
 # Adding a sibling key under the same namespace must preserve the first.
 CFG_TMP2=$(mktemp "$CFG_DIR/config.XXXXXX")
-jq --arg k "circuitBreaker.maxRuntimeMinutes" --argjson v 360 \
+jq --arg k "review.featureRounds" --argjson v 5 \
   'setpath(($k | split(".")); $v)' \
   "$CFG_FILE" > "$CFG_TMP2"
 mv -f "$CFG_TMP2" "$CFG_FILE"
 
-sibling_first=$(jq -r '.circuitBreaker.maxTasks' "$CFG_FILE")
-sibling_second=$(jq -r '.circuitBreaker.maxRuntimeMinutes' "$CFG_FILE")
-assert_eq "sibling write preserves circuitBreaker.maxTasks" "20" "$sibling_first"
-assert_eq "sibling write adds circuitBreaker.maxRuntimeMinutes" "360" "$sibling_second"
+sibling_first=$(jq -r '.review.routineRounds' "$CFG_FILE")
+sibling_second=$(jq -r '.review.featureRounds' "$CFG_FILE")
+assert_eq "sibling write preserves review.routineRounds" "3" "$sibling_first"
+assert_eq "sibling write adds review.featureRounds" "5" "$sibling_second"
+
+# task_08_03: string-typed settings must use --arg, not --argjson, because raw
+# strings (e.g. URLs) are not valid JSON literals. Confirm both that the
+# documented technique works at runtime AND that configure.md documents both
+# variants.
+CFG_TMP3=$(mktemp "$CFG_DIR/config.XXXXXX")
+jq --arg k "localLlm.ollamaUrl" --arg v "http://192.168.1.50:11434" \
+  'setpath(($k | split(".")); $v)' \
+  "$CFG_FILE" > "$CFG_TMP3"
+mv -f "$CFG_TMP3" "$CFG_FILE"
+
+string_value=$(jq -r '.localLlm.ollamaUrl // "missing"' "$CFG_FILE")
+assert_eq "setpath with --arg writes string localLlm.ollamaUrl" \
+  "http://192.168.1.50:11434" "$string_value"
+
+# Sanity-check: --argjson on the same raw string SHOULD fail, proving why we
+# need the string/number distinction in the first place.
+CFG_TMP4=$(mktemp "$CFG_DIR/config.XXXXXX")
+if jq --arg k "localLlm.ollamaUrl" --argjson v "http://192.168.1.50:11434" \
+  'setpath(($k | split(".")); $v)' \
+  "$CFG_FILE" > "$CFG_TMP4" 2>/dev/null; then
+  echo "  FAIL: --argjson unexpectedly accepted a raw URL string"
+  fail=$((fail + 1))
+else
+  echo "  PASS: --argjson rejects raw URL string (proves --arg is required for strings)"
+  pass=$((pass + 1))
+fi
+rm -f "$CFG_TMP4"
 
 [[ -n "${CFG_DIR:-}" && "$CFG_DIR" == "${TMPDIR:-/tmp}"/* ]] && rm -rf "$CFG_DIR"
-unset CFG_DIR CFG_FILE CFG_TMP CFG_TMP2
+unset CFG_DIR CFG_FILE CFG_TMP CFG_TMP2 CFG_TMP3 CFG_TMP4
+
+# task_08_03: configure.md must document the --arg vs --argjson distinction.
+# Note: grep -qF would interpret a leading "--" as an option terminator, so the
+# assertions search for unambiguous substrings of the documented examples.
+assert_contains "configure.md documents argjson for numbers/booleans" \
+  'argjson v 3' "$CONFIGURE"
+assert_contains "configure.md documents arg for strings" \
+  'arg v "http://192.168.1.50:11434"' "$CONFIGURE"
+assert_contains "configure.md gives a string-valued example (localLlm.ollamaUrl)" \
+  'localLlm.ollamaUrl' "$CONFIGURE"
+assert_contains "configure.md gives a numeric example (review.routineRounds)" \
+  'review.routineRounds' "$CONFIGURE"
+
+# task_08_04: plugin.json keys must match the canonical names used in the PRD.
+# Both directions: every key in plugin.json must appear in 02-quality-and-config.md,
+# and every key documented in the PRD must exist in plugin.json. (We restrict to
+# the user-config schema section, not prose mentions.)
+PRD="$PLUGIN_ROOT/02-quality-and-config.md"
+assert_file_exists "PRD 02-quality-and-config.md exists" "$PRD"
+
+while IFS= read -r key; do
+  if grep -qF "$key:" "$PRD"; then
+    echo "  PASS: PRD documents userConfig key $key"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: PRD missing userConfig key $key"
+    fail=$((fail + 1))
+  fi
+done < <(jq -r '.userConfig | keys[]' "$PLUGIN_JSON")
+
+# task_08_04: legacy key names must not appear in code or docs that the plugin
+# actually reads at runtime (excludes remediation/ history and the plan files
+# describing the migration itself).
+for legacy in 'circuitBreaker.maxTasks' 'parallel.maxConcurrent' 'holdout.percent' 'mutationTesting.scoreThreshold'; do
+  hits=$(grep -RIl --exclude-dir=remediation --exclude-dir=.git \
+    --exclude='03-components.md' --exclude='01-prd.md' \
+    --exclude-dir=node_modules \
+    -F "$legacy" "$PLUGIN_ROOT" 2>/dev/null | grep -v test-phase9.sh || true)
+  if [[ -z "$hits" ]]; then
+    echo "  PASS: no live reference to legacy key $legacy"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: legacy key $legacy still referenced in: $hits"
+    fail=$((fail + 1))
+  fi
+done
 
 # ============================================================
 echo ""

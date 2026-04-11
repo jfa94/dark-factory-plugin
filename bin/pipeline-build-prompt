@@ -36,9 +36,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Resolve current run id once — used for both .spec.path and prior-work lookup.
+state_run_id=$(current_run_id 2>/dev/null || true)
+
 # If still unset, resolve via current run's state.json (.spec.path).
 if [[ -z "$spec_path" ]]; then
-  state_run_id=$(current_run_id 2>/dev/null || true)
   if [[ -n "${state_run_id:-}" ]]; then
     resolved=$(pipeline-state read "$state_run_id" '.spec.path' 2>/dev/null || true)
     # jq renders missing keys as literal "null"; treat that as absent
@@ -144,6 +146,35 @@ Review the existing changes before implementing anything new."
   fi
 fi
 
+# Resume context — emitted when state has prior_work_dir/branch/commit recorded
+# for this task (set by the orchestrator when a task is paused mid-execution).
+# Read all three fields from the current run's state.
+resume_context=""
+if [[ -n "${state_run_id:-}" ]] && [[ "$task_id" != "null" && -n "$task_id" ]]; then
+  prior_dir=$(pipeline-state read "$state_run_id" ".tasks.${task_id}.prior_work_dir" 2>/dev/null || true)
+  prior_branch=$(pipeline-state read "$state_run_id" ".tasks.${task_id}.prior_branch" 2>/dev/null || true)
+  prior_commit=$(pipeline-state read "$state_run_id" ".tasks.${task_id}.prior_commit" 2>/dev/null || true)
+  # jq -r renders missing keys as literal "null" — strip those.
+  [[ "$prior_dir" == "null" ]] && prior_dir=""
+  [[ "$prior_branch" == "null" ]] && prior_branch=""
+  [[ "$prior_commit" == "null" ]] && prior_commit=""
+  if [[ -n "$prior_dir" || -n "$prior_branch" || -n "$prior_commit" ]]; then
+    resume_context="
+## Resume Context
+
+This task was previously started in worktree: ${prior_dir}
+Branch: ${prior_branch}
+Last commit on that branch: ${prior_commit}
+
+Before starting new work:
+
+1. \`git fetch origin ${prior_branch}\`
+2. \`git checkout ${prior_branch}\` (or create a new worktree from it)
+3. Review what was previously written — look at \`git log\`, \`git diff main..HEAD\`
+4. Only make NEW changes or corrections — do not redo completed work"
+  fi
+fi
+
 # Build prompt
 prompt="# Task: ${title}
 
@@ -171,7 +202,7 @@ Read the spec directly via one of:
 
 ## Spec Context
 ${spec_content}
-${prior_work}"
+${prior_work}${resume_context}"
 
 # Append fix instructions if provided
 if [[ -n "$fix_instructions" ]]; then

@@ -60,13 +60,7 @@ assert_exit "always exits 0" 0 pipeline-detect-reviewer
 echo ""
 echo "=== pipeline-parse-review (APPROVE) ==="
 
-approve_input='## Review Verdict
-
-**VERDICT:** APPROVE
-**ROUND:** 2
-**CONFIDENCE:** HIGH
-
-## Findings
+approve_input='## Findings
 
 ### [NON-BLOCKING] Minor style issue
 - **File:** src/utils.ts:10
@@ -82,7 +76,14 @@ approve_input='## Review Verdict
 | Password is hashed | PASS | src/auth.ts:55 |
 
 ## Summary
-Code looks correct and well-tested.'
+Code looks correct and well-tested.
+
+## Verdict
+
+VERDICT: APPROVE
+CONFIDENCE: HIGH
+BLOCKERS: 0
+ROUND: 2'
 
 output=$(printf '%s' "$approve_input" | pipeline-parse-review 2>/dev/null)
 assert_eq "verdict APPROVE" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
@@ -98,13 +99,7 @@ assert_eq "criteria failed 0" "0" "$(echo "$output" | jq -r '.criteria_failed')"
 echo ""
 echo "=== pipeline-parse-review (REQUEST_CHANGES) ==="
 
-changes_input='## Review Verdict
-
-**VERDICT:** REQUEST_CHANGES
-**ROUND:** 1
-**CONFIDENCE:** HIGH
-
-## Findings
+changes_input='## Findings
 
 ### [BLOCKING] SQL injection vulnerability
 - **File:** src/db.ts:23
@@ -140,7 +135,14 @@ changes_input='## Review Verdict
 | Error logging | PASS | src/logger.ts:12 |
 
 ## Summary
-Critical security issues and missing validation.'
+Critical security issues and missing validation.
+
+## Verdict
+
+VERDICT: REQUEST_CHANGES
+CONFIDENCE: HIGH
+BLOCKERS: 2
+ROUND: 1'
 
 output=$(printf '%s' "$changes_input" | pipeline-parse-review 2>/dev/null)
 assert_eq "verdict REQUEST_CHANGES" "REQUEST_CHANGES" "$(echo "$output" | jq -r '.verdict')"
@@ -162,13 +164,7 @@ assert_eq "first finding category" "security" "$(echo "$output" | jq -r '.findin
 echo ""
 echo "=== pipeline-parse-review (NEEDS_DISCUSSION) ==="
 
-discuss_input='## Review Verdict
-
-**VERDICT:** NEEDS_DISCUSSION
-**ROUND:** 3
-**CONFIDENCE:** LOW
-
-## Findings
+discuss_input='## Findings
 
 ## Acceptance Criteria Check
 
@@ -177,7 +173,14 @@ discuss_input='## Review Verdict
 | Feature works | PASS | src/feature.ts:10 |
 
 ## Summary
-Architectural concern needs human input.'
+Architectural concern needs human input.
+
+## Verdict
+
+VERDICT: NEEDS_DISCUSSION
+CONFIDENCE: LOW
+BLOCKERS: 0
+ROUND: 3'
 
 output=$(printf '%s' "$discuss_input" | pipeline-parse-review 2>/dev/null)
 assert_eq "verdict NEEDS_DISCUSSION" "NEEDS_DISCUSSION" "$(echo "$output" | jq -r '.verdict')"

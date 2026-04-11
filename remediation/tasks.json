@@ -833,7 +833,7 @@
     "findings": [
       "M3"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-build-prompt",
       "agents/pipeline-orchestrator.md",
@@ -861,7 +861,7 @@
     "findings": [
       "M11"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-parse-review",
       "bin/test-phase6.sh"
@@ -890,7 +890,7 @@
       "parity: quality gate layer 1/2",
       "M18"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/pipeline-quality-gate",
       "agents/pipeline-orchestrator.md",
@@ -921,7 +921,7 @@
     "findings": [
       "parity: quality gate enforcement"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "agents/pipeline-orchestrator.md",
       "bin/test-phase8.sh"

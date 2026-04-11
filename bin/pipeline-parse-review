@@ -34,25 +34,50 @@ fi
 
 # --- Claude Code structured text parsing ---
 
-# Extract verdict
-verdict=$(printf '%s' "$raw" | grep 'VERDICT:' | grep -oE 'APPROVE|REQUEST_CHANGES|NEEDS_DISCUSSION' | head -1)
-if [[ -z "$verdict" ]]; then
-  log_error "could not extract VERDICT from review output"
-  exit 1
-fi
-
-# Extract round
-round=$(printf '%s' "$raw" | grep 'ROUND:' | grep -oE '[0-9]+' | head -1)
-round="${round:-1}"
-
-# Extract confidence
-confidence=$(printf '%s' "$raw" | grep 'CONFIDENCE:' | grep -oE 'HIGH|MEDIUM|LOW' | head -1)
-confidence="${confidence:-MEDIUM}"
-
 # Save raw to temp file for multi-pass parsing
 tmpfile=$(mktemp)
 printf '%s' "$raw" > "$tmpfile"
 trap 'rm -f "$tmpfile"' EXIT
+
+# Extract the anchored Verdict block (everything between `## Verdict` and the
+# next top-level `## ` heading). The block is the *only* place where verdict,
+# confidence, and blocker count are read from — this prevents prose like
+# "I would not approve this approach" from being mis-parsed as a verdict.
+verdict_section=$(awk '
+  /^## Verdict$/ { flag=1; next }
+  /^## / { flag=0 }
+  flag
+' "$tmpfile")
+
+if [[ -z "$verdict_section" ]]; then
+  log_error "could not extract verdict block (missing '## Verdict' heading)"
+  exit 1
+fi
+
+verdict=$(printf '%s\n' "$verdict_section" | awk -F: '/^VERDICT:/{gsub(/[ \t]/,"",$2); print $2; exit}')
+case "$verdict" in
+  APPROVE|REQUEST_CHANGES|NEEDS_DISCUSSION) ;;
+  *)
+    log_error "invalid or missing VERDICT in verdict block (got: '${verdict:-<empty>}')"
+    exit 1
+    ;;
+esac
+
+confidence=$(printf '%s\n' "$verdict_section" | awk -F: '/^CONFIDENCE:/{gsub(/[ \t]/,"",$2); print $2; exit}')
+case "$confidence" in
+  HIGH|MEDIUM|LOW) ;;
+  *) confidence="MEDIUM" ;;
+esac
+
+# BLOCKERS is the count declared by the reviewer in the verdict block. The
+# parser still tallies BLOCKING findings independently below; the two MUST
+# agree but we keep both for diagnostics.
+declared_blockers=$(printf '%s\n' "$verdict_section" | awk -F: '/^BLOCKERS:/{gsub(/[ \t]/,"",$2); print $2; exit}')
+[[ -z "$declared_blockers" ]] && declared_blockers=0
+
+# Round is informational and may appear in the body or block — accept either.
+round=$(printf '%s' "$raw" | grep 'ROUND:' | grep -oE '[0-9]+' | head -1)
+round="${round:-1}"
 
 # Parse findings by iterating line-by-line through the file
 findings='[]'
@@ -182,6 +207,7 @@ jq -n \
   --argjson findings "$findings" \
   --argjson blocking_count "$blocking_count" \
   --argjson non_blocking_count "$non_blocking_count" \
+  --argjson declared_blockers "${declared_blockers:-0}" \
   --argjson criteria_passed "$criteria_passed" \
   --argjson criteria_failed "$criteria_failed" \
   --argjson holdout_passed "$holdout_passed" \
@@ -195,6 +221,7 @@ jq -n \
     findings: $findings,
     blocking_count: $blocking_count,
     non_blocking_count: $non_blocking_count,
+    declared_blockers: $declared_blockers,
     criteria_passed: $criteria_passed,
     criteria_failed: $criteria_failed,
     holdout_passed: $holdout_passed,

@@ -4,6 +4,8 @@ set -euo pipefail
 
 export CLAUDE_PLUGIN_DATA=$(mktemp -d)
 HOOKS_DIR="$(cd "$(dirname "$0")/../hooks" && pwd)"
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$BIN_DIR:$PATH"
 
 pass=0
 fail=0
@@ -298,6 +300,203 @@ echo "=== subagent-stop-gate: no warning with review files present ==="
 echo '{"verdict":"APPROVE"}' > "$run_dir/reviews/T1.json"
 output=$(printf '{"agent_type":"task-reviewer"}' | "$HOOKS_DIR/subagent-stop-gate.sh" 2>&1)
 assert_eq "no warning with reviews" "false" "$(printf '%s' "$output" | grep -q 'WARNING' && echo true || echo false)"
+
+# ============================================================
+echo ""
+echo "=== task_07_02: pipeline-parse-review verdict anchor ==="
+
+# Review with anti-verdict prose in body but APPROVE in the anchored block.
+# The parser must extract APPROVE from the block, not REQUEST_CHANGES from prose.
+prose_input='## Findings
+
+I do not approve of this naming choice — but it is non-blocking so I am letting
+it through. The author would say "REQUEST_CHANGES is too harsh here" and I agree.
+
+## Acceptance Criteria Check
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Logs in | PASS | src/auth.ts:42 |
+
+## Summary
+Looks fine despite the naming nit.
+
+## Verdict
+
+VERDICT: APPROVE
+CONFIDENCE: HIGH
+BLOCKERS: 0
+ROUND: 1'
+
+output=$(printf '%s' "$prose_input" | "$BIN_DIR/pipeline-parse-review" 2>/dev/null)
+assert_eq "verdict anchored APPROVE (not prose REQUEST_CHANGES)" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
+assert_eq "confidence from block" "HIGH" "$(echo "$output" | jq -r '.confidence')"
+assert_eq "declared_blockers from block" "0" "$(echo "$output" | jq -r '.declared_blockers')"
+
+# Review missing the entire `## Verdict` block — must fail with non-zero exit
+no_block_input='## Findings
+
+### [BLOCKING] Something
+- **File:** a.ts:1
+- **Severity:** critical
+- **Category:** correctness
+- **Description:** broken
+
+## Summary
+no anchor block here'
+
+set +e
+printf '%s' "$no_block_input" | "$BIN_DIR/pipeline-parse-review" >/dev/null 2>&1
+exit_code=$?
+set -e
+assert_eq "missing verdict block exits 1" "1" "$exit_code"
+
+# Review with VERDICT: MAYBE inside the block — invalid value, must exit 1
+invalid_verdict_input='## Findings
+
+## Summary
+asdf
+
+## Verdict
+
+VERDICT: MAYBE
+CONFIDENCE: HIGH
+BLOCKERS: 0
+ROUND: 1'
+
+set +e
+printf '%s' "$invalid_verdict_input" | "$BIN_DIR/pipeline-parse-review" >/dev/null 2>&1
+exit_code=$?
+set -e
+assert_eq "invalid VERDICT exits 1" "1" "$exit_code"
+
+# Review with valid block, BLOCKERS: 3 — declared_blockers must be 3
+blockers_input='## Findings
+
+### [BLOCKING] One
+- **File:** a.ts:1
+- **Severity:** critical
+- **Category:** security
+- **Description:** sql injection
+
+### [BLOCKING] Two
+- **File:** b.ts:2
+- **Severity:** major
+- **Category:** correctness
+- **Description:** missing null check
+
+### [BLOCKING] Three
+- **File:** c.ts:3
+- **Severity:** critical
+- **Category:** security
+- **Description:** xss
+
+## Summary
+multiple issues
+
+## Verdict
+
+VERDICT: REQUEST_CHANGES
+CONFIDENCE: HIGH
+BLOCKERS: 3
+ROUND: 1'
+
+output=$(printf '%s' "$blockers_input" | "$BIN_DIR/pipeline-parse-review" 2>/dev/null)
+assert_eq "BLOCKERS: 3 parsed" "3" "$(echo "$output" | jq -r '.declared_blockers')"
+assert_eq "REQUEST_CHANGES verdict" "REQUEST_CHANGES" "$(echo "$output" | jq -r '.verdict')"
+assert_eq "blocking_count tally agrees" "3" "$(echo "$output" | jq -r '.blocking_count')"
+
+# ============================================================
+echo ""
+echo "=== task_07_03: pipeline-quality-gate ==="
+
+QG="$BIN_DIR/pipeline-quality-gate"
+assert_eq "pipeline-quality-gate exists" "true" "$([[ -f "$QG" ]] && echo true || echo false)"
+assert_eq "pipeline-quality-gate executable" "true" "$([[ -x "$QG" ]] && echo true || echo false)"
+
+# Set up a fixture run so the script has somewhere to write logs/state.
+qg_run="qg-test-run"
+qg_run_dir="$CLAUDE_PLUGIN_DATA/runs/$qg_run"
+mkdir -p "$qg_run_dir"
+printf '{"run_id":"%s","status":"running","tasks":{"qt1":{"status":"executing"}}}' "$qg_run" > "$qg_run_dir/state.json"
+
+# Fixture 1: all-pass project
+qg_proj1=$(mktemp -d)
+cat > "$qg_proj1/package.json" << 'PJSON'
+{
+  "name": "qg-pass",
+  "scripts": {
+    "lint": "true",
+    "typecheck": "true",
+    "test": "true"
+  }
+}
+PJSON
+
+set +e
+output=$("$QG" "$qg_run" "qt1" "$qg_proj1" 2>/dev/null)
+exit_code=$?
+set -e
+assert_eq "all-pass exit 0" "0" "$exit_code"
+assert_eq "all-pass ok=true" "true" "$(echo "$output" | jq -r '.ok')"
+assert_eq "all-pass 3 checks" "3" "$(echo "$output" | jq -r '.checks | length')"
+assert_eq "state.quality_gate.ok=true" "true" \
+  "$(jq -r '.tasks.qt1.quality_gate.ok' "$qg_run_dir/state.json")"
+
+# Fixture 2: lint failing
+qg_proj2=$(mktemp -d)
+cat > "$qg_proj2/package.json" << 'PJSON'
+{
+  "name": "qg-fail",
+  "scripts": {
+    "lint": "false",
+    "typecheck": "true",
+    "test": "true"
+  }
+}
+PJSON
+
+set +e
+output=$("$QG" "$qg_run" "qt1" "$qg_proj2" 2>/dev/null)
+exit_code=$?
+set -e
+assert_eq "lint-fail exit 1" "1" "$exit_code"
+assert_eq "lint-fail ok=false" "false" "$(echo "$output" | jq -r '.ok')"
+lint_status=$(echo "$output" | jq -r '.checks[] | select(.command=="lint") | .status')
+assert_eq "lint check failed" "failed" "$lint_status"
+
+# Fixture 3: dark-factory.quality override — only run lint
+qg_proj3=$(mktemp -d)
+cat > "$qg_proj3/package.json" << 'PJSON'
+{
+  "name": "qg-override",
+  "scripts": {
+    "lint": "true",
+    "typecheck": "false",
+    "test": "false"
+  },
+  "dark-factory": {
+    "quality": ["lint"]
+  }
+}
+PJSON
+
+set +e
+output=$("$QG" "$qg_run" "qt1" "$qg_proj3" 2>/dev/null)
+exit_code=$?
+set -e
+assert_eq "override exit 0" "0" "$exit_code"
+assert_eq "override 1 check" "1" "$(echo "$output" | jq -r '.checks | length')"
+assert_eq "override only lint" "lint" "$(echo "$output" | jq -r '.checks[0].command')"
+
+# Fixture 4: missing package.json — graceful error
+qg_proj4=$(mktemp -d)
+set +e
+output=$("$QG" "$qg_run" "qt1" "$qg_proj4" 2>/dev/null)
+exit_code=$?
+set -e
+assert_eq "no package.json exit 1" "1" "$exit_code"
+assert_eq "no package.json ok=false" "false" "$(echo "$output" | jq -r '.ok')"
 
 # ============================================================
 echo ""

@@ -120,6 +120,7 @@ scripts=(
   pipeline-classify-risk
   pipeline-model-router
   pipeline-build-prompt
+  pipeline-quality-gate
   pipeline-coverage-gate
   pipeline-detect-reviewer
   pipeline-parse-review
@@ -189,6 +190,31 @@ assert_contains "orchestrator reads .spec.handoff_branch" ".spec.handoff_branch"
 assert_contains "orchestrator reads .spec.handoff_ref" ".spec.handoff_ref" "$ORCH"
 assert_contains "orchestrator references commit-spec" "commit-spec" "$ORCH"
 assert_contains "orchestrator references .spec.path from state" ".spec.path" "$ORCH"
+
+# ============================================================
+echo ""
+echo "=== task_07_04: orchestrator execution loop structure ==="
+
+# Each numbered step heading must be present
+for hdr in "Pre-flight" "Execute" "Quality Gate" "Spawn Reviewers" "Parse Verdicts" "Create PR & Wait" "Finalize"; do
+  assert_contains "execution step '$hdr'" "$hdr" "$ORCH"
+done
+
+# Quality-gate script must be referenced
+assert_contains "references pipeline-quality-gate" "pipeline-quality-gate" "$ORCH"
+
+# Escalation transitions to needs_human_review must be referenced
+assert_contains "references needs_human_review" "needs_human_review" "$ORCH"
+
+# Parallel spawn instruction must remain
+assert_contains "instructs parallel Agent spawn" "one assistant message with N Agent calls" "$ORCH"
+
+# Namespaced attempt counters
+assert_contains "quality_attempts counter" "quality_attempts" "$ORCH"
+assert_contains "review_attempts counter" "review_attempts" "$ORCH"
+
+# Prior-work handoff into resume context
+assert_contains "prior_work_dir handoff" "prior_work_dir" "$ORCH"
 
 # ============================================================
 echo ""

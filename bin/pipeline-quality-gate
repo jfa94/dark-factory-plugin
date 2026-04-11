@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Run a project's quality commands and write a structured result to state.
+# Usage: pipeline-quality-gate <run-id> <task-id> [<worktree>]
+#
+# Discovers the command list from package.json `dark-factory.quality` (an array
+# of npm script names), or falls back to ["lint","typecheck","test"]. Each
+# command is executed with the detected package manager; per-command stdout
+# and stderr are captured to a log file in the run directory so reviewers can
+# inspect failures without re-running.
+#
+# Output: structured JSON on stdout — `{ok: bool, checks: [{command, status,
+# duration_s, log}]}` — and the same object written to state under
+# `.tasks.<task-id>.quality_gate`. Exit 0 if every check passed, 1 otherwise.
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+run_id="${1:?missing run-id}"
+task_id="${2:?missing task-id}"
+worktree="${3:-$PWD}"
+
+if [[ ! -d "$worktree" ]]; then
+  log_error "worktree does not exist: $worktree"
+  printf '{"ok":false,"error":"worktree_missing","checks":[]}\n'
+  exit 1
+fi
+
+cd "$worktree"
+
+if [[ ! -f package.json ]]; then
+  log_error "no package.json in worktree: $worktree"
+  result='{"ok":false,"error":"no_package_json","checks":[]}'
+  pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$result" 2>/dev/null || true
+  printf '%s\n' "$result"
+  exit 1
+fi
+
+pkg_mgr=$(detect_pkg_manager "$worktree")
+
+# Discover the command list. Prefer the dark-factory.quality override; fall
+# back to a sensible default trio. We use jq with `// empty` so a missing
+# field yields an empty list, which we then replace with the default.
+commands=$(jq -r '.["dark-factory"].quality // empty | .[]?' package.json 2>/dev/null || true)
+if [[ -z "$commands" ]]; then
+  commands=$'lint\ntypecheck\ntest'
+fi
+
+run_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}"
+mkdir -p "$run_dir"
+
+results_json='[]'
+overall_ok=true
+
+while IFS= read -r cmd; do
+  [[ -z "$cmd" ]] && continue
+
+  log_file="$run_dir/${task_id}.${cmd}.log"
+  start=$(date +%s)
+  set +e
+  "$pkg_mgr" run "$cmd" > "$log_file" 2>&1
+  rc=$?
+  set -e
+  duration=$(( $(date +%s) - start ))
+
+  if [[ $rc -eq 0 ]]; then
+    status="passed"
+  else
+    status="failed"
+    overall_ok=false
+  fi
+
+  results_json=$(printf '%s' "$results_json" | jq \
+    --arg c "$cmd" \
+    --arg s "$status" \
+    --arg log "$log_file" \
+    --argjson d "$duration" \
+    '. + [{command:$c, status:$s, duration_s:$d, log:$log}]')
+done <<< "$commands"
+
+if [[ "$overall_ok" == "true" ]]; then
+  ok_json=true
+else
+  ok_json=false
+fi
+
+summary=$(jq -n --argjson ok "$ok_json" --argjson checks "$results_json" \
+  '{ok:$ok, checks:$checks}')
+
+# Write to state. Best-effort: if the run dir was set up by a test fixture
+# without a state.json, skip silently rather than failing the gate.
+if [[ -f "$run_dir/state.json" ]]; then
+  pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$summary" >/dev/null 2>&1 || true
+fi
+
+printf '%s\n' "$summary"
+
+if [[ "$overall_ok" == "true" ]]; then
+  exit 0
+else
+  exit 1
+fi

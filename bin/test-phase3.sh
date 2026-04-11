@@ -343,6 +343,54 @@ output=$(pipeline-build-prompt "$task" --spec-path "$override_dir" 2>/dev/null)
 assert_eq "--spec-path flag overrides state" "true" \
   "$( echo "$output" | grep -q "From flag" && echo true || echo false )"
 
+# task_07_01: Resume Context block from prior-work fields in state
+echo ""
+echo "=== task_07_01: pipeline-build-prompt resume context ==="
+
+# Activate run-prompt-test as the current run for prior-work lookup
+rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
+ln -s "$CLAUDE_PLUGIN_DATA/runs/run-prompt-test" "$CLAUDE_PLUGIN_DATA/runs/current"
+
+# Seed task t1 in state so prior-work fields can be written under it
+pipeline-state write "run-prompt-test" '.tasks.t1' '{"status":"interrupted"}' >/dev/null 2>&1
+
+# Without prior-work fields → no Resume Context block
+output=$(pipeline-build-prompt "$task" --spec-path "$spec_dir" 2>/dev/null)
+assert_eq "no resume context when fields absent" "false" \
+  "$( echo "$output" | grep -q '## Resume Context' && echo true || echo false )"
+
+# With prior-work fields set → Resume Context block present with values
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_work_dir' '"/tmp/prior-worktree-xyz"' >/dev/null 2>&1
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_branch' '"task/t1"' >/dev/null 2>&1
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_commit' '"abc123def"' >/dev/null 2>&1
+
+output=$(pipeline-build-prompt "$task" --spec-path "$spec_dir" 2>/dev/null)
+assert_eq "resume context present" "true" \
+  "$( echo "$output" | grep -q '## Resume Context' && echo true || echo false )"
+assert_eq "resume context has prior_work_dir" "true" \
+  "$( echo "$output" | grep -qF '/tmp/prior-worktree-xyz' && echo true || echo false )"
+assert_eq "resume context has prior_branch" "true" \
+  "$( echo "$output" | grep -qF 'task/t1' && echo true || echo false )"
+assert_eq "resume context has prior_commit" "true" \
+  "$( echo "$output" | grep -qF 'abc123def' && echo true || echo false )"
+
+# Special characters in prior-work fields render literally (no shell expansion,
+# no injection) — values containing $, ", and embedded text must appear verbatim.
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_work_dir' '"/tmp/with$dollar/and_underscores"' >/dev/null 2>&1
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_branch' '"task/t1-quote_branch"' >/dev/null 2>&1
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_commit' '"deadbeefcafe1234"' >/dev/null 2>&1
+
+output=$(pipeline-build-prompt "$task" --spec-path "$spec_dir" 2>/dev/null)
+assert_eq "special-char prior_work_dir literal" "true" \
+  "$( echo "$output" | grep -qF '/tmp/with$dollar/and_underscores' && echo true || echo false )"
+assert_eq "special-char prior_branch literal" "true" \
+  "$( echo "$output" | grep -qF 'task/t1-quote_branch' && echo true || echo false )"
+
+# Restore: clear prior-work fields so other tests below see clean state
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_work_dir' '""' >/dev/null 2>&1
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_branch' '""' >/dev/null 2>&1
+pipeline-state write "run-prompt-test" '.tasks.t1.prior_commit' '""' >/dev/null 2>&1
+
 echo ""
 echo "=== task_01_02: pipeline-validate-tasks task_id injection hardening ==="
 

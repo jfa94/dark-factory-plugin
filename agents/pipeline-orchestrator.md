@@ -108,35 +108,121 @@ For each group G (in ascending order):
   tasks_in_group = [entry.task_id for entry in execution_order if entry.parallel_group == G]
   Chunk tasks_in_group into batches of size maxConcurrent
   For each batch:
-    Run the "Per-batch preparation" steps below for each task (sequential)
-    Spawn executors in parallel (see "Concurrent spawning" below)
-    Wait for all executors in the batch to finish
-    Run "Post-executor quality + review" steps for each task (sequential per task)
-  All tasks in group must be done or needs_human_review before moving to next group
+    Run "Pre-flight" for every task in the batch (sequential)
+    Run "Execute" for the batch (one assistant message, parallel Agent calls)
+    Run "Quality Gate" → "Spawn Reviewers" → "Parse Verdicts" → "Create PR & Wait" → "Finalize"
+      for each task in the batch (sequential per task)
+  All tasks in group must reach a terminal state (done, failed, or needs_human_review)
+  before moving to the next group.
 ```
 
-### Per-batch preparation (sequential for each task before spawning)
+### Execution Sequence (per task)
 
-```
- 1. pipeline-circuit-breaker <run-id>              → exit if tripped
- 2. pipeline-state deps-satisfied <run-id> <T>     → skip if not; poll at group boundary
- 3. pipeline-quota-check                           → usage data
- 4. pipeline-classify-task '<task-json>'            → {tier, model, maxTurns}
- 5. pipeline-classify-risk '<task-json>'            → {risk_tier, review_rounds}
- 6. pipeline-model-router --quota '<Q>' --tier <risk_tier>
-    → {provider, model, action}
-    → If action=wait: sleep wait_minutes, retry from step 3
-    → If action=end_gracefully: drain in-flight, mark partial, go to cleanup
- 7. pipeline-build-prompt <task-file> --holdout 20%
-    → pipeline-build-prompt reads `.spec.path` from state when --spec-path is
-      omitted, so the orchestrator never hardcodes spec locations.
- 8. pipeline-state task-status <run-id> <T> executing
- 8b. Task-executor prompt must include the absolute spec path. Since executors
-     run in isolated worktrees, the prompt tells them to read spec.md via:
-       git fetch origin staging
-       git show origin/staging:.state/<run-id>/spec.md
-     with the local `.state/<run-id>/spec.md` path as a same-filesystem fallback.
-```
+For each task `$t` in the current parallel group, walk these seven steps in
+order. Every step names the exact script to call; every branch has an explicit
+success/failure path; every status transition is explicit.
+
+1. **Pre-flight**
+   - `pipeline-circuit-breaker $run_id` — if tripped, do not start new tasks; jump to cleanup.
+   - `pipeline-state deps-satisfied $run_id $t` — if not satisfied, poll at the group boundary.
+   - `pipeline-quota-check` — capture usage data.
+   - `pipeline-classify-task '<task-json>'` — `{tier, model, maxTurns}`.
+   - `pipeline-classify-risk '<task-json>'` — record `risk_level` in `.tasks.$t.risk_tier`.
+   - `pipeline-model-router --quota '<Q>' --tier <risk_level>` — `{provider, model, action}`.
+     - If `action=wait`: sleep `wait_minutes`, retry from quota check.
+     - If `action=end_gracefully`: drain in-flight tasks, mark run `partial`, go to cleanup.
+   - `pipeline-build-prompt '<task-json>' --holdout 20%` — full executor prompt.
+     - `pipeline-build-prompt` reads `.spec.path` and any prior-work fields
+       (`.tasks.$t.prior_work_dir`, `.prior_branch`, `.prior_commit`) from state,
+       so the orchestrator never hardcodes spec or worktree locations.
+
+2. **Execute**
+   - `pipeline-state task-status $run_id $t executing`
+   - Spawn `task-executor` agent with the built prompt and `isolation: worktree`.
+   - On return, record the worktree path: `pipeline-state write $run_id ".tasks.$t.worktree" "$worktree_path"`.
+   - If the agent failed hard (Agent tool returned non-success):
+     - `pipeline-state task-status $run_id $t failed`
+     - Jump to step 7 (Finalize) for this task.
+   - If a task is paused mid-execution (interruption, rate limit, crash), record
+     prior-work fields BEFORE the next attempt so the resume prompt can find the
+     branch:
+     ```
+     pipeline-state write $run_id ".tasks.$t.prior_work_dir" "$worktree_path"
+     pipeline-state write $run_id ".tasks.$t.prior_branch"  "task/$t"
+     pipeline-state write $run_id ".tasks.$t.prior_commit"  "$(git -C $worktree_path rev-parse HEAD)"
+     ```
+
+3. **Quality Gate**
+   - `pipeline-quality-gate $run_id $t $worktree_path` — runs the project's
+     lint/typecheck/test scripts (or the `dark-factory.quality` override) and
+     writes the structured result to `.tasks.$t.quality_gate`.
+   - `pipeline-coverage-gate <before> <after>` — block if test coverage
+     decreased relative to the pre-task baseline. Its exit code feeds the
+     same retry loop as the quality gate above.
+   - If both exit codes are 0: continue to step 4.
+   - If exit code is non-zero:
+     - `prior=$(pipeline-state read $run_id ".tasks.$t.quality_attempts // 0")`
+     - `pipeline-state write $run_id ".tasks.$t.quality_attempts" $((prior + 1))`
+     - If `quality_attempts < 3`:
+       - `pipeline-state task-status $run_id $t ci_fixing`
+       - Re-spawn `task-executor` with the failure logs from `.state/$run_id/$t.<cmd>.log` as fix context.
+       - Goto step 3.
+     - If `quality_attempts >= 3`:
+       - `pipeline-state task-status $run_id $t needs_human_review`
+       - `pipeline-gh-comment <issue> ci-escalation --data '{"reason":"quality_gate exhausted"}'`
+       - Jump to step 7.
+
+4. **Spawn Reviewers**
+   - `pipeline-detect-reviewer` — discover the reviewer toolchain
+     (`{reviewer, command}`); used to know whether to invoke the bundled
+     `task-reviewer` agent or shell out to Codex.
+   - Always spawn `task-reviewer` with `$worktree_path` and task context.
+   - If `risk_tier == "security"`: also spawn `code-reviewer` (bundled), and any
+     user-provided `security-reviewer` / `architecture-reviewer` that exist
+     under `.claude/agents/`.
+   - All reviewers run in parallel — emit one assistant message with N Agent calls.
+
+5. **Parse Verdicts**
+   - For each returned reviewer: `pipeline-parse-review < <output-file>` →
+     `{verdict, declared_blockers, findings, ...}`.
+   - If any verdict is `REQUEST_CHANGES` with `declared_blockers > 0`:
+     - `prior=$(pipeline-state read $run_id ".tasks.$t.review_attempts // 0")`
+     - `pipeline-state write $run_id ".tasks.$t.review_attempts" $((prior + 1))`
+     - If `review_attempts < 3`:
+       - `pipeline-state task-status $run_id $t ci_fixing`
+       - `pipeline-build-prompt '<task-json>' --fix-instructions '<findings>'`
+       - Goto step 2.
+     - If `review_attempts >= 3`:
+       - `pipeline-state task-status $run_id $t needs_human_review`
+       - `pipeline-gh-comment <issue> review-escalation`
+       - Jump to step 7.
+   - If any verdict is `NEEDS_DISCUSSION`:
+     - `pipeline-state task-status $run_id $t needs_human_review`
+     - `pipeline-gh-comment <issue> review-escalation`
+     - Jump to step 7.
+   - If all verdicts are `APPROVE`: continue to step 6.
+
+6. **Create PR & Wait**
+   - `pipeline-branch task-commit $t` — commit to `task/$t` branch.
+   - `pr_number=$(gh pr create --base staging --head task/$t ...)`
+   - `pipeline-state write $run_id ".tasks.$t.pr_number" $pr_number`
+   - If `humanReviewLevel <= 1`: `pipeline-wait-pr $pr_number`.
+     - On exit 0: `pipeline-state task-status $run_id $t done`.
+     - On exit 3 (CI fail): `pipeline-state task-status $run_id $t ci_fixing`,
+       fetch failure log via `gh run view --log-failed`, re-spawn task-executor
+       with fix instructions; max 2 CI-fix attempts, then `needs_human_review`.
+     - On exit 4 (conflict): `pipeline-gh-comment <issue> conflict-escalated`,
+       mark `needs_human_review`.
+   - On any unhandled failure: mark `needs_human_review` and jump to step 7.
+
+7. **Finalize**
+   - `pipeline-state write $run_id ".tasks.$t.finished_at" "$(date -u +%FT%TZ)"`
+   - Move to the next task in the batch.
+
+After every task in the group is terminal (`done`, `failed`, or `needs_human_review`),
+proceed to the next parallel group. Attempt counters are namespaced
+(`quality_attempts` vs `review_attempts`) so the two retry loops do not
+interfere with each other.
 
 ### Concurrent spawning
 
@@ -150,52 +236,15 @@ Emit one assistant message with N Agent() tool calls:
 Wait for all N calls to return.
 ```
 
-Each task-executor runs in its own worktree; model/maxTurns come from step 4 of its preparation block; env var overrides (ANTHROPIC_BASE_URL for Ollama) come from step 6.
-
-### Post-executor quality + review (sequential per task after batch completes)
-
-```
- 9. Run format + lint in task worktree:
-    <pkg-manager> format; <pkg-manager> lint:fix (non-fatal)
-10. If changes: git add -u; git commit "auto: format + lint fixes"
---- Quality Gates ---
-11. pipeline-coverage-gate <before> <after>         → block if decreased
-12. Pass holdout criteria to task-reviewer for verification
-13. Mutation testing (feature/security only):
-    <pkg-manager> test:mutation → if <80%, spawn test-writer agent
---- Adversarial Review ---
-14. pipeline-detect-reviewer                        → {reviewer, command}
-15. Spawn task-reviewer agent (or invoke Codex)
-16. If risk_tier == "security": also spawn code-reviewer (bundled plugin agent)
-17. (Optional) If security-reviewer / architecture-reviewer exist in user's .claude/agents/,
-    also spawn them for the security tier
-18. pipeline-parse-review                           → {verdict, findings}
-19. If REQUEST_CHANGES + rounds remaining:
-    pipeline-build-prompt --fix-instructions <findings>
-    → re-spawn task-executor for this task only (sequential, not batched)
-20. If APPROVE: pipeline-state task-status <run-id> <T> done
-21. If max rounds exhausted:
-    pipeline-state task-status <run-id> <T> needs_human_review
-    Continue with next task in batch
---- PR ---
-22. pr_number=$(gh pr create --base staging)
-    pipeline-state write <run-id> '.tasks.<T>.pr_number' <pr_number>
-23. pipeline-wait-pr <pr_number> (if humanReviewLevel <= 1)
-    → Exit 3 (CI fail):
-      pipeline-state task-status <run-id> <T> ci_fixing
-      Fetch log via gh run view --log-failed
-      Spawn task-executor with fix instructions, force-push
-      Max 2 CI-fix attempts, then mark needs_human_review
-    → Exit 4 (conflict):
-      pipeline-gh-comment <issue> conflict-escalated
-      Mark needs_human_review
-```
+Each task-executor runs in its own worktree; model/maxTurns come from the
+Pre-flight step; env var overrides (ANTHROPIC_BASE_URL for Ollama) come from the
+model router result.
 
 ### After all groups complete
 
 ```
-24. pipeline-summary <run-id> --post-to-issue
-25. pipeline-cleanup <run-id> --close-issues --delete-branches
+pipeline-summary $run_id --post-to-issue
+pipeline-cleanup $run_id --close-issues --delete-branches \
     --remove-worktrees --clean-spec --spec-dir <path>
 ```
 

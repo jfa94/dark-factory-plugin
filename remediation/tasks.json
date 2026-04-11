@@ -5,15 +5,9 @@
     "title": "Fix jq path injection in pipeline-state write",
     "description": "The `write` action in bin/pipeline-state interpolates $key directly into the jq expression `\"$key = \\$v\"`. The denylist character filter at lines 56-61 misses backtick, <, >, *, ?, ), {, }, &, \\, single quote, double quote, newline. A crafted key could execute arbitrary jq expressions (including env-exfiltration via error() or input_filename).",
     "priority": "P0",
-    "findings": [
-      "C4",
-      "S7"
-    ],
+    "findings": ["C4", "S7"],
     "status": "done",
-    "files": [
-      "bin/pipeline-state",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-state", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "Keys are validated via allowlist of path components, not denylist of characters",
       "pipeline-state write uses jq setpath with --argjson path, not string interpolation",
@@ -36,14 +30,9 @@
     "title": "Fix JSON string concatenation in pipeline-validate-tasks",
     "description": "Line 183 builds JSON via string concatenation: `execution_order+=(\"{\\\"task_id\\\":\\\"$tid\\\",\\\"parallel_group\\\":$group}\")`. $tid comes from LLM-generated tasks.json. A task_id containing a double quote or control character corrupts the JSON or enables injection.",
     "priority": "P0",
-    "findings": [
-      "C7"
-    ],
+    "findings": ["C7"],
     "status": "done",
-    "files": [
-      "bin/pipeline-validate-tasks",
-      "bin/test-phase3.sh"
-    ],
+    "files": ["bin/pipeline-validate-tasks", "bin/test-phase3.sh"],
     "acceptance_criteria": [
       "execution_order entries are built via jq -n --arg tid --argjson group, never string concatenation",
       "A task_id containing embedded double quotes is either rejected (preferred) or safely encoded",
@@ -62,14 +51,9 @@
     "title": "Add path validation to pipeline-cleanup --spec-dir",
     "description": "The refuse-list guard in bin/pipeline-cleanup (lines 154-198) is already implemented and rejects /, ~, $HOME, project root, and out-of-project paths before any rm -rf. What remains is writing the automated tests in bin/test-phase5.sh that verify every rejection case. DO NOT re-test the pre-fix behavior by temporarily removing the guard or by passing real system paths to the binary.",
     "priority": "P0",
-    "findings": [
-      "C8"
-    ],
+    "findings": ["C8"],
     "status": "done",
-    "files": [
-      "bin/pipeline-cleanup",
-      "bin/test-phase5.sh"
-    ],
+    "files": ["bin/pipeline-cleanup", "bin/test-phase5.sh"],
     "acceptance_criteria": [
       "spec_dir must resolve (via realpath) to a path underneath the current git repo's top-level directory",
       "Absolute paths outside the project are rejected",
@@ -93,14 +77,9 @@
     "title": "Validate numeric args in pipeline-init",
     "description": "pipeline-init:50 builds `[%s]` for issue_numbers without validating that $issue is numeric. A non-numeric issue value like `42,\"poisoned\":1` breaks the JSON or enables injection via --argjson.",
     "priority": "P0",
-    "findings": [
-      "M21"
-    ],
+    "findings": ["M21"],
     "status": "done",
-    "files": [
-      "bin/pipeline-init",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-init", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "--issue arg is validated as positive integer before being used in --argjson",
       "Invalid numeric input causes script to exit 1 with clear error message",
@@ -120,14 +99,9 @@
     "title": "Restrict pipeline-lock --pid flag",
     "description": "bin/pipeline-lock accepts --pid N from any caller. An attacker or errant orchestrator can pass --pid 1 (init) — the kill -0 liveness check always succeeds, making the lock un-reclaimable. Remove the flag or restrict it to caller's own process tree.",
     "priority": "P0",
-    "findings": [
-      "M22"
-    ],
+    "findings": ["M22"],
     "status": "done",
-    "files": [
-      "bin/pipeline-lock",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-lock", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "--pid flag is removed entirely, OR restricted to PIDs in the caller's process tree (verified via ps -o ppid=)",
       "Default remains $$ (current shell PID)",
@@ -145,14 +119,9 @@
     "title": "Fix bash octal interpretation in pipeline-quota-check",
     "description": "Line 69-70 of bin/pipeline-quota-check uses `hour_in_day=$(date -u +%H); window_hour=$(( (hour_in_day % 5) + 1 ))`. Zero-padded hours (08, 09) are interpreted as octal by bash arithmetic, causing 'value too great for base' errors between 08:00-09:59 UTC. Fix with 10# prefix (same pattern already applied in pipeline-model-router).",
     "priority": "P0",
-    "findings": [
-      "C3"
-    ],
+    "findings": ["C3"],
     "status": "done",
-    "files": [
-      "bin/pipeline-quota-check",
-      "bin/test-phase7.sh"
-    ],
+    "files": ["bin/pipeline-quota-check", "bin/test-phase7.sh"],
     "acceptance_criteria": [
       "All bash arithmetic involving `date +%H`, `+%M`, `+%d`, `+%u` uses `10#$var` prefix",
       "Script runs without error at any hour of day (including 08:00-09:59 UTC)"
@@ -170,9 +139,7 @@
     "title": "Rewrite quota window math to use resets_at semantics",
     "description": "Current pipeline-quota-check computes `window_hour = (hour_in_day % 5) + 1`, assuming windows reset at UTC 00/05/10/15/20. Anthropic's 5-hour windows are actually tied to the first request in a session. The correct formula (from 04-data-flow.md:489) is `window_hour = floor((now - (resets_at - 5h)) / 3600) + 1`. Similarly for 7-day window, the daily_threshold must be derived from resets_at - 7d, not from day-of-week.",
     "priority": "P0",
-    "findings": [
-      "C9"
-    ],
+    "findings": ["C9"],
     "status": "done",
     "files": [
       "bin/pipeline-quota-check",
@@ -192,9 +159,7 @@
       "bin/test-phase7.sh: daily_threshold on day 7 is 0.95 not 1.0",
       "bin/test-phase7.sh: hourly_threshold caps at 0.90 for window_hour=5"
     ],
-    "depends_on": [
-      "task_02_01"
-    ],
+    "depends_on": ["task_02_01"],
     "notes": "Added pure-math helpers (compute_window_hour/day, compute_hourly/daily_threshold, parse_iso8601_to_epoch) to pipeline-lib.sh so task_02_03's _check_headers can reuse them. Rewrote _check_oauth to parse unified-5h-reset / unified-7d-reset from the API response and feed them through the helpers. Integration test uses a fully-deterministic date/curl mock (date -u +%H returns 14, +%u returns 7) so the pre-fix code would produce wrong but predictable answers (window_hour=5, window_day=7, daily_threshold=100) — the RED run against the buggy code confirmed 25 failures; GREEN run after the fix confirmed 50/50 pass. Full phase 1-9 suite still green."
   },
   {
@@ -203,15 +168,10 @@
     "title": "Implement header-based detection from last-headers.json",
     "description": "`_check_headers()` at pipeline-quota-check:157-162 is a stub. Decision 10 in 05-decisions.md mandates reading unified-5h-utilization, unified-7d-utilization, and related fields from ${CLAUDE_PLUGIN_DATA}/last-headers.json (populated after each Claude API call). On cold start, run a minimal probe to populate the file.",
     "priority": "P0",
-    "findings": [
-      "C2a"
-    ],
+    "findings": ["C2a"],
     "status": "done",
     "notes": "Implemented _check_headers reading ${CLAUDE_PLUGIN_DATA}/last-headers.json, deriving billing_mode (subscription/overage/api) from header presence + is_using_overage + ANTHROPIC_API_KEY, computing window math via task_02_02 helpers, and emitting JSON in the documented schema. Cold-start probe runs `claude -p ok --max-turns 1 --model haiku` once when file missing. Auto mode now tries headers → oauth → cli. Utilization values are normalized: ratios (≤1) are scaled to 0-100 percent so the existing integer-percent threshold comparisons still work. 22 new test-phase7 assertions cover all 5 acceptance criteria plus ratio normalization and auto-mode preference; isolated subshell helpers prevent RETURN-trap leakage that would otherwise blow up later asserts under set -u.",
-    "files": [
-      "bin/pipeline-quota-check",
-      "bin/test-phase7.sh"
-    ],
+    "files": ["bin/pipeline-quota-check", "bin/test-phase7.sh"],
     "acceptance_criteria": [
       "_check_headers reads ${CLAUDE_PLUGIN_DATA}/last-headers.json",
       "Parses anthropic-ratelimit-unified-5h-utilization, unified-7d-utilization, unified-status, unified-*-reset, is_using_overage",
@@ -226,9 +186,7 @@
       "bin/test-phase7.sh: billing_mode=overage when is_using_overage=true",
       "bin/test-phase7.sh: billing_mode=api when no unified-* headers but ANTHROPIC_API_KEY is set"
     ],
-    "depends_on": [
-      "task_02_02"
-    ]
+    "depends_on": ["task_02_02"]
   },
   {
     "task_id": "task_02_04",
@@ -236,14 +194,9 @@
     "title": "Fix or remove broken OAuth fallback in pipeline-quota-check",
     "description": "Line 35 uses `jq -r '.access_token // empty'` but the macOS Keychain credential format nests under `.claudeAiOauth.accessToken` (see reference lib/usage.sh:54). _check_oauth always silently fails and falls through to the CLI probe. Either fix the JSON path OR remove OAuth fallback entirely in favor of header-based detection.",
     "priority": "P0",
-    "findings": [
-      "C2b"
-    ],
+    "findings": ["C2b"],
     "status": "done",
-    "files": [
-      "bin/pipeline-quota-check",
-      "bin/test-phase7.sh"
-    ],
+    "files": ["bin/pipeline-quota-check", "bin/test-phase7.sh"],
     "acceptance_criteria": [
       "Either: _check_oauth correctly parses .claudeAiOauth.accessToken from Keychain",
       "Or: _check_oauth is removed entirely and auto mode uses headers-only",
@@ -253,9 +206,7 @@
       "bin/test-phase7.sh: OAuth fallback (if kept) extracts token from correct JSON path",
       "bin/test-phase7.sh: auto mode prefers headers, then falls back appropriately"
     ],
-    "depends_on": [
-      "task_02_03"
-    ],
+    "depends_on": ["task_02_03"],
     "notes": "Removed _check_oauth entirely per Decision 10 (headers replace OAuth). Auto mode now: headers → cli → safe defaults. --method oauth rejected as invalid. Removed obsolete oauth tests (octal regression + resets_at) — coverage transferred to the headers path and the pipeline-lib helper tests. Added regression tests: (1) --method oauth rejected, (2) security cmd never invoked in auto, (3) _check_oauth symbol absent from script."
   },
   {
@@ -264,14 +215,9 @@
     "title": "Remove quota-burning CLI probe fallback",
     "description": "_check_cli at pipeline-quota-check:120-154 runs `claude -p ok --max-turns 1 --model haiku` to detect rate limiting. This burns a turn from the user's quota on every check — anti-pattern. Remove this path; if header detection fails, return an explicit error rather than probing.",
     "priority": "P0",
-    "findings": [
-      "C2b"
-    ],
+    "findings": ["C2b"],
     "status": "done",
-    "files": [
-      "bin/pipeline-quota-check",
-      "bin/test-phase7.sh"
-    ],
+    "files": ["bin/pipeline-quota-check", "bin/test-phase7.sh"],
     "acceptance_criteria": [
       "_check_cli method is removed or only runs once for cold-start population (then never again)",
       "auto mode does not fall back to CLI probe after header detection fails",
@@ -281,9 +227,7 @@
       "bin/test-phase7.sh: auto mode does not invoke claude CLI when headers file exists",
       "bin/test-phase7.sh: explicit error returned when both headers and oauth fail"
     ],
-    "depends_on": [
-      "task_02_04"
-    ],
+    "depends_on": ["task_02_04"],
     "notes": "Deleted _check_cli entirely. auto mode is now an alias for headers-only detection: on failure it exits 1 with operator instructions to stderr and emits no stdout JSON, replacing the old silent safe-default zeros. --method cli is now rejected as unknown. Cold-start probe remains inside _check_headers (fires at most once per cold start). Added 5 regression tests to bin/test-phase7.sh under 'cli probe removed — task_02_05': (1) tripwire-stubbed claude binary proves auto never invokes it when last-headers.json is present, (2) auto exits 1 when header detection fails, (3) stdout is empty on failure (guard against safe-default zeros re-appearing), (4) --method cli is rejected, (5) grep guard asserts _check_cli symbol is absent from the script. All 67 phase7 tests pass; full phase1-9 suite (432 tests) still green."
   },
   {
@@ -292,14 +236,9 @@
     "title": "Add reconcile_staging_with_develop to pipeline-branch staging-init",
     "description": "The old pipeline's repository.sh reconciles staging with develop at every run start. pipeline-branch staging-init only pulls staging without syncing develop's changes. Add an explicit reconcile step: fetch develop, ff-merge staging onto develop (if ancestor), fallback to merge with conflict handling.",
     "priority": "P0",
-    "findings": [
-      "parity: reconcile_staging_with_develop"
-    ],
+    "findings": ["parity: reconcile_staging_with_develop"],
     "status": "done",
-    "files": [
-      "bin/pipeline-branch",
-      "bin/test-phase4.sh"
-    ],
+    "files": ["bin/pipeline-branch", "bin/test-phase4.sh"],
     "acceptance_criteria": [
       "pipeline-branch staging-init (after pulling staging) fast-forwards staging onto develop if develop exists",
       "Falls back to non-ff merge if fast-forward is not possible",
@@ -321,9 +260,7 @@
     "title": "Fix spec-generator worktree handoff",
     "description": "spec-generator has isolation: worktree, meaning its spec.md + tasks.json outputs are written to an ephemeral worktree. The orchestrator then calls pipeline-validate-tasks on a path that doesn't exist in its view. Choose one: (a) drop worktree isolation from spec-generator and have it write to the project dir directly, or (b) add an explicit pipeline-spec-publish script that cherry-picks or copies the spec out of the worktree.",
     "priority": "P0",
-    "findings": [
-      "C1"
-    ],
+    "findings": ["C1"],
     "status": "done",
     "files": [
       "agents/spec-generator.md",
@@ -351,10 +288,7 @@
     "title": "Implement commit_spec_to_staging equivalent",
     "description": "After spec generation and before task execution, the orchestrator must commit the spec directory to the staging branch so that task-executors (branching from staging) can see the spec. The old pipeline had commit_spec_to_staging() in repository.sh. Port the equivalent as a bin script invoked by the orchestrator.",
     "priority": "P0",
-    "findings": [
-      "C1",
-      "parity: commit_spec_to_staging"
-    ],
+    "findings": ["C1", "parity: commit_spec_to_staging"],
     "status": "done",
     "files": [
       "bin/pipeline-branch",
@@ -372,9 +306,7 @@
       "bin/test-phase4.sh: commit-spec is idempotent (no-op if nothing to commit)",
       "bin/test-phase4.sh: commit-spec leaves staging branch checked out"
     ],
-    "depends_on": [
-      "task_03_02"
-    ],
+    "depends_on": ["task_03_02"],
     "notes": "Completed on 2026-04-11"
   },
   {
@@ -383,9 +315,7 @@
     "title": "Pass spec path explicitly through orchestrator to task-executor",
     "description": "Currently the orchestrator has no deterministic record of where the spec dir lives. Store it in state.json under .spec.path (field already exists in pipeline-init output) and include it in every task-executor prompt via pipeline-build-prompt.",
     "priority": "P0",
-    "findings": [
-      "C1"
-    ],
+    "findings": ["C1"],
     "status": "done",
     "files": [
       "bin/pipeline-init",
@@ -404,9 +334,7 @@
       "bin/test-phase3.sh: prompt output contains absolute spec path",
       "bin/test-phase1.sh: pipeline-state write .spec.path persists correctly"
     ],
-    "depends_on": [
-      "task_03_03"
-    ],
+    "depends_on": ["task_03_03"],
     "notes": "Completed on 2026-04-11"
   },
   {
@@ -415,14 +343,9 @@
     "title": "Port full settings.autonomous.json from old pipeline",
     "description": "Decision 14 in 05-decisions.md claims the plugin ships the autonomous settings template 'as an exact copy'. The current templates/settings.autonomous.json is a radically reduced subset with no deny-list, 1 hook, no MCP permissions, no quality gate enforcement. Port the full file from ~/Projects/dark-factory/templates/settings.autonomous.json.",
     "priority": "P0",
-    "findings": [
-      "C6"
-    ],
+    "findings": ["C6"],
     "status": "done",
-    "files": [
-      "templates/settings.autonomous.json",
-      "bin/test-phase9.sh"
-    ],
+    "files": ["templates/settings.autonomous.json", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "templates/settings.autonomous.json includes all hooks from the old pipeline: .claude access block, branch protection via git branch --show-current, protected-files (.env, secrets, migrations), SQL safety, dangerous patterns, pre-commit-check, pre-push-check",
       "Post-tool hooks: prettier auto-format, related test runner, audit log",
@@ -447,14 +370,9 @@
     "title": "Update run.md materialization for new hook set",
     "description": "commands/run.md currently materializes a single PreToolUse hook path. With the full template from task_04_01, materialization must update every plugin-owned hook path (branch-protection, etc.) AND leave user-owned hook paths (~/.claude/hooks/*) alone.",
     "priority": "P0",
-    "findings": [
-      "C6"
-    ],
+    "findings": ["C6"],
     "status": "done",
-    "files": [
-      "commands/run.md",
-      "bin/test-phase9.sh"
-    ],
+    "files": ["commands/run.md", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "The materialization jq expression correctly rewrites only plugin-relative hook paths",
       "User-owned ~/.claude/hooks/* paths are untouched",
@@ -466,9 +384,7 @@
       "bin/test-phase9.sh: materialization preserves ~/.claude/hooks/* paths verbatim",
       "bin/test-phase9.sh: materialized file is valid JSON"
     ],
-    "depends_on": [
-      "task_04_01"
-    ],
+    "depends_on": ["task_04_01"],
     "notes": "Rewrote commands/run.md Step 1 materialization to use jq walk() + gsub over ${CLAUDE_PLUGIN_ROOT}. Old expression targeted .hooks.PreToolUse[0].hooks[0].command and would have corrupted the new templates first hook (the .claude access block) by overwriting its inline shell with a stale branch-protection.sh path. walk() handles arbitrary nesting, leaves inline shell snippets and ~/.claude/hooks/* paths untouched, and is idempotent. Added 12 regression assertions in bin/test-phase9.sh covering: walk()+CLAUDE_PLUGIN_ROOT present in run.md, brittle PreToolUse[0] path absent, synthetic fixture substitution (plugin-relative rewritten, user-env preserved, inline preserved), no residual tokens, idempotency via diff on repeat application, real-template materialization yields valid JSON and preserves user-env hooks."
   },
   {
@@ -477,13 +393,9 @@
     "title": "Verify test-phase9 covers new template structure",
     "description": "test-phase9.sh was built against the stripped-down template. After porting the full file, every assertion in test-phase9 needs to be re-verified and new assertions added for the expanded hook set.",
     "priority": "P0",
-    "findings": [
-      "C6"
-    ],
+    "findings": ["C6"],
     "status": "done",
-    "files": [
-      "bin/test-phase9.sh"
-    ],
+    "files": ["bin/test-phase9.sh"],
     "acceptance_criteria": [
       "All existing test-phase9 assertions still pass",
       "New assertions cover each hook in the ported template",
@@ -493,9 +405,7 @@
       "bin/test-phase9.sh: all pre-existing tests still pass",
       "bin/test-phase9.sh: new assertions for each ported hook"
     ],
-    "depends_on": [
-      "task_04_02"
-    ],
+    "depends_on": ["task_04_02"],
     "notes": "Verified all 65 pre-existing bin/test-phase9.sh assertions still pass after the full-template port in task_04_01. Added 1 new assertion for the previously uncovered native-tool-nudge.sh hook (the 8th PreToolUse matcher group was counted but not individually verified). All 8 ported hooks now have direct assertions: .claude access block, branch protection, protected-files/migrations, SQL safety, dangerous Bash patterns, native-tool-nudge, pre-commit-check, pre-push-check. Combined with task_04_02 tests, bin/test-phase9.sh now runs 78 assertions (up from 65), all passing. Full phase suite (9 files) also green: 550 total assertions, 0 failures."
   },
   {
@@ -504,14 +414,9 @@
     "title": "Anchor grep in pipeline-branch staging-init",
     "description": "pipeline-branch:15 uses `git ls-remote --heads origin staging | grep -q staging`. grep matches any line containing 'staging' including refs/heads/staging-v2. Use `grep -qE 'refs/heads/staging$'`.",
     "priority": "P1",
-    "findings": [
-      "M1"
-    ],
+    "findings": ["M1"],
     "status": "done",
-    "files": [
-      "bin/pipeline-branch",
-      "bin/test-phase4.sh"
-    ],
+    "files": ["bin/pipeline-branch", "bin/test-phase4.sh"],
     "acceptance_criteria": [
       "Grep is anchored to exact ref path",
       "Branches named staging-v2, pre-staging, etc. do not cause false matches"
@@ -529,14 +434,9 @@
     "title": "Handle existing branch in pipeline-branch create",
     "description": "pipeline-branch:45 runs `git checkout -b \"$name\" \"$base\" &>/dev/null`. If the branch exists (common on resume), git fails, error is suppressed, JSON claims action='created'. Check for existence first and either check out + rebase (resume path) or fail loudly.",
     "priority": "P1",
-    "findings": [
-      "M2"
-    ],
+    "findings": ["M2"],
     "status": "done",
-    "files": [
-      "bin/pipeline-branch",
-      "bin/test-phase4.sh"
-    ],
+    "files": ["bin/pipeline-branch", "bin/test-phase4.sh"],
     "acceptance_criteria": [
       "If branch exists locally: check it out and rebase onto base; set action='resumed' in output",
       "If branch exists remotely only: fetch + track + rebase; action='resumed'",
@@ -557,14 +457,9 @@
     "title": "Implement multi-commit rebase loop in pipeline-wait-pr",
     "description": "pipeline-wait-pr:129 runs `git rebase --continue` once. For a PR with multiple commits each with their own conflicts, only the first gets resolved. The old pipeline's orchestrator.sh had a loop up to 30 rounds. Port that semantics.",
     "priority": "P1",
-    "findings": [
-      "M4"
-    ],
+    "findings": ["M4"],
     "status": "done",
-    "files": [
-      "bin/pipeline-wait-pr",
-      "bin/test-phase4.sh"
-    ],
+    "files": ["bin/pipeline-wait-pr", "bin/test-phase4.sh"],
     "acceptance_criteria": [
       "The rebase loop runs up to 30 rounds, auto-resolving each conflict",
       "If a round surfaces an unsafe file, the loop aborts and exits 4",
@@ -585,15 +480,9 @@
     "title": "Implement package.json 3-way merge in pipeline-wait-pr rebase",
     "description": "Line 42 comment in bin/pipeline-wait-pr promises 'package.json → attempt 3-way merge' but the implementation doesn't handle it. Port the old pipeline's logic: extract :1/:2/:3 stages, jq --indent 4 normalize, git merge-file -p, write result, git add.",
     "priority": "P1",
-    "findings": [
-      "M4",
-      "parity: package.json 3-way merge"
-    ],
+    "findings": ["M4", "parity: package.json 3-way merge"],
     "status": "done",
-    "files": [
-      "bin/pipeline-wait-pr",
-      "bin/test-phase4.sh"
-    ],
+    "files": ["bin/pipeline-wait-pr", "bin/test-phase4.sh"],
     "acceptance_criteria": [
       "package.json conflicts during rebase are resolved via 3-way merge using jq-normalized stages",
       "If the 3-way merge has semantic conflicts, rebase aborts cleanly",
@@ -604,9 +493,7 @@
       "bin/test-phase4.sh: package.json semantic conflict aborts rebase",
       "bin/test-phase4.sh: package.json with both dep additions on both sides merges correctly"
     ],
-    "depends_on": [
-      "task_05_03"
-    ]
+    "depends_on": ["task_05_03"]
   },
   {
     "task_id": "task_05_05",
@@ -614,14 +501,9 @@
     "title": "Handle mergeable=UNKNOWN in pipeline-wait-pr",
     "description": "pipeline-wait-pr:170 checks mergeable == CONFLICTING but GitHub also returns UNKNOWN while computing. The script proceeds to CI checks in that case without re-polling mergeability, causing unnecessary work and log spam.",
     "priority": "P1",
-    "findings": [
-      "M6"
-    ],
+    "findings": ["M6"],
     "status": "done",
-    "files": [
-      "bin/pipeline-wait-pr",
-      "bin/test-phase4.sh"
-    ],
+    "files": ["bin/pipeline-wait-pr", "bin/test-phase4.sh"],
     "acceptance_criteria": [
       "mergeable=UNKNOWN causes the poll loop to sleep and retry mergeability fetch",
       "Max retry count before treating UNKNOWN as CONFLICTING, to avoid infinite loop",
@@ -639,14 +521,9 @@
     "title": "Check PR merge state before deleting branches",
     "description": "pipeline-cleanup --delete-branches:65 deletes branch when task_status == 'done'. 'done' means review approved, not PR merged. If the user is on humanReviewLevel >= 1 (PR approval), the PR is still open when the task is done. Deleting the branch breaks the PR.",
     "priority": "P1",
-    "findings": [
-      "M19"
-    ],
+    "findings": ["M19"],
     "status": "done",
-    "files": [
-      "bin/pipeline-cleanup",
-      "bin/test-phase5.sh"
-    ],
+    "files": ["bin/pipeline-cleanup", "bin/test-phase5.sh"],
     "acceptance_criteria": [
       "--delete-branches calls `gh pr view <pr_number> --json state,mergedAt` for each task",
       "Only branches belonging to PRs in state=MERGED are deleted",
@@ -667,14 +544,9 @@
     "title": "pipeline-state resume-point follows execution_order",
     "description": "pipeline-state resume-point uses `.tasks | to_entries[] | first` which depends on jq object iteration order (non-deterministic in some jq versions). Resume should iterate execution_order from state.json and return the first entry whose task is not done/failed.",
     "priority": "P1",
-    "findings": [
-      "M10"
-    ],
+    "findings": ["M10"],
     "status": "done",
-    "files": [
-      "bin/pipeline-state",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-state", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "resume-point reads .execution_order from state",
       "Iterates in array order, returns first task_id whose status is not done or failed",
@@ -695,14 +567,9 @@
     "title": "Expand stop-gate.sh to handle all task statuses",
     "description": "hooks/stop-gate.sh:45-61 only handles executing|reviewing|done|failed. Missing: pending, interrupted, needs_human_review, ci_fixing. Uncovered statuses fall through to 'all_done=false' and are miscategorized. In particular, needs_human_review tasks get marked as interrupted.",
     "priority": "P1",
-    "findings": [
-      "M15"
-    ],
+    "findings": ["M15"],
     "status": "done",
-    "files": [
-      "hooks/stop-gate.sh",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["hooks/stop-gate.sh", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "All status values defined in pipeline-state are handled explicitly",
       "needs_human_review tasks do not transition to interrupted",
@@ -723,14 +590,9 @@
     "title": "subagent-stop-gate iterates all executing tasks",
     "description": "hooks/subagent-stop-gate.sh:52-54 uses `first // empty` to check only one executing task. With parallel task-executors, other executing tasks are silently skipped. Iterate all executing tasks.",
     "priority": "P1",
-    "findings": [
-      "M16"
-    ],
+    "findings": ["M16"],
     "status": "done",
-    "files": [
-      "hooks/subagent-stop-gate.sh",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["hooks/subagent-stop-gate.sh", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "All executing tasks are checked, not just the first",
       "Warnings are emitted per-task (not aggregated)",
@@ -749,14 +611,9 @@
     "title": "pipeline-init ownership check for current symlink",
     "description": "pipeline-init:99 runs `rm -f \"$current_link\"` unconditionally. If another run is active, this silently breaks it. Before removing, readlink the target and check whether the linked run is in a non-terminal state; if so, refuse to overwrite (use --force to override).",
     "priority": "P1",
-    "findings": [
-      "M13"
-    ],
+    "findings": ["M13"],
     "status": "done",
-    "files": [
-      "bin/pipeline-init",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-init", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "pipeline-init refuses to overwrite 'current' symlink pointing to a run with status=running",
       "Returns exit 1 with clear error mentioning the active run",
@@ -777,14 +634,9 @@
     "title": "Make pipeline-lock recover atomic",
     "description": "bin/pipeline-lock:109-110 does `rm -f LOCK_FILE; printf > LOCK_FILE`. Between rm and printf, another process can acquire the lock. Use mv-based atomic replacement instead.",
     "priority": "P1",
-    "findings": [
-      "M9"
-    ],
+    "findings": ["M9"],
     "status": "done",
-    "files": [
-      "bin/pipeline-lock",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-lock", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "Lock recovery is atomic: write new lock to tmp file, then mv -f",
       "No window where the lock file is absent",
@@ -802,9 +654,7 @@
     "title": "pipeline-circuit-breaker deducts pause time from runtime",
     "description": "bin/pipeline-circuit-breaker:37 computes runtime from wall clock (now - started_at). Rate-limit waits count toward the 360-minute runtime limit. The old pipeline tracked pause time separately and deducted it. Add a .circuit_breaker.pause_minutes field to state, incremented when model-router returns action=wait, and subtract it from runtime.",
     "priority": "P1",
-    "findings": [
-      "M7"
-    ],
+    "findings": ["M7"],
     "status": "done",
     "files": [
       "bin/pipeline-circuit-breaker",
@@ -830,9 +680,7 @@
     "title": "Fix pipeline-build-prompt prior-work detection",
     "description": "bin/pipeline-build-prompt:93-105 runs `git log staging..HEAD` in orchestrator cwd, which is the project dir, not the task worktree. The prior-work detection is effectively broken. Accept a --worktree-path argument and cd into it (or --git-dir) before running git log.",
     "priority": "P1",
-    "findings": [
-      "M3"
-    ],
+    "findings": ["M3"],
     "status": "done",
     "files": [
       "bin/pipeline-build-prompt",
@@ -858,14 +706,9 @@
     "title": "Anchor VERDICT regex in pipeline-parse-review",
     "description": "pipeline-parse-review:38 uses `grep 'VERDICT:' | grep -oE 'APPROVE|REQUEST_CHANGES|NEEDS_DISCUSSION'`. A reviewer quoting code that mentions these tokens corrupts their own verdict. Anchor to line-starting `**VERDICT:**` (the exact format specified by the review-protocol skill).",
     "priority": "P1",
-    "findings": [
-      "M11"
-    ],
+    "findings": ["M11"],
     "status": "done",
-    "files": [
-      "bin/pipeline-parse-review",
-      "bin/test-phase6.sh"
-    ],
+    "files": ["bin/pipeline-parse-review", "bin/test-phase6.sh"],
     "acceptance_criteria": [
       "VERDICT extraction anchors to `^\\*\\*VERDICT:\\*\\*`",
       "A reviewer quoting APPROVE in a code block does not corrupt the verdict",
@@ -886,10 +729,7 @@
     "title": "Add deterministic quality gate runner",
     "description": "Quality gate layers 1 and 2 (02-quality-and-config.md) rely entirely on user hooks which the plugin no longer ships by default. Add a pipeline-quality-gate script that runs lint/typecheck/test via the detected package manager. The orchestrator invokes it after task-executor returns, before the adversarial review round.",
     "priority": "P1",
-    "findings": [
-      "parity: quality gate layer 1/2",
-      "M18"
-    ],
+    "findings": ["parity: quality gate layer 1/2", "M18"],
     "status": "done",
     "files": [
       "bin/pipeline-quality-gate",
@@ -918,14 +758,9 @@
     "title": "Update orchestrator.md to call quality gate runner explicitly",
     "description": "Add a step to the execution sequence in agents/pipeline-orchestrator.md: after format+lint auto-fix, call pipeline-quality-gate. On failure, set TASK_FAILURE_TYPE=quality_gate and retry the task-executor with the gate output.",
     "priority": "P1",
-    "findings": [
-      "parity: quality gate enforcement"
-    ],
+    "findings": ["parity: quality gate enforcement"],
     "status": "done",
-    "files": [
-      "agents/pipeline-orchestrator.md",
-      "bin/test-phase8.sh"
-    ],
+    "files": ["agents/pipeline-orchestrator.md", "bin/test-phase8.sh"],
     "acceptance_criteria": [
       "Step 11 in execution sequence calls pipeline-quality-gate",
       "Quality gate failure triggers task retry with quality_gate failure type",
@@ -935,9 +770,7 @@
       "bin/test-phase8.sh: orchestrator.md references pipeline-quality-gate",
       "bin/test-phase8.sh: orchestrator.md documents quality_gate failure type retry"
     ],
-    "depends_on": [
-      "task_07_03"
-    ]
+    "depends_on": ["task_07_03"]
   },
   {
     "task_id": "task_08_01",
@@ -945,14 +778,9 @@
     "title": "Populate plugin.json with all missing userConfig keys",
     "description": "The PRD (02-quality-and-config.md) documents ~25 userConfig keys. plugin.json only has ~8 top-level objects and is missing: quality.holdoutPassRate, quality.mutationTestingTiers, quality.coverageMustNotDecrease, execution.defaultModel, execution.maxTurnsSimple/Medium/Complex, localLlm.useLiteLlm, localLlm.liteLlmUrl, dependencies.prMergeTimeout, dependencies.pollInterval, observability.auditLog, observability.metricsExport, observability.metricsRetentionDays.",
     "priority": "P1",
-    "findings": [
-      "M(config drift)"
-    ],
-    "status": "pending",
-    "files": [
-      ".claude-plugin/plugin.json",
-      "bin/test-phase9.sh"
-    ],
+    "findings": ["M(config drift)"],
+    "status": "done",
+    "files": [".claude-plugin/plugin.json", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "Every userConfig key documented in 02-quality-and-config.md is present in plugin.json with its default",
       "Key names match the PRD exactly (or the PRD is updated to match — coordinate with task_14_02)",
@@ -965,7 +793,8 @@
       "bin/test-phase9.sh: plugin.json contains dependencies.prMergeTimeout",
       "bin/test-phase9.sh: plugin.json contains observability.* keys"
     ],
-    "depends_on": []
+    "depends_on": [],
+    "notes": "Rewrote .claude-plugin/plugin.json to a flat dotted-key userConfig schema matching 02-quality-and-config.md exactly. Added all 32 PRD keys (quality.*, execution.*, dependencies.*, observability.*, localLlm.useLiteLlm/liteLlmUrl, maxParallelTasks, maxTasks/maxRuntimeMinutes/maxConsecutiveFailures hoisted out of circuitBreaker). Added phase9 tests asserting presence + default round-trip for representative keys. task_08_03 will align bin/pipeline-config callers; task_08_02 will align configure.md."
   },
   {
     "task_id": "task_08_02",
@@ -973,14 +802,9 @@
     "title": "Fix configure.md jq setpath for nested keys",
     "description": "commands/configure.md:97-99 uses `jq --arg k \"<key>\" '.[$k] = $v'`. This treats $k as a literal object key, not a nested path, so setting 'circuitBreaker.maxTasks' creates a top-level `\"circuitBreaker.maxTasks\"` key with a dot in its name. Rewrite to split the key into a path array and use `setpath($path; $v)`.",
     "priority": "P1",
-    "findings": [
-      "M8"
-    ],
+    "findings": ["M8"],
     "status": "pending",
-    "files": [
-      "commands/configure.md",
-      "bin/test-phase9.sh"
-    ],
+    "files": ["commands/configure.md", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "Setting circuitBreaker.maxTasks creates nested path, not flat key",
       "Example jq invocation uses `setpath(($key | split(\".\")); $v)` or equivalent",
@@ -990,9 +814,7 @@
       "bin/test-phase9.sh: configure.md example writes to nested path",
       "bin/test-phase9.sh (if practical to exercise): running the jq one-liner updates a nested key"
     ],
-    "depends_on": [
-      "task_08_01"
-    ]
+    "depends_on": ["task_08_01"]
   },
   {
     "task_id": "task_08_03",
@@ -1000,13 +822,9 @@
     "title": "Fix configure.md string vs argjson handling",
     "description": "commands/configure.md:98 uses `--argjson v <value>` uniformly. String values (ollamaUrl, model) fail because they're not valid JSON. Distinguish: numeric/boolean → --argjson; string → --arg. Document the distinction.",
     "priority": "P1",
-    "findings": [
-      "M(configure string)"
-    ],
+    "findings": ["M(configure string)"],
     "status": "pending",
-    "files": [
-      "commands/configure.md"
-    ],
+    "files": ["commands/configure.md"],
     "acceptance_criteria": [
       "Documentation and example use --arg for strings, --argjson for numbers/booleans",
       "Writing localLlm.ollamaUrl works correctly",
@@ -1015,9 +833,7 @@
     "tests_to_write": [
       "bin/test-phase9.sh: configure.md example distinguishes string vs numeric arg types"
     ],
-    "depends_on": [
-      "task_08_02"
-    ]
+    "depends_on": ["task_08_02"]
   },
   {
     "task_id": "task_08_04",
@@ -1025,9 +841,7 @@
     "title": "Align config key names with PRD or update PRD",
     "description": "The PRD uses 'quality.holdoutPercent' but plugin.json uses 'holdout.percent'. PRD uses 'quality.mutationScoreTarget' but plugin.json uses 'mutationTesting.scoreThreshold'. Pick one naming and fix the other. Coordinate with task_14_02 (PRD honesty updates).",
     "priority": "P1",
-    "findings": [
-      "M(config drift)"
-    ],
+    "findings": ["M(config drift)"],
     "status": "pending",
     "files": [
       ".claude-plugin/plugin.json",
@@ -1042,9 +856,7 @@
     "tests_to_write": [
       "bin/test-phase9.sh: plugin.json keys match PRD documentation"
     ],
-    "depends_on": [
-      "task_08_01"
-    ]
+    "depends_on": ["task_08_01"]
   },
   {
     "task_id": "task_09_01",
@@ -1052,14 +864,9 @@
     "title": "Add flock to run-tracker.sh sequence counter",
     "description": "hooks/run-tracker.sh:39 computes seq_num via `wc -l < audit.jsonl` then increments. Two concurrent PostToolUse invocations compute the same seq_num and append duplicates. Use flock (2) on the audit file around the read-count-append section.",
     "priority": "P1",
-    "findings": [
-      "M14"
-    ],
+    "findings": ["M14"],
     "status": "pending",
-    "files": [
-      "hooks/run-tracker.sh",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["hooks/run-tracker.sh", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "Sequence increment is serialized via flock",
       "Concurrent invocations produce strictly monotonic sequence numbers",
@@ -1077,9 +884,7 @@
     "title": "Implement real hash chain OR remove tamper-evident claim",
     "description": "hooks/run-tracker.sh:30 hashes the current entry's params, not a chain. 02-quality-and-config.md:629-634 claims tamper-evidence via hash chain. Either: (a) implement the chain (read last line's hash, compute SHA256(prev_hash + this_entry), store), or (b) remove the claim from documentation.",
     "priority": "P1",
-    "findings": [
-      "C5"
-    ],
+    "findings": ["C5"],
     "status": "pending",
     "files": [
       "hooks/run-tracker.sh",
@@ -1103,14 +908,9 @@
     "title": "Add current-branch awareness to branch-protection.sh",
     "description": "hooks/branch-protection.sh only pattern-matches command text. `git reset --hard HEAD~1` run from main is not blocked because the command doesn't literally contain 'main'. Port the old pipeline's behavior: inspect the current branch via `git -C <cwd> branch --show-current` and block Write/Edit/destructive git ops targeting the branch when it's in PROTECTED_BRANCHES.",
     "priority": "P1",
-    "findings": [
-      "S1"
-    ],
+    "findings": ["S1"],
     "status": "pending",
-    "files": [
-      "hooks/branch-protection.sh",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["hooks/branch-protection.sh", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "When current branch is main/master/develop, git reset --hard is blocked regardless of command text",
       "When current branch is staging or feat/*, git reset --hard is allowed",
@@ -1131,15 +931,9 @@
     "title": "Expand branch-protection.sh to cover .env, migrations, secrets",
     "description": "The old pipeline's settings.autonomous.json has a hook blocking Edit/Write to .env*, /secrets/, and already-applied /migrations/. If task_04_01 already ports the full template, this task is redundant (mark done). Otherwise, add equivalent checks to hooks/branch-protection.sh.",
     "priority": "P1",
-    "findings": [
-      "S1",
-      "C6"
-    ],
+    "findings": ["S1", "C6"],
     "status": "pending",
-    "files": [
-      "hooks/branch-protection.sh",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["hooks/branch-protection.sh", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "Edit/Write targeting .env* files is blocked",
       "Edit/Write targeting /secrets/ is blocked",
@@ -1152,9 +946,7 @@
       "bin/test-phase1.sh: Edit targeting existing migration is blocked",
       "bin/test-phase1.sh: Edit targeting new migration is allowed"
     ],
-    "depends_on": [
-      "task_04_01"
-    ]
+    "depends_on": ["task_04_01"]
   },
   {
     "task_id": "task_10_01",
@@ -1162,14 +954,9 @@
     "title": "Dynamic package manager detection in scaffolded CI workflow",
     "description": "bin/pipeline-scaffold hardcodes pnpm in the generated .github/workflows/quality-gate.yml. Users on npm/yarn/bun get a broken CI workflow. Detect the package manager from lockfile and emit the appropriate setup steps.",
     "priority": "P2",
-    "findings": [
-      "M18"
-    ],
+    "findings": ["M18"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-scaffold",
-      "bin/test-phase9.sh"
-    ],
+    "files": ["bin/pipeline-scaffold", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "Generated quality-gate.yml uses the detected package manager (via detect_pkg_manager)",
       "Setup steps match: pnpm/action-setup, yarn setup, bun-cache, etc.",
@@ -1189,9 +976,7 @@
     "title": "Port stryker and dependency-cruiser configs from old templates",
     "description": "The old pipeline's config-deployer.sh deploys .stryker.config.json and .dependency-cruiser.cjs when package.json is present. Decision 16 promises these are deployed. Add them to pipeline-scaffold.",
     "priority": "P2",
-    "findings": [
-      "parity: config-deployer"
-    ],
+    "findings": ["parity: config-deployer"],
     "status": "pending",
     "files": [
       "bin/pipeline-scaffold",
@@ -1219,9 +1004,7 @@
     "title": "Port package.json scaffold merge logic",
     "description": "The old config-deployer.sh merges scripts + devDependencies from package.scaffold.json into the project's package.json. Port this as an option in pipeline-scaffold (perhaps --merge-package-json flag).",
     "priority": "P2",
-    "findings": [
-      "parity: config-deployer"
-    ],
+    "findings": ["parity: config-deployer"],
     "status": "pending",
     "files": [
       "bin/pipeline-scaffold",
@@ -1248,14 +1031,9 @@
     "title": "Cross-location skill check in pipeline-validate",
     "description": "bin/pipeline-validate:64-68 only checks `.claude/skills/prd-to-spec`. The old validator.sh also checks `$HOME/.claude/skills/prd-to-spec`. Users with home-level skills fail validation. Check both locations.",
     "priority": "P2",
-    "findings": [
-      "M17"
-    ],
+    "findings": ["M17"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-validate",
-      "bin/test-phase2.sh"
-    ],
+    "files": ["bin/pipeline-validate", "bin/test-phase2.sh"],
     "acceptance_criteria": [
       "pipeline-validate passes if prd-to-spec skill exists in project OR home .claude dir",
       "Output indicates which location was found",
@@ -1274,14 +1052,9 @@
     "title": "PRD marker enforcement option in pipeline-fetch-prd",
     "description": "bin/pipeline-fetch-prd:48-50 warns but proceeds when an issue has no [PRD] marker. Add a --strict flag that makes this an error. Default remains warn-but-proceed for backward compat.",
     "priority": "P2",
-    "findings": [
-      "M12"
-    ],
+    "findings": ["M12"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-fetch-prd",
-      "bin/test-phase2.sh"
-    ],
+    "files": ["bin/pipeline-fetch-prd", "bin/test-phase2.sh"],
     "acceptance_criteria": [
       "--strict flag causes non-PRD issues to exit with error",
       "Default behavior unchanged (warn and proceed)",
@@ -1299,14 +1072,9 @@
     "title": "Robust gh API owner/repo resolution in pipeline-gh-comment",
     "description": "bin/pipeline-gh-comment:161 uses `gh api \"repos/{owner}/{repo}/...\"` which relies on gh's cwd-based autodetection. Orchestrator may call this from a worktree or outside a git repo. Resolve the repo explicitly via `gh repo view --json nameWithOwner` at script start and use the concrete path.",
     "priority": "P2",
-    "findings": [
-      "M20"
-    ],
+    "findings": ["M20"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-gh-comment",
-      "bin/test-phase2.sh"
-    ],
+    "files": ["bin/pipeline-gh-comment", "bin/test-phase2.sh"],
     "acceptance_criteria": [
       "Repo owner/name is resolved explicitly at script start",
       "gh api uses the concrete path, not the {owner}/{repo} placeholder",
@@ -1326,15 +1094,9 @@
     "title": "End-to-end test: spec-generator → orchestrator → task-executor handoff",
     "description": "Create bin/test-integration.sh with a fixture repo and run the full pipeline end-to-end (using a mocked claude CLI). Validate that spec files written by spec-generator are visible to task-executors, that tasks.json reaches pipeline-validate-tasks, and that state.json shows .spec.path after spec phase.",
     "priority": "P1",
-    "findings": [
-      "C1",
-      "M23"
-    ],
+    "findings": ["C1", "M23"],
     "status": "pending",
-    "files": [
-      "bin/test-integration.sh",
-      "bin/test-fixtures/"
-    ],
+    "files": ["bin/test-integration.sh", "bin/test-fixtures/"],
     "acceptance_criteria": [
       "bin/test-integration.sh runs full pipeline in a disposable fixture repo",
       "Mocks claude CLI with canned spec.md + tasks.json output",
@@ -1348,11 +1110,7 @@
       "bin/test-integration.sh: task-executor prompt contains spec content",
       "bin/test-integration.sh: validate-tasks runs against state.spec.path"
     ],
-    "depends_on": [
-      "task_03_02",
-      "task_03_03",
-      "task_03_04"
-    ]
+    "depends_on": ["task_03_02", "task_03_03", "task_03_04"]
   },
   {
     "task_id": "task_12_02",
@@ -1360,14 +1118,9 @@
     "title": "End-to-end test: resume after interruption",
     "description": "Integration test that starts a multi-task pipeline, simulates Ctrl+C partway through task 2, then resumes. Verify: state is marked interrupted, resume-point returns task 2, resumed run skips task 1 and completes task 2+task 3.",
     "priority": "P1",
-    "findings": [
-      "M10",
-      "M15"
-    ],
+    "findings": ["M10", "M15"],
     "status": "pending",
-    "files": [
-      "bin/test-integration.sh"
-    ],
+    "files": ["bin/test-integration.sh"],
     "acceptance_criteria": [
       "Fixture with 3-task pipeline",
       "Kills pipeline during task 2 execution",
@@ -1381,10 +1134,7 @@
       "bin/test-integration.sh: resumed pipeline completes remaining tasks",
       "bin/test-integration.sh: final state matches a clean run"
     ],
-    "depends_on": [
-      "task_06_01",
-      "task_06_02"
-    ]
+    "depends_on": ["task_06_01", "task_06_02"]
   },
   {
     "task_id": "task_12_03",
@@ -1392,14 +1142,9 @@
     "title": "End-to-end test: parallel Agent spawn",
     "description": "Validate Open Question #2 from 05-decisions.md: does emitting N Agent() tool calls in a single orchestrator message actually run them in parallel? Write a test that spawns 3 mock task-executors in one message and verifies they ran concurrently (via wall-clock timing or sentinel files with timestamps).",
     "priority": "P1",
-    "findings": [
-      "M23",
-      "open-question-2"
-    ],
+    "findings": ["M23", "open-question-2"],
     "status": "pending",
-    "files": [
-      "bin/test-integration.sh"
-    ],
+    "files": ["bin/test-integration.sh"],
     "acceptance_criteria": [
       "Test spawns 3 mock agents that each sleep 5s",
       "Total wall clock is closer to 5s than 15s (parallel, not sequential)",
@@ -1419,14 +1164,9 @@
     "title": "End-to-end test: Ollama fallback trigger and routing",
     "description": "Integration test that sets a fake last-headers.json showing 5h over threshold, verifies pipeline-model-router routes to Ollama (mocked), and task-executor env includes ANTHROPIC_BASE_URL. Tests the full path from quota detection → router → executor spawn.",
     "priority": "P1",
-    "findings": [
-      "M23",
-      "C2a"
-    ],
+    "findings": ["M23", "C2a"],
     "status": "pending",
-    "files": [
-      "bin/test-integration.sh"
-    ],
+    "files": ["bin/test-integration.sh"],
     "acceptance_criteria": [
       "Test seeds last-headers.json with utilization=0.95, reset in 10min",
       "pipeline-quota-check detects 5h over threshold",
@@ -1440,9 +1180,7 @@
       "bin/test-integration.sh: router output includes base_url http://localhost:11434/v1",
       "bin/test-integration.sh: ollama unreachable falls back to wait action"
     ],
-    "depends_on": [
-      "task_02_03"
-    ]
+    "depends_on": ["task_02_03"]
   },
   {
     "task_id": "task_13_01",
@@ -1450,14 +1188,9 @@
     "title": "Fix pipeline-classify-risk reasoning accuracy",
     "description": "bin/pipeline-classify-risk:50 always reports `first_file → tier`, but tier may have been set by a later file. Report the file that triggered the current tier instead.",
     "priority": "P2",
-    "findings": [
-      "P(classify-risk reasoning)"
-    ],
+    "findings": ["P(classify-risk reasoning)"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-classify-risk",
-      "bin/test-phase3.sh"
-    ],
+    "files": ["bin/pipeline-classify-risk", "bin/test-phase3.sh"],
     "acceptance_criteria": [
       "reasoning field references the file that actually triggered the tier",
       "matched_patterns is ordered by first-match"
@@ -1473,14 +1206,9 @@
     "title": "Add schema version and migration path to pipeline-metrics",
     "description": "servers/pipeline-metrics/index.js creates the events table with CREATE TABLE IF NOT EXISTS. No version column, no migration logic. Add PRAGMA user_version and a migration framework for future schema changes.",
     "priority": "P2",
-    "findings": [
-      "P(metrics schema)"
-    ],
+    "findings": ["P(metrics schema)"],
     "status": "pending",
-    "files": [
-      "servers/pipeline-metrics/index.js",
-      "bin/test-phase9.sh"
-    ],
+    "files": ["servers/pipeline-metrics/index.js", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "DB has PRAGMA user_version set to a numeric schema version",
       "On boot, checks user_version and runs migration SQL if needed",
@@ -1499,22 +1227,15 @@
     "title": "Add pagination to metrics_query (remove 1000 cap)",
     "description": "servers/pipeline-metrics/index.js:171 hard-caps query results at 1000. metrics_export for a 50-task × 20-event run hits the cap. Add pagination via offset/cursor.",
     "priority": "P2",
-    "findings": [
-      "P(metrics pagination)"
-    ],
+    "findings": ["P(metrics pagination)"],
     "status": "pending",
-    "files": [
-      "servers/pipeline-metrics/index.js",
-      "bin/test-phase9.sh"
-    ],
+    "files": ["servers/pipeline-metrics/index.js", "bin/test-phase9.sh"],
     "acceptance_criteria": [
       "metrics_query accepts an offset parameter",
       "metrics_export paginates internally and returns all rows",
       "Hard cap raised or removed for export"
     ],
-    "tests_to_write": [
-      "bin/test-phase9.sh: index.js syntax check passes"
-    ],
+    "tests_to_write": ["bin/test-phase9.sh: index.js syntax check passes"],
     "depends_on": []
   },
   {
@@ -1523,14 +1244,9 @@
     "title": "Add fsync to pipeline-lib.sh atomic_write",
     "description": "bin/pipeline-lib.sh atomic_write does `printf > tmp; mv -f tmp target`. The write may not be fsync'd before the rename. On crash, target could be a dangling inode or empty file. Add `sync` or use `install` which fsyncs.",
     "priority": "P2",
-    "findings": [
-      "P(atomic_write)"
-    ],
+    "findings": ["P(atomic_write)"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-lib.sh",
-      "bin/test-phase1.sh"
-    ],
+    "files": ["bin/pipeline-lib.sh", "bin/test-phase1.sh"],
     "acceptance_criteria": [
       "atomic_write ensures content is durable before rename",
       "Acceptable: sync after printf, or use install -m 644"
@@ -1547,14 +1263,9 @@
     "title": "Add tolerance to pipeline-coverage-gate",
     "description": "bin/pipeline-coverage-gate treats any decrease (< 0) as failure. A 0.001% decrease from a refactor blocks. Add a --tolerance flag (default 0.5%) below which decreases are allowed.",
     "priority": "P2",
-    "findings": [
-      "P(coverage tolerance)"
-    ],
+    "findings": ["P(coverage tolerance)"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-coverage-gate",
-      "bin/test-phase6.sh"
-    ],
+    "files": ["bin/pipeline-coverage-gate", "bin/test-phase6.sh"],
     "acceptance_criteria": [
       "--tolerance <percent> flag allows decreases up to that threshold",
       "Default tolerance reads from config: quality.coverageTolerance (new key)",
@@ -1566,9 +1277,7 @@
       "bin/test-phase6.sh: 1% decrease fails with default tolerance",
       "bin/test-phase6.sh: --tolerance 2 allows 1.5% decrease"
     ],
-    "depends_on": [
-      "task_08_01"
-    ]
+    "depends_on": ["task_08_01"]
   },
   {
     "task_id": "task_13_06",
@@ -1576,14 +1285,9 @@
     "title": "Explicit srand seeding in pipeline-build-prompt holdout",
     "description": "bin/pipeline-build-prompt:45 calls `srand()` without explicit seed. For reproducibility, optionally accept a --seed flag and document non-determinism as intentional if not set.",
     "priority": "P2",
-    "findings": [
-      "P(holdout seeding)"
-    ],
+    "findings": ["P(holdout seeding)"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-build-prompt",
-      "bin/test-phase3.sh"
-    ],
+    "files": ["bin/pipeline-build-prompt", "bin/test-phase3.sh"],
     "acceptance_criteria": [
       "--seed <int> produces deterministic holdout selection",
       "Absence of --seed documents non-determinism",
@@ -1601,14 +1305,9 @@
     "title": "Fix leading-path patterns in pipeline-classify-risk",
     "description": "bin/pipeline-classify-risk uses patterns like `*/auth/*` which do not match `auth/foo.ts` (bare leading path). Add alternative patterns or use a different matching approach.",
     "priority": "P2",
-    "findings": [
-      "P(classify-risk patterns)"
-    ],
+    "findings": ["P(classify-risk patterns)"],
     "status": "pending",
-    "files": [
-      "bin/pipeline-classify-risk",
-      "bin/test-phase3.sh"
-    ],
+    "files": ["bin/pipeline-classify-risk", "bin/test-phase3.sh"],
     "acceptance_criteria": [
       "auth/handler.ts matches security tier",
       "src/auth/handler.ts still matches security tier",
@@ -1629,26 +1328,17 @@
     "title": "Update 01-prd.md Goal #1 to reflect actual parity",
     "description": "01-prd.md Goal #1 claims 'Faithful reproduction of ALL existing dark-factory pipeline functionality'. After the remediation, parts of this will be true, parts won't. Update the Goal to describe the actual scope, with a table of what's preserved/deprecated/rewritten.",
     "priority": "P2",
-    "findings": [
-      "docs honesty"
-    ],
+    "findings": ["docs honesty"],
     "status": "pending",
-    "files": [
-      "01-prd.md"
-    ],
+    "files": ["01-prd.md"],
     "acceptance_criteria": [
       "Goal #1 wording matches the implementation",
       "A parity table clearly marks preserved vs. rewritten vs. deprecated features",
       "Feature inventory tables in the same file are also updated",
       "Deleted claims: 'exact copy' (Decision 14) — reconcile with task_04_01 outcome"
     ],
-    "tests_to_write": [
-      "manual: review the PRD diff for accuracy"
-    ],
-    "depends_on": [
-      "task_04_01",
-      "task_08_04"
-    ]
+    "tests_to_write": ["manual: review the PRD diff for accuracy"],
+    "depends_on": ["task_04_01", "task_08_04"]
   },
   {
     "task_id": "task_14_02",
@@ -1656,13 +1346,9 @@
     "title": "Update 05-decisions.md to resolve Open Questions and document decisions",
     "description": "05-decisions.md has unresolved Open Questions #2 (background agent result reading), #3 (hook context scoping), #4 (bin script env vars), #6 (Ollama env var per-spawn), #7 (local model tool-use), #8 (turn budget). After the integration tests (task_12_*) these should be answered. Update the file.",
     "priority": "P2",
-    "findings": [
-      "docs honesty"
-    ],
+    "findings": ["docs honesty"],
     "status": "pending",
-    "files": [
-      "05-decisions.md"
-    ],
+    "files": ["05-decisions.md"],
     "acceptance_criteria": [
       "Open Question #2 resolved (answer from task_12_03)",
       "Open Question #3 resolved (verified via hook testing)",
@@ -1670,14 +1356,7 @@
       "Decision 14 updated to reflect ported template or explicit divergence from old pipeline",
       "Remaining open questions clearly marked as still-open with mitigation plan"
     ],
-    "tests_to_write": [
-      "manual: review decisions doc for resolved questions"
-    ],
-    "depends_on": [
-      "task_12_01",
-      "task_12_02",
-      "task_12_03",
-      "task_12_04"
-    ]
+    "tests_to_write": ["manual: review decisions doc for resolved questions"],
+    "depends_on": ["task_12_01", "task_12_02", "task_12_03", "task_12_04"]
   }
 ]

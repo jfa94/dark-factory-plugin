@@ -52,6 +52,70 @@ assert_valid_json() {
 }
 
 # ============================================================
+echo "=== .claude-plugin/plugin.json userConfig schema ==="
+
+PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
+assert_file_exists "plugin.json exists" "$PLUGIN_JSON"
+assert_valid_json "plugin.json is valid JSON" "$PLUGIN_JSON"
+
+# Every userConfig key documented in 02-quality-and-config.md must be present.
+for key in \
+  maxTasks \
+  maxRuntimeMinutes \
+  maxConsecutiveFailures \
+  humanReviewLevel \
+  maxParallelTasks \
+  review.routineRounds \
+  review.featureRounds \
+  review.securityRounds \
+  review.ollamaRoutineRounds \
+  review.ollamaFeatureRounds \
+  review.ollamaSecurityRounds \
+  review.preferCodex \
+  quality.holdoutPercent \
+  quality.holdoutPassRate \
+  quality.mutationScoreTarget \
+  quality.mutationTestingTiers \
+  quality.coverageMustNotDecrease \
+  execution.defaultModel \
+  execution.maxTurnsSimple \
+  execution.maxTurnsMedium \
+  execution.maxTurnsComplex \
+  localLlm.enabled \
+  localLlm.ollamaUrl \
+  localLlm.model \
+  localLlm.useLiteLlm \
+  localLlm.liteLlmUrl \
+  dependencies.prMergeTimeout \
+  dependencies.pollInterval \
+  observability.auditLog \
+  observability.metricsExport \
+  observability.metricsRetentionDays; do
+  has=$(jq --arg k "$key" -r '.userConfig | has($k) | tostring' "$PLUGIN_JSON")
+  assert_eq "userConfig has $key" "true" "$has"
+done
+
+# Each entry must declare a default value (even arrays/booleans/strings).
+missing_default=$(jq -r '[.userConfig | to_entries[] | select(has("value") | not) | .key] as $_ | [.userConfig | to_entries[] | select(.value | has("default") | not) | .key] | join(",")' "$PLUGIN_JSON")
+assert_eq "every userConfig entry has a default" "" "$missing_default"
+
+# Defaults sourced from PRD must round-trip as the documented values.
+default_holdout_pass_rate=$(jq -r '.userConfig["quality.holdoutPassRate"].default' "$PLUGIN_JSON")
+assert_eq "quality.holdoutPassRate default = 80" "80" "$default_holdout_pass_rate"
+
+default_default_model=$(jq -r '.userConfig["execution.defaultModel"].default' "$PLUGIN_JSON")
+assert_eq "execution.defaultModel default = sonnet" "sonnet" "$default_default_model"
+
+default_pr_merge_timeout=$(jq -r '.userConfig["dependencies.prMergeTimeout"].default' "$PLUGIN_JSON")
+assert_eq "dependencies.prMergeTimeout default = 45" "45" "$default_pr_merge_timeout"
+
+default_audit_log=$(jq -r '.userConfig["observability.auditLog"].default' "$PLUGIN_JSON")
+assert_eq "observability.auditLog default = true" "true" "$default_audit_log"
+
+default_mutation_tiers=$(jq -rc '.userConfig["quality.mutationTestingTiers"].default' "$PLUGIN_JSON")
+assert_eq "quality.mutationTestingTiers default = [feature,security]" '["feature","security"]' "$default_mutation_tiers"
+
+# ============================================================
 echo "=== commands/configure.md ==="
 
 CONFIGURE="$PLUGIN_ROOT/commands/configure.md"

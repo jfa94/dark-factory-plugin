@@ -169,7 +169,8 @@
     "description": "`_check_headers()` at pipeline-quota-check:157-162 is a stub. Decision 10 in 05-decisions.md mandates reading unified-5h-utilization, unified-7d-utilization, and related fields from ${CLAUDE_PLUGIN_DATA}/last-headers.json (populated after each Claude API call). On cold start, run a minimal probe to populate the file.",
     "priority": "P0",
     "findings": ["C2a"],
-    "status": "pending",
+    "status": "done",
+    "notes": "Implemented _check_headers reading ${CLAUDE_PLUGIN_DATA}/last-headers.json, deriving billing_mode (subscription/overage/api) from header presence + is_using_overage + ANTHROPIC_API_KEY, computing window math via task_02_02 helpers, and emitting JSON in the documented schema. Cold-start probe runs `claude -p ok --max-turns 1 --model haiku` once when file missing. Auto mode now tries headers → oauth → cli. Utilization values are normalized: ratios (≤1) are scaled to 0-100 percent so the existing integer-percent threshold comparisons still work. 22 new test-phase7 assertions cover all 5 acceptance criteria plus ratio normalization and auto-mode preference; isolated subshell helpers prevent RETURN-trap leakage that would otherwise blow up later asserts under set -u.",
     "files": ["bin/pipeline-quota-check", "bin/test-phase7.sh"],
     "acceptance_criteria": [
       "_check_headers reads ${CLAUDE_PLUGIN_DATA}/last-headers.json",

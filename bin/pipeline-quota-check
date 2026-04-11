@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Check Claude API quota utilization.
-# Detection methods (in priority order):
-#   1. OAuth API — macOS Keychain token + api.anthropic.com/api/oauth/usage
-#   2. CLI probe — `claude -p "ok"` and parse stderr for rate limit
-#   3. Headers (stubbed) — for future header-based detection
+# Detection methods (in priority order under --method auto):
+#   1. Headers — read ${CLAUDE_PLUGIN_DATA}/last-headers.json (cross-platform,
+#      no quota cost). Cold-start probe runs `claude -p ok` once if missing.
+#   2. OAuth API — macOS Keychain token + api.anthropic.com/api/oauth/usage
+#   3. CLI probe — `claude -p ok` and parse stderr for rate limit (burns quota)
 #
-# Usage: pipeline-quota-check [--method oauth|cli|auto]
+# Usage: pipeline-quota-check [--method headers|oauth|cli|auto]
 # Exit: 0=data retrieved, 1=all methods failed
 
 source "$(dirname "$0")/pipeline-lib.sh"
@@ -160,12 +161,157 @@ _check_cli() {
   return 0
 }
 
-# --- Headers detection (stubbed for future use) ---
+# --- Headers detection ---
+# Reads ${CLAUDE_PLUGIN_DATA}/last-headers.json (populated after each Claude
+# API call) and parses the unified-* rate-limit headers. On cold start (file
+# missing), runs a single minimal `claude` probe to populate the file.
+#
+# Decision 10 (05-decisions.md): headers replace OAuth as the primary path —
+# no Keychain dependency, no separate API call, cross-platform.
 _check_headers() {
-  # Stubbed: when Claude Code exposes response headers (GitHub #27915),
-  # read unified-5h-utilization and unified-7d-utilization from last-headers.json
-  log_info "header-based detection not yet available"
-  return 1
+  local headers_file="${CLAUDE_PLUGIN_DATA:-}/last-headers.json"
+
+  if [[ -z "${CLAUDE_PLUGIN_DATA:-}" ]]; then
+    log_warn "CLAUDE_PLUGIN_DATA not set"
+    return 1
+  fi
+
+  # Cold-start probe: if no headers file exists, run a minimal one-shot probe
+  # so whatever layer captures Anthropic response headers can populate the file.
+  # Only fires once per cold start; subsequent calls read the cached file.
+  if [[ ! -f "$headers_file" ]]; then
+    if command -v claude &>/dev/null; then
+      log_info "last-headers.json missing, running cold-start probe"
+      claude -p "ok" --max-turns 1 --model haiku >/dev/null 2>&1 || true
+    fi
+    if [[ ! -f "$headers_file" ]]; then
+      log_warn "last-headers.json still missing after cold-start probe"
+      return 1
+    fi
+  fi
+
+  if ! jq -e . "$headers_file" >/dev/null 2>&1; then
+    log_warn "last-headers.json is not valid JSON"
+    return 1
+  fi
+
+  # Detect billing mode from header presence.
+  local has_unified
+  has_unified=$(jq -r '
+    if has("anthropic-ratelimit-unified-5h-utilization")
+       or has("anthropic-ratelimit-unified-7d-utilization")
+    then "true" else "false" end
+  ' "$headers_file")
+
+  local billing_mode
+  if [[ "$has_unified" == "true" ]]; then
+    local overage
+    overage=$(jq -r '.is_using_overage // "false"' "$headers_file")
+    if [[ "$overage" == "true" ]]; then
+      billing_mode="overage"
+    else
+      billing_mode="subscription"
+    fi
+  elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    billing_mode="api"
+  else
+    log_warn "no unified-* headers and no ANTHROPIC_API_KEY — cannot determine billing mode"
+    return 1
+  fi
+
+  # API mode: no unified headers available → emit safe-default zeros so the
+  # router treats this as "no quota pressure detected". 5h pacing via legacy
+  # ratelimit-* headers is out of scope for this task.
+  if [[ "$billing_mode" == "api" ]]; then
+    jq -n \
+      --arg billing_mode "$billing_mode" \
+      --arg detection_method "headers" \
+      '{
+        five_hour:  { utilization: 0, hourly_threshold: 90, over_threshold: false, window_hour: null },
+        seven_day:  { utilization: 0, daily_threshold: 95, over_threshold: false, window_day: null },
+        billing_mode: $billing_mode,
+        detection_method: $detection_method
+      }'
+    return 0
+  fi
+
+  # Parse utilization values. Headers may be strings ("0.45") or numbers (45).
+  # Normalize to integer percent (0-100): values <= 1 are ratios, multiply by 100.
+  local five_hour seven_day
+  five_hour=$(jq -r '
+    (.["anthropic-ratelimit-unified-5h-utilization"] // empty)
+    | tonumber? // empty
+    | if . <= 1 then . * 100 else . end
+    | round
+  ' "$headers_file")
+
+  seven_day=$(jq -r '
+    (.["anthropic-ratelimit-unified-7d-utilization"] // empty)
+    | tonumber? // empty
+    | if . <= 1 then . * 100 else . end
+    | round
+  ' "$headers_file")
+
+  if [[ -z "$five_hour" || -z "$seven_day" ]]; then
+    log_warn "could not parse utilization from last-headers.json"
+    return 1
+  fi
+
+  local resets_5h resets_7d
+  resets_5h=$(jq -r '.["anthropic-ratelimit-unified-5h-reset"] // empty' "$headers_file")
+  resets_7d=$(jq -r '.["anthropic-ratelimit-unified-7d-reset"] // empty' "$headers_file")
+
+  local now_epoch resets_5h_epoch resets_7d_epoch
+  now_epoch=$(date +%s)
+  if [[ -n "$resets_5h" ]]; then
+    resets_5h_epoch=$(parse_iso8601_to_epoch "$resets_5h" 2>/dev/null || printf '%s' "$((now_epoch + 18000))")
+  else
+    resets_5h_epoch=$((now_epoch + 18000))
+  fi
+  if [[ -n "$resets_7d" ]]; then
+    resets_7d_epoch=$(parse_iso8601_to_epoch "$resets_7d" 2>/dev/null || printf '%s' "$((now_epoch + 604800))")
+  else
+    resets_7d_epoch=$((now_epoch + 604800))
+  fi
+
+  local window_hour window_day hourly_threshold daily_threshold
+  window_hour=$(compute_window_hour "$resets_5h_epoch" "$now_epoch")
+  window_day=$(compute_window_day "$resets_7d_epoch" "$now_epoch")
+  hourly_threshold=$(compute_hourly_threshold "$window_hour")
+  daily_threshold=$(compute_daily_threshold "$window_day")
+
+  local five_hour_over seven_day_over
+  five_hour_over=$(jq -n --argjson a "$five_hour" --argjson b "$hourly_threshold" 'if $a > $b then "true" else "false" end' -r)
+  seven_day_over=$(jq -n --argjson a "$seven_day" --argjson b "$daily_threshold" 'if $a > $b then "true" else "false" end' -r)
+
+  jq -n \
+    --argjson five_hour "$five_hour" \
+    --argjson hourly_threshold "$hourly_threshold" \
+    --argjson five_hour_over "$five_hour_over" \
+    --argjson window_hour "$window_hour" \
+    --argjson seven_day "$seven_day" \
+    --argjson daily_threshold "$daily_threshold" \
+    --argjson seven_day_over "$seven_day_over" \
+    --argjson window_day "$window_day" \
+    --arg billing_mode "$billing_mode" \
+    --arg detection_method "headers" \
+    '{
+      five_hour: {
+        utilization: $five_hour,
+        hourly_threshold: $hourly_threshold,
+        over_threshold: $five_hour_over,
+        window_hour: $window_hour
+      },
+      seven_day: {
+        utilization: $seven_day,
+        daily_threshold: $daily_threshold,
+        over_threshold: $seven_day_over,
+        window_day: $window_day
+      },
+      billing_mode: $billing_mode,
+      detection_method: $detection_method
+    }'
+  return 0
 }
 
 # --- Main ---
@@ -180,6 +326,10 @@ case "$method" in
     _check_headers
     ;;
   auto)
+    if _check_headers 2>/dev/null; then
+      exit 0
+    fi
+    log_info "header-based detection failed, falling back to OAuth"
     if _check_oauth 2>/dev/null; then
       exit 0
     fi

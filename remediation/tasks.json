@@ -216,7 +216,7 @@
     "description": "_check_cli at pipeline-quota-check:120-154 runs `claude -p ok --max-turns 1 --model haiku` to detect rate limiting. This burns a turn from the user's quota on every check \u2014 anti-pattern. Remove this path; if header detection fails, return an explicit error rather than probing.",
     "priority": "P0",
     "findings": ["C2b"],
-    "status": "pending",
+    "status": "done",
     "files": ["bin/pipeline-quota-check", "bin/test-phase7.sh"],
     "acceptance_criteria": [
       "_check_cli method is removed or only runs once for cold-start population (then never again)",
@@ -227,7 +227,8 @@
       "bin/test-phase7.sh: auto mode does not invoke claude CLI when headers file exists",
       "bin/test-phase7.sh: explicit error returned when both headers and oauth fail"
     ],
-    "depends_on": ["task_02_04"]
+    "depends_on": ["task_02_04"],
+    "notes": "Deleted _check_cli entirely. auto mode is now an alias for headers-only detection: on failure it exits 1 with operator instructions to stderr and emits no stdout JSON, replacing the old silent safe-default zeros. --method cli is now rejected as unknown. Cold-start probe remains inside _check_headers (fires at most once per cold start). Added 5 regression tests to bin/test-phase7.sh under 'cli probe removed \u2014 task_02_05': (1) tripwire-stubbed claude binary proves auto never invokes it when last-headers.json is present, (2) auto exits 1 when header detection fails, (3) stdout is empty on failure (guard against safe-default zeros re-appearing), (4) --method cli is rejected, (5) grep guard asserts _check_cli symbol is absent from the script. All 67 phase7 tests pass; full phase1-9 suite (432 tests) still green."
   },
   {
     "task_id": "task_03_01",

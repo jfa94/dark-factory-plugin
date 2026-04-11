@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 # Check Claude API quota utilization.
-# Detection methods (in priority order under --method auto):
-#   1. Headers — read ${CLAUDE_PLUGIN_DATA}/last-headers.json (cross-platform,
-#      no quota cost). Cold-start probe runs `claude -p ok` once if missing.
-#   2. CLI probe — `claude -p ok` and parse stderr for rate limit (burns quota)
 #
-# OAuth/Keychain detection was removed in task_02_04 (finding C2b). Rationale:
-#   - The credential format nests under `.claudeAiOauth.accessToken` (not
-#     `.access_token`), so the old code silently failed and fell through to
-#     the CLI probe.
-#   - Decision 10 (docs/05-decisions.md) explicitly chose headers as the
-#     primary detection path and retired OAuth to make the plugin
-#     cross-platform (macOS Keychain is not portable).
-#   - Keeping a broken OAuth path would mask bugs behind silent fallbacks.
+# Detection path (single method, no fallbacks):
+#   Headers — read ${CLAUDE_PLUGIN_DATA}/last-headers.json (cross-platform,
+#   no quota cost). On cold start (file missing) a single one-shot probe
+#   `claude -p ok --max-turns 1 --model haiku` runs inside _check_headers
+#   so whatever layer captures Anthropic response headers can populate the
+#   file. The probe fires at most once per cold start.
 #
-# Usage: pipeline-quota-check [--method headers|cli|auto]
-# Exit: 0=data retrieved, 1=all methods failed
+# Historical fallbacks (both removed):
+#   - OAuth/Keychain detection — removed in task_02_04 (finding C2b). The
+#     credential format nests under `.claudeAiOauth.accessToken` (not
+#     `.access_token`), so the code silently failed. Decision 10 retired
+#     OAuth entirely to keep the plugin cross-platform.
+#   - CLI probe fallback — removed in task_02_05 (finding C2b). The old
+#     auto mode fell through to `claude -p ok` on every check, burning a
+#     turn from the user's quota just to measure quota. The cold-start
+#     probe inside _check_headers already covers the "file missing" case
+#     and only runs once. On header failure the script now exits 1 with
+#     explicit operator instructions instead of masking the failure
+#     behind silent safe-default zeros.
+#
+# Usage: pipeline-quota-check [--method headers|auto]
+# Exit: 0=data retrieved, 1=header detection failed
 
 source "$(dirname "$0")/pipeline-lib.sh"
 require_command jq
@@ -27,43 +34,6 @@ while [[ $# -gt 0 ]]; do
     *) log_error "unknown flag: $1"; exit 1 ;;
   esac
 done
-
-# --- CLI probe detection ---
-_check_cli() {
-  if ! command -v claude &>/dev/null; then
-    log_warn "claude CLI not found"
-    return 1
-  fi
-
-  local stderr_output
-  stderr_output=$(claude -p "ok" --max-turns 1 --model haiku 2>&1 >/dev/null) || true
-
-  local rate_limited="false"
-  if printf '%s' "$stderr_output" | grep -qi "rate.limit\|quota\|throttl\|too.many.requests"; then
-    rate_limited="true"
-  fi
-
-  jq -n \
-    --argjson rate_limited "$rate_limited" \
-    --arg detection_method "cli" \
-    '{
-      five_hour: {
-        utilization: (if $rate_limited then 100 else 0 end),
-        hourly_threshold: 90,
-        over_threshold: $rate_limited,
-        window_hour: null
-      },
-      seven_day: {
-        utilization: (if $rate_limited then 100 else 0 end),
-        daily_threshold: 100,
-        over_threshold: $rate_limited,
-        window_day: null
-      },
-      billing_mode: "unknown",
-      detection_method: $detection_method
-    }'
-  return 0
-}
 
 # --- Headers detection ---
 # Reads ${CLAUDE_PLUGIN_DATA}/last-headers.json (populated after each Claude
@@ -219,32 +189,20 @@ _check_headers() {
 }
 
 # --- Main ---
+# auto and headers are identical paths: task_02_05 removed the CLI probe
+# fallback. `auto` is kept as an alias so call sites don't need to change.
 case "$method" in
-  cli)
-    _check_cli
-    ;;
-  headers)
-    _check_headers
-    ;;
-  auto)
-    if _check_headers 2>/dev/null; then
+  headers|auto)
+    if _check_headers; then
       exit 0
     fi
-    log_info "header-based detection failed, falling back to CLI probe"
-    if _check_cli 2>/dev/null; then
-      exit 0
-    fi
-    log_error "all quota detection methods failed"
-    # Return safe defaults (assume not rate limited)
-    jq -n '{
-      five_hour: {utilization: 0, hourly_threshold: 90, over_threshold: false, window_hour: null},
-      seven_day: {utilization: 0, daily_threshold: 100, over_threshold: false, window_day: null},
-      billing_mode: "unknown",
-      detection_method: "none"
-    }'
+    log_error "quota detection failed: could not read ${CLAUDE_PLUGIN_DATA:-\$CLAUDE_PLUGIN_DATA}/last-headers.json"
+    log_error "to populate it, run a single Claude request so the header-capture"
+    log_error "layer can write the file, then retry. See docs/04-data-flow.md."
+    exit 1
     ;;
   *)
-    log_error "invalid method: $method (expected cli|headers|auto)"
+    log_error "invalid method: $method (expected headers|auto)"
     exit 1
     ;;
 esac

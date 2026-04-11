@@ -36,17 +36,6 @@ assert_exit() {
 }
 
 # ============================================================
-echo "=== pipeline-quota-check (auto fallback) ==="
-
-# Without Keychain or claude CLI, auto should return safe defaults
-output=$(pipeline-quota-check --method auto 2>/dev/null)
-assert_eq "auto returns JSON" "0" "$(printf '%s' "$output" | jq -e . >/dev/null 2>&1; echo $?)"
-assert_eq "auto has five_hour" "true" "$(printf '%s' "$output" | jq -e '.five_hour' >/dev/null 2>&1 && echo true || echo false)"
-assert_eq "auto has seven_day" "true" "$(printf '%s' "$output" | jq -e '.seven_day' >/dev/null 2>&1 && echo true || echo false)"
-assert_eq "auto has detection_method" "true" "$(printf '%s' "$output" | jq -e '.detection_method' >/dev/null 2>&1 && echo true || echo false)"
-
-# ============================================================
-echo ""
 echo "=== pipeline-quota-check (invalid method) ==="
 
 assert_exit "invalid method exits 1" 1 pipeline-quota-check --method bogus
@@ -142,15 +131,6 @@ quota='{"five_hour":{"utilization":95,"hourly_threshold":60,"over_threshold":tru
 output=$(pipeline-model-router --quota "$quota" --tier routine 2>/dev/null)
 # Ollama unreachable → should fall back to wait
 assert_eq "ollama unreachable → wait" "wait" "$(printf '%s' "$output" | jq -r '.action')"
-
-# ============================================================
-echo ""
-echo "=== pipeline-quota-check (auto with safe defaults shape) ==="
-
-# Verify the safe defaults have the correct shape
-output=$(pipeline-quota-check --method auto 2>/dev/null)
-assert_eq "five_hour.over_threshold" "false" "$(printf '%s' "$output" | jq -r '.five_hour.over_threshold')"
-assert_eq "seven_day.over_threshold" "false" "$(printf '%s' "$output" | jq -r '.seven_day.over_threshold')"
 
 # ============================================================
 echo ""
@@ -465,6 +445,114 @@ assert_eq "auto with headers exits 0" "0" "$rc"
 assert_eq "auto prefers headers over oauth" "headers" "$(printf '%s' "$output" | jq -r '.detection_method')"
 # Confirm we got the headers fixture's utilization (15) not the oauth mock's (99)
 assert_eq "auto used headers fixture not oauth" "15" "$(printf '%s' "$output" | jq -r '.five_hour.utilization')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-quota-check (cli probe removed — task_02_05) ==="
+
+# Regression: C2b / task_02_05. The CLI-probe fallback (_check_cli) was
+# deleted. Auto mode is now headers-only: on a cache hit it never invokes
+# `claude`, and on failure it exits 1 with operator instructions instead
+# of emitting silent safe-default zeros that masked broken detection.
+
+# (1) auto mode must NOT invoke `claude` when last-headers.json is present.
+# Tripwire: stub `claude` with a binary that writes a marker file; after the
+# run, the marker file must not exist — the headers path returned before any
+# probe/fallback could fire.
+_run_auto_no_claude_invocation() (
+  test_data=$(mktemp -d)
+  mocks_dir=$(mktemp -d)
+  trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"; [[ "$mocks_dir" == /tmp/* ]] && rm -rf "$mocks_dir"' EXIT
+
+  cat > "$test_data/last-headers.json" <<'JSON_EOF'
+{
+  "anthropic-ratelimit-unified-5h-utilization": 10,
+  "anthropic-ratelimit-unified-5h-reset": "2026-04-10T16:50:00Z",
+  "anthropic-ratelimit-unified-7d-utilization": 10,
+  "anthropic-ratelimit-unified-7d-reset": "2026-04-13T12:00:00Z",
+  "is_using_overage": "false"
+}
+JSON_EOF
+
+  cat > "$mocks_dir/claude" <<MOCK_EOF
+#!/usr/bin/env bash
+touch "$test_data/claude_was_called"
+exit 0
+MOCK_EOF
+  chmod +x "$mocks_dir/claude"
+
+  cat > "$mocks_dir/date" <<'MOCK_EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "+%s") echo "1775822400" ;;
+  *) exec /bin/date "$@" ;;
+esac
+MOCK_EOF
+  chmod +x "$mocks_dir/date"
+
+  env CLAUDE_PLUGIN_DATA="$test_data" PATH="$mocks_dir:$PATH" \
+    pipeline-quota-check --method auto >/dev/null || return 3
+
+  if [[ -e "$test_data/claude_was_called" ]]; then
+    return 2
+  fi
+  return 0
+)
+
+assert_exit "auto does not invoke claude when headers file exists" 0 _run_auto_no_claude_invocation
+
+# (2) auto mode must return an explicit error (exit 1) when header detection
+# fails entirely. Old code emitted safe-default zeros and exited 0; this is
+# a regression guard against that silent-failure re-appearing.
+_run_auto_fails_explicit() (
+  test_data=$(mktemp -d)
+  mocks_dir=$(mktemp -d)
+  trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"; [[ "$mocks_dir" == /tmp/* ]] && rm -rf "$mocks_dir"' EXIT
+
+  # No fixture. Stub claude as a no-op — cold-start probe won't populate
+  # the file, so _check_headers fails and auto must exit 1.
+  cat > "$mocks_dir/claude" <<'MOCK_EOF'
+#!/usr/bin/env bash
+exit 0
+MOCK_EOF
+  chmod +x "$mocks_dir/claude"
+
+  env CLAUDE_PLUGIN_DATA="$test_data" PATH="$mocks_dir:$PATH" \
+    pipeline-quota-check --method auto
+)
+
+assert_exit "auto returns explicit error when header detection fails" 1 _run_auto_fails_explicit
+
+# (3) The explicit error path must emit no stdout JSON. Old behavior printed
+# a "safe defaults" JSON blob to stdout while exiting 0; the new contract is
+# exit 1 with the error on stderr and nothing on stdout.
+_run_auto_stdout_on_failure() (
+  test_data=$(mktemp -d)
+  mocks_dir=$(mktemp -d)
+  trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"; [[ "$mocks_dir" == /tmp/* ]] && rm -rf "$mocks_dir"' EXIT
+
+  cat > "$mocks_dir/claude" <<'MOCK_EOF'
+#!/usr/bin/env bash
+exit 0
+MOCK_EOF
+  chmod +x "$mocks_dir/claude"
+
+  env CLAUDE_PLUGIN_DATA="$test_data" PATH="$mocks_dir:$PATH" \
+    pipeline-quota-check --method auto 2>/dev/null
+)
+
+set +e
+stdout=$(_run_auto_stdout_on_failure)
+set -e
+assert_eq "auto failure produces no stdout JSON" "" "$stdout"
+
+# (4) --method cli must now be rejected (CLI probe method removed entirely).
+assert_exit "--method cli rejected (removed)" 1 pipeline-quota-check --method cli
+
+# (5) Grep guard: the _check_cli symbol must not reappear in the script.
+_script="$(cd "$(dirname "$0")" && pwd)/pipeline-quota-check"
+cli_refs=$(grep -c '_check_cli' "$_script" || true)
+assert_eq "_check_cli symbol fully removed" "0" "$cli_refs"
 
 # ============================================================
 echo ""

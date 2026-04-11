@@ -34,25 +34,66 @@ This phase runs once at the beginning of a `prd` or `discover` mode run:
 ```
 S1. pipeline-fetch-prd <issue-number>             → PRD body + metadata
 S2. Spawn spec-generator agent with PRD body
+    → spec-generator runs with isolation: worktree in an ephemeral worktree.
     → spec-generator calls pipeline-validate-spec internally
     → spec-generator calls spec-reviewer (bundled) and retries up to 5x on validation failure
-S3. pipeline-validate-tasks <spec-dir/tasks.json>
+    → As its final step spec-generator completes the "Handoff Protocol" described in
+      agents/spec-generator.md: it commits spec.md + tasks.json on a
+      `spec-handoff/<run_id>` branch and writes the branch name, ref sha, and spec
+      directory path to `.spec.handoff_branch`, `.spec.handoff_ref`, `.spec.path`
+      via `pipeline-state`. These are the only channels through which a worktree-
+      isolated agent's files reach the main orchestrator worktree.
+
+S3. Resolve the spec handoff onto staging (cross-worktree reconciliation):
+    handoff_branch=$(pipeline-state read <run-id> .spec.handoff_branch)
+    handoff_ref=$(pipeline-state read <run-id> .spec.handoff_ref)
+    spec_path=$(pipeline-state read <run-id> .spec.path)
+    → If handoff_branch is null/empty: spec-generator did not complete the handoff
+      protocol. Fail the run:
+          pipeline-gh-comment <issue> ci-escalation --data '{"reason":"spec handoff missing"}'
+          pipeline-state write <run-id> .status '"failed"'
+          exit 1
+    → Fetch the handoff branch, falling back to the local ref if no remote:
+          git fetch origin "$handoff_branch" 2>/dev/null \
+            || git rev-parse --verify "$handoff_ref" >/dev/null
+    → Materialize spec files at `.state/<run-id>/` on the orchestrator filesystem:
+          mkdir -p ".state/<run-id>"
+          git show "$handoff_ref:$spec_path/spec.md"    > ".state/<run-id>/spec.md"
+          git show "$handoff_ref:$spec_path/tasks.json" > ".state/<run-id>/tasks.json"
+    → Merge the handoff onto the shared `staging` branch so every task-executor
+      worktree picks up the spec via `pipeline-branch commit-spec` (see S3b):
+          git checkout staging
+          git merge --ff-only "$handoff_ref" \
+            || git merge --no-ff "$handoff_ref" -m "chore: merge spec handoff for <run-id>"
+    → Record the canonical spec location in state (absolute path, not relative):
+          pipeline-state write <run-id> .spec.path "$(pwd)/.state/<run-id>"
+          pipeline-state write <run-id> .spec.committed true
+
+S3b. pipeline-branch commit-spec .state/<run-id>    → idempotent commit-to-staging
+    → See bin/pipeline-branch commit-spec. Guarantees .state/<run-id>/ is tracked
+      on the staging branch so task-executors (in their own isolated worktrees) can
+      read spec.md via `git show origin/staging:.state/<run-id>/spec.md`.
+
+S4. pipeline-validate-tasks .state/<run-id>/tasks.json
     → Output: {valid, task_count, execution_order: [{task_id, parallel_group}, ...], errors}
     → Note: parallel_group is an integer field on each execution_order entry, not a
       separate top-level array.
-S4. Seed task state from tasks.json:
+
+S5. Seed task state from tasks.json:
     For each task in tasks.json:
       pipeline-state write <run-id> '.tasks.<task_id>' '{"status":"pending","depends_on":[...],"files":[...],...}'
     pipeline-state write <run-id> .execution_order '<execution_order JSON>'
     → This makes pipeline-state deps-satisfied work (it reads .tasks[tid].depends_on)
-S5. If humanReviewLevel >= 3: pause for human spec approval
+
+S6. If humanReviewLevel >= 3: pause for human spec approval
 ```
 
-For `task` mode: skip S1-S2, read spec from `--spec-dir` argument, run S3-S4.
+For `task` mode: skip S1-S3b, read spec from `--spec-dir` argument, write `.spec.path` to state directly, then run S4-S5.
 
 ## Execution Sequence
 
 The pipeline runs tasks in two nested loops:
+
 - **Outer loop**: iterate `parallel_group` integers in ascending order (groups are sequential)
 - **Inner loop**: batch tasks within a group, spawn task-executors in parallel per batch
 
@@ -86,8 +127,15 @@ For each group G (in ascending order):
     → {provider, model, action}
     → If action=wait: sleep wait_minutes, retry from step 3
     → If action=end_gracefully: drain in-flight, mark partial, go to cleanup
- 7. pipeline-build-prompt <task-file> <spec> --holdout 20%
+ 7. pipeline-build-prompt <task-file> --holdout 20%
+    → pipeline-build-prompt reads `.spec.path` from state when --spec-path is
+      omitted, so the orchestrator never hardcodes spec locations.
  8. pipeline-state task-status <run-id> <T> executing
+ 8b. Task-executor prompt must include the absolute spec path. Since executors
+     run in isolated worktrees, the prompt tells them to read spec.md via:
+       git fetch origin staging
+       git show origin/staging:.state/<run-id>/spec.md
+     with the local `.state/<run-id>/spec.md` path as a same-filesystem fallback.
 ```
 
 ### Concurrent spawning
@@ -155,13 +203,13 @@ Each task-executor runs in its own worktree; model/maxTurns come from step 4 of 
 
 Adjust behavior based on `humanReviewLevel` from plugin config:
 
-| Level | Behavior |
-|-------|----------|
-| 0 | Full auto: create PR, enable auto-merge |
-| 1 | Create PR, wait for human merge (default) |
-| 2 | Pause after adversarial review, before PR creation |
-| 3 | Pause after spec generation for human approval |
-| 4 | Pause after spec, after each task, after each review round |
+| Level | Behavior                                                   |
+| ----- | ---------------------------------------------------------- |
+| 0     | Full auto: create PR, enable auto-merge                    |
+| 1     | Create PR, wait for human merge (default)                  |
+| 2     | Pause after adversarial review, before PR creation         |
+| 3     | Pause after spec generation for human approval             |
+| 4     | Pause after spec, after each task, after each review round |
 
 "Pause" means: update state with a `waiting_for_human` status, post a GitHub issue comment explaining what needs approval, then stop. The pipeline resumes via `/dark-factory:run resume`.
 
@@ -189,13 +237,13 @@ When invoked with resume mode:
 
 When a task-executor fails, set `TASK_FAILURE_TYPE` env var before retry:
 
-| Failure Type | Action |
-|-------------|--------|
-| `max_turns` | Include partial work in prompt, ask to finish remaining work |
-| `quality_gate` | Include gate output, ask to fix specific failures |
-| `agent_error` | Include error details, retry with same prompt |
-| `no_changes` | Explicitly request code changes with diff |
-| `code_review` | Include prior review findings as fix instructions |
+| Failure Type   | Action                                                       |
+| -------------- | ------------------------------------------------------------ |
+| `max_turns`    | Include partial work in prompt, ask to finish remaining work |
+| `quality_gate` | Include gate output, ask to fix specific failures            |
+| `agent_error`  | Include error details, retry with same prompt                |
+| `no_changes`   | Explicitly request code changes with diff                    |
+| `code_review`  | Include prior review findings as fix instructions            |
 
 Max 4 total attempts per task. After exhausting retries: mark `failed`, continue other tasks.
 

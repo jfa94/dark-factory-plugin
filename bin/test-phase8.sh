@@ -4,6 +4,7 @@ set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ORCH="$PLUGIN_ROOT/agents/pipeline-orchestrator.md"
+SPECGEN="$PLUGIN_ROOT/agents/spec-generator.md"
 
 pass=0
 fail=0
@@ -167,6 +168,27 @@ assert_contains "documents parallel Agent spawn" "multiple Agent tool calls in a
 assert_contains "references parallel_group" "parallel_group" "$ORCH"
 assert_contains "references execution_order" "execution_order" "$ORCH"
 assert_contains "references maxConcurrent" "maxConcurrent" "$ORCH"
+
+# ============================================================
+echo ""
+echo "=== spec handoff contract (plan 03) ==="
+
+# spec-generator must document a worktree handoff protocol (plan 03, task_03_02)
+assert_file_exists "spec-generator.md exists" "$SPECGEN"
+assert_contains "spec-generator documents output path contract" "Output Path Contract" "$SPECGEN"
+assert_contains "spec-generator has Handoff Protocol section" "## Handoff Protocol" "$SPECGEN"
+assert_contains "spec-generator creates spec-handoff/<run_id> branch" "spec-handoff/" "$SPECGEN"
+assert_contains "spec-generator writes .spec.handoff_branch" ".spec.handoff_branch" "$SPECGEN"
+assert_contains "spec-generator writes .spec.handoff_ref" ".spec.handoff_ref" "$SPECGEN"
+assert_contains "spec-generator writes .spec.path" ".spec.path" "$SPECGEN"
+assert_contains "spec-generator mentions pipeline-state as cross-worktree channel" "pipeline-state" "$SPECGEN"
+
+# Orchestrator must reference the handoff mechanism explicitly (plan 03, task_03_02)
+assert_contains "orchestrator references spec-handoff branch" "spec-handoff/" "$ORCH"
+assert_contains "orchestrator reads .spec.handoff_branch" ".spec.handoff_branch" "$ORCH"
+assert_contains "orchestrator reads .spec.handoff_ref" ".spec.handoff_ref" "$ORCH"
+assert_contains "orchestrator references commit-spec" "commit-spec" "$ORCH"
+assert_contains "orchestrator references .spec.path from state" ".spec.path" "$ORCH"
 
 # ============================================================
 echo ""

@@ -221,6 +221,156 @@ else
   fail=$((fail + 1))
 fi
 
+# native-tool-nudge from ~/.claude/hooks/
+nudge=$(jq -r '[.. | .command? // empty] | map(select(test("~/.claude/hooks/native-tool-nudge.sh"))) | length' "$TEMPLATE")
+if [[ "$nudge" -ge 1 ]]; then
+  echo "  PASS: native-tool-nudge.sh hook present (user env path preserved)"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: native-tool-nudge.sh hook missing"
+  fail=$((fail + 1))
+fi
+
+# ============================================================
+echo ""
+echo "=== commands/run.md materialization (\${CLAUDE_PLUGIN_ROOT} substitution) ==="
+
+RUN_MD="$PLUGIN_ROOT/commands/run.md"
+assert_file_exists "run.md exists" "$RUN_MD"
+
+# The materialization must use walk() + gsub — NOT a hardcoded PreToolUse[0] path.
+# The old jq expression "PreToolUse[0].hooks[0].command = ..." would corrupt the
+# new template's first hook (the .claude access block) by overwriting its inline
+# shell with a stale branch-protection.sh reference.
+if grep -q 'walk(' "$RUN_MD" && grep -q 'CLAUDE_PLUGIN_ROOT' "$RUN_MD"; then
+  echo "  PASS: run.md materialization uses walk() + CLAUDE_PLUGIN_ROOT"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: run.md materialization does not use walk() + CLAUDE_PLUGIN_ROOT"
+  fail=$((fail + 1))
+fi
+
+if grep -qF 'PreToolUse[0].hooks[0].command' "$RUN_MD"; then
+  echo "  FAIL: run.md still references brittle PreToolUse[0].hooks[0].command path"
+  fail=$((fail + 1))
+else
+  echo "  PASS: run.md does not use brittle PreToolUse[0].hooks[0].command path"
+  pass=$((pass + 1))
+fi
+
+# Exercise the same jq expression against a synthetic fixture. The fixture mixes
+# plugin-relative paths (with ${CLAUDE_PLUGIN_ROOT}) and user-env paths that must
+# NOT be rewritten.
+MATERIALIZE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/phase9-materialize-XXXXXX")
+trap '[[ -n "${MATERIALIZE_DIR:-}" && "$MATERIALIZE_DIR" == "${TMPDIR:-/tmp}"/* ]] && rm -rf "$MATERIALIZE_DIR"' EXIT
+
+FIXTURE="$MATERIALIZE_DIR/fixture.json"
+cat > "$FIXTURE" <<'EOF'
+{
+  "env": {"DARK_FACTORY_AUTONOMOUS_MODE": "1"},
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/branch-protection.sh"},
+          {"type": "command", "command": "~/.claude/hooks/pre-commit-check.sh"}
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {"type": "command", "command": "FILE=$(cat); echo inline"},
+          {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/rm-guard.sh --strict"}
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+FAKE_ROOT="$MATERIALIZE_DIR/fake-plugin"
+mkdir -p "$FAKE_ROOT/hooks"
+
+MATERIALIZED="$MATERIALIZE_DIR/merged.json"
+jq --arg root "$FAKE_ROOT" '
+  walk(
+    if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+    then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+    else . end
+  )
+' "$FIXTURE" > "$MATERIALIZED"
+
+assert_valid_json "materialized fixture is valid JSON" "$MATERIALIZED"
+
+# Plugin-relative ${CLAUDE_PLUGIN_ROOT} references replaced with $FAKE_ROOT
+rewritten_branch=$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$MATERIALIZED")
+assert_eq "plugin-relative path rewritten to absolute" \
+  "$FAKE_ROOT/hooks/branch-protection.sh" \
+  "$rewritten_branch"
+
+rewritten_rmguard=$(jq -r '.hooks.PreToolUse[1].hooks[1].command' "$MATERIALIZED")
+assert_eq "nested plugin-relative path rewritten to absolute" \
+  "$FAKE_ROOT/hooks/rm-guard.sh --strict" \
+  "$rewritten_rmguard"
+
+# User-env ~/.claude/hooks/* paths preserved verbatim
+preserved_user_hook=$(jq -r '.hooks.PreToolUse[0].hooks[1].command' "$MATERIALIZED")
+assert_eq "user-env ~/.claude/hooks path preserved verbatim" \
+  "~/.claude/hooks/pre-commit-check.sh" \
+  "$preserved_user_hook"
+
+# Inline shell snippets preserved verbatim
+preserved_inline=$(jq -r '.hooks.PreToolUse[1].hooks[0].command' "$MATERIALIZED")
+assert_eq "inline shell command preserved verbatim" \
+  'FILE=$(cat); echo inline' \
+  "$preserved_inline"
+
+# No ${CLAUDE_PLUGIN_ROOT} tokens remain anywhere
+remaining=$(grep -c 'CLAUDE_PLUGIN_ROOT' "$MATERIALIZED" || true)
+assert_eq "no \${CLAUDE_PLUGIN_ROOT} tokens remain in materialized output" "0" "$remaining"
+
+# Idempotency: re-running the same substitution produces byte-identical output
+MATERIALIZED2="$MATERIALIZE_DIR/merged2.json"
+jq --arg root "$FAKE_ROOT" '
+  walk(
+    if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+    then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+    else . end
+  )
+' "$MATERIALIZED" > "$MATERIALIZED2"
+
+if diff -q "$MATERIALIZED" "$MATERIALIZED2" >/dev/null 2>&1; then
+  echo "  PASS: materialization is idempotent"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: materialization is not idempotent"
+  fail=$((fail + 1))
+fi
+
+# Materializing the real template yields valid JSON (even though it currently
+# contains no ${CLAUDE_PLUGIN_ROOT} placeholders — this locks in the walk()
+# contract: a no-op substitution must still produce a valid, loadable file).
+REAL_MATERIALIZED="$MATERIALIZE_DIR/real-merged.json"
+jq --arg root "$FAKE_ROOT" '
+  walk(
+    if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+    then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+    else . end
+  )
+' "$TEMPLATE" > "$REAL_MATERIALIZED"
+assert_valid_json "materialized real template is valid JSON" "$REAL_MATERIALIZED"
+
+# Preserve ~/.claude/hooks paths in the real template
+real_user_hooks=$(jq -r '[.. | .command? // empty] | map(select(test("~/.claude/hooks/"))) | length' "$REAL_MATERIALIZED")
+if [[ "$real_user_hooks" -ge 1 ]]; then
+  echo "  PASS: real template materialization preserves ~/.claude/hooks/* paths"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: real template materialization dropped ~/.claude/hooks/* paths"
+  fail=$((fail + 1))
+fi
+
 # ============================================================
 echo ""
 echo "=== hooks/hooks.json uses \${CLAUDE_PLUGIN_ROOT} ==="

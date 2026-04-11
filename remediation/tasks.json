@@ -450,7 +450,7 @@
     "findings": [
       "C6"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "commands/run.md",
       "bin/test-phase9.sh"
@@ -468,7 +468,8 @@
     ],
     "depends_on": [
       "task_04_01"
-    ]
+    ],
+    "notes": "Rewrote commands/run.md Step 1 materialization to use jq walk() + gsub over ${CLAUDE_PLUGIN_ROOT}. Old expression targeted .hooks.PreToolUse[0].hooks[0].command and would have corrupted the new templates first hook (the .claude access block) by overwriting its inline shell with a stale branch-protection.sh path. walk() handles arbitrary nesting, leaves inline shell snippets and ~/.claude/hooks/* paths untouched, and is idempotent. Added 12 regression assertions in bin/test-phase9.sh covering: walk()+CLAUDE_PLUGIN_ROOT present in run.md, brittle PreToolUse[0] path absent, synthetic fixture substitution (plugin-relative rewritten, user-env preserved, inline preserved), no residual tokens, idempotency via diff on repeat application, real-template materialization yields valid JSON and preserves user-env hooks."
   },
   {
     "task_id": "task_04_03",
@@ -479,7 +480,7 @@
     "findings": [
       "C6"
     ],
-    "status": "pending",
+    "status": "done",
     "files": [
       "bin/test-phase9.sh"
     ],
@@ -494,7 +495,8 @@
     ],
     "depends_on": [
       "task_04_02"
-    ]
+    ],
+    "notes": "Verified all 65 pre-existing bin/test-phase9.sh assertions still pass after the full-template port in task_04_01. Added 1 new assertion for the previously uncovered native-tool-nudge.sh hook (the 8th PreToolUse matcher group was counted but not individually verified). All 8 ported hooks now have direct assertions: .claude access block, branch protection, protected-files/migrations, SQL safety, dangerous Bash patterns, native-tool-nudge, pre-commit-check, pre-push-check. Combined with task_04_02 tests, bin/test-phase9.sh now runs 78 assertions (up from 65), all passing. Full phase suite (9 files) also green: 550 total assertions, 0 failures."
   },
   {
     "task_id": "task_05_01",

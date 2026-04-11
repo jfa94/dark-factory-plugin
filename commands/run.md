@@ -38,13 +38,21 @@ If `DARK_FACTORY_AUTONOMOUS_MODE` is not `1`, materialize a relaunchable setting
 plugin_root=$(dirname "$(dirname "$(which pipeline-state)")")
 mkdir -p "$CLAUDE_PLUGIN_DATA"
 
-# Substitute absolute paths into the autonomous settings template.
-# The template ships with a relative hook path — we rewrite it to an absolute path
-# so that `claude --settings <file>` works regardless of the user's cwd.
+# Materialize an absolute-path copy of the autonomous settings template.
+# The template may reference ${CLAUDE_PLUGIN_ROOT} anywhere (top-level hooks,
+# matcher groups, command strings, env values). walk() + gsub() substitutes
+# every occurrence regardless of nesting. User-env hooks (~/.claude/hooks/*)
+# and inline shell snippets are left untouched because they contain no
+# ${CLAUDE_PLUGIN_ROOT} token. Running this twice with the same $plugin_root
+# is idempotent.
 merged_settings="$CLAUDE_PLUGIN_DATA/merged-settings.json"
-jq --arg root "$plugin_root" \
-  '.hooks.PreToolUse[0].hooks[0].command = ($root + "/hooks/branch-protection.sh")' \
-  "$plugin_root/templates/settings.autonomous.json" \
+jq --arg root "$plugin_root" '
+  walk(
+    if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+    then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+    else . end
+  )
+' "$plugin_root/templates/settings.autonomous.json" \
   > "$merged_settings"
 
 echo "Generated: $merged_settings"
@@ -55,6 +63,7 @@ Then stop and show the user:
 > This pipeline requires autonomous mode settings for safe operation.
 >
 > Relaunch Claude Code with the generated settings file:
+>
 > ```
 > claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json
 > ```
@@ -77,12 +86,12 @@ Use `--no-clean-check` because the pipeline itself will create changes. If valid
 
 Determine the operating mode from the user's input:
 
-| Mode | Required Args | Description |
-|------|--------------|-------------|
-| `discover` | (none) | Find all open issues with [PRD] marker and process them |
-| `prd` | `--issue N` | Process a single PRD issue |
-| `task` | `--task-id T --spec-dir D` | Execute a single task from an existing spec |
-| `resume` | (none) | Resume the most recent interrupted run |
+| Mode       | Required Args              | Description                                             |
+| ---------- | -------------------------- | ------------------------------------------------------- |
+| `discover` | (none)                     | Find all open issues with [PRD] marker and process them |
+| `prd`      | `--issue N`                | Process a single PRD issue                              |
+| `task`     | `--task-id T --spec-dir D` | Execute a single task from an existing spec             |
+| `resume`   | (none)                     | Resume the most recent interrupted run                  |
 
 Validate that required arguments are present for the chosen mode.
 
@@ -105,6 +114,7 @@ pipeline-state resume-point "$(pipeline-state list | jq -r 'last')"
 ## Step 5: Handle Dry Run
 
 If `--dry-run` was specified:
+
 1. Show the execution plan (mode, issues, tasks to run)
 2. Show validation results
 3. Do NOT spawn the orchestrator
@@ -123,6 +133,7 @@ Agent({
 ```
 
 Pass all relevant context:
+
 - Run ID
 - Mode
 - Issue number(s)

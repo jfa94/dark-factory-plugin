@@ -1688,5 +1688,90 @@
       "task_12_03",
       "task_12_04"
     ]
+  },
+  {
+    "task_id": "task_15_01",
+    "plan_id": "15-turn-budget-review",
+    "title": "Audit current turn consumption per phase and tier",
+    "description": "Build a quantitative model of how many turns the current orchestrator consumes per task across spec/execute/quality/review/finalize phases. Parse any existing audit.jsonl data if present; otherwise derive from the orchestrator source. Produces remediation/analysis/15-turn-budget.md with a phase-by-tier breakdown table and a revised version of the 20-task/320-turn estimate from 05-decisions.md Open Question #8.",
+    "priority": "P2",
+    "findings": [
+      "open-question-8"
+    ],
+    "status": "pending",
+    "files": [
+      "remediation/analysis/15-turn-budget.md",
+      "agents/pipeline-orchestrator.md"
+    ],
+    "acceptance_criteria": [
+      "analysis/15-turn-budget.md exists with an Audit section",
+      "Per-phase table has min/max turns and variance driver filled in for spec/execute/quality/review/finalize",
+      "Per-tier breakdown covers simple/medium/complex/security",
+      "Real audit.jsonl data is parsed if any runs/*/audit.jsonl files exist; absence is documented if not",
+      "The 320-turn estimate from Open Question #8 is re-derived from the audit and classified as high/low/right"
+    ],
+    "tests_to_write": [
+      "manual: review the audit table for arithmetic sanity (min <= max, tier overhead monotonic)"
+    ],
+    "depends_on": []
+  },
+  {
+    "task_id": "task_15_02",
+    "plan_id": "15-turn-budget-review",
+    "title": "Enumerate orchestrator structural turn consumers",
+    "description": "Catalogue every loop/retry/conditional in agents/pipeline-orchestrator.md that can add turns. For each: cite line range, trigger condition, max iterations, and whether the iterations are budget-aware. Cross-reference bin/pipeline-circuit-breaker to decide if a turn-count cap is needed. Identify the top three turn sinks by max * likelihood. Output appended to remediation/analysis/15-turn-budget.md.",
+    "priority": "P2",
+    "findings": [
+      "open-question-8"
+    ],
+    "status": "pending",
+    "files": [
+      "remediation/analysis/15-turn-budget.md",
+      "agents/pipeline-orchestrator.md",
+      "bin/pipeline-circuit-breaker"
+    ],
+    "acceptance_criteria": [
+      "analysis/15-turn-budget.md has a 'Structural turn consumers' section",
+      "Every catalogue entry cites a line range in agents/pipeline-orchestrator.md",
+      "Circuit breaker is inspected for turn-cap coverage and the gap is stated",
+      "Top-three turn sinks are ranked with justification"
+    ],
+    "tests_to_write": [
+      "manual: verify the line ranges resolve against the current orchestrator file"
+    ],
+    "depends_on": [
+      "task_15_01"
+    ]
+  },
+  {
+    "task_id": "task_15_03",
+    "plan_id": "15-turn-budget-review",
+    "title": "Research best practices and recommend a mitigation",
+    "description": "Research industry/community practices for multi-agent pipelines under a turn budget (Claude Code docs, Claude Agent SDK docs, plugin ecosystem, Anthropic engineering posts). Score the four mitigations from 05-decisions.md Open Question #8 — phase orchestrators, raise maxTurns, batch operations, cap tasks per session — plus any new option surfaced by research. Produce a single recommendation. If the recommendation implies new code, stub a plans/16-*.md entry.",
+    "priority": "P2",
+    "findings": [
+      "open-question-8"
+    ],
+    "status": "pending",
+    "files": [
+      "remediation/analysis/15-turn-budget.md",
+      "remediation/README.md",
+      "05-decisions.md"
+    ],
+    "acceptance_criteria": [
+      "analysis/15-turn-budget.md has a 'Research and recommendation' section",
+      "Each of the four Open Question #8 mitigations has a cost/impact/risk score",
+      "At least three external sources cited (docs, blog posts, other plugins)",
+      "Recommendation line is explicit and unambiguous",
+      "If the recommendation implies code, a stub plan file is added and referenced from remediation/README.md",
+      "05-decisions.md Open Question #8 gets a pointer to this analysis (formal rewrite still belongs to task_14_02)"
+    ],
+    "tests_to_write": [
+      "manual: review the recommendation for internal consistency with the audit data from task_15_01 and the catalogue from task_15_02"
+    ],
+    "depends_on": [
+      "task_15_01",
+      "task_15_02"
+    ]
   }
 ]

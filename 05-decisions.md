@@ -381,15 +381,11 @@ The spec directory is scaffolding for the pipeline's execution, not a permanent 
 
 **Solution (validated 2026-04-10, Plan 12):** The orchestrator emits multiple `Agent()` tool calls in a single assistant message. Claude Code invokes them in parallel natively — all results return in the same turn. Background agents (`run_in_background: true`) are intentionally avoided due to upstream bugs (#17147, #21048, #20679, #7881). The SubagentStop hook exists as a safety net for artifact validation, not for result reading.
 
-### Constraint: Turn Budget (200 turns)
+### Constraint: Turn Budget
 
-**Impact:** Orchestrator at 200 turns may not be sufficient for 20+ task pipelines.
+**Status:** Resolved (Plan 15 analysis, 2026-04-12). See `remediation/analysis/15-turn-budget.md`.
 
-**Workaround options:**
-
-1. **Phase orchestrators** — split into spec-phase (40 turns) and execution-phase (160 turns) orchestrators
-2. **Efficient turn usage** — batch multiple bin script calls per turn where possible
-3. **Reduce per-task turns** — current estimate is ~16 turns/task; optimize by combining related calls
+**Finding:** The 200-turn concern was based on a stale spec value. The actual orchestrator uses `maxTurns: 9999`. Subagent turns don't count against the parent — each Agent() call costs ~2 orchestrator turns regardless of subagent complexity. A 20-task pipeline consumes ~254-334 orchestrator turns, well within the 9999 limit. The circuit breaker's `maxTasks: 20` is the effective pipeline size limit, not turn count. Resume capability (Decision 7) handles any interruption.
 
 ---
 
@@ -465,16 +461,11 @@ Both `${CLAUDE_PLUGIN_DATA}` and `${CLAUDE_PLUGIN_ROOT}` are injected by the plu
 
 ### 8. Turn Budget Sufficiency
 
-**Status:** Analysis pending (Plan 15, task_15_01)
+**Resolved: 2026-04-12** (Plan 15, consolidated analysis)
 
-**Question:** Is 200 turns sufficient for a 20-task pipeline?
+The 200-turn concern was based on a stale spec value (`03-components.md` said 200; actual orchestrator uses `maxTurns: 9999`). Subagent turns don't count against the parent orchestrator. A 20-task pipeline consumes ~254-334 orchestrator turns — well within 9999. The circuit breaker's `maxTasks: 20` is the effective pipeline size limit.
 
-- Estimate: ~16 turns/task x 20 tasks = 320 turns (exceeds budget)
-- Options considered: (A) Phase orchestrators, (B) Increase maxTurns, (C) Batch operations per turn, (D) Accept ~12 task limit
-- Current lean: A — split into spec-phase and execution-phase orchestrators
-- Blocker for: Large pipeline runs (>12 tasks)
-
-**Mitigation:** Resume capability (Decision 7) means a budget-exceeded run can be restarted. The orchestrator intentionally avoids background agents to keep turn consumption tight (synchronous parallel dispatch).
+Full analysis: `remediation/analysis/15-turn-budget.md`. Future scaling (>20 tasks): checkpoint-resume with turn tracking (Option E in analysis).
 
 ---
 
@@ -483,7 +474,7 @@ Both `${CLAUDE_PLUGIN_DATA}` and `${CLAUDE_PLUGIN_ROOT}` are injected by the plu
 | Risk                                                | Likelihood | Impact                                         | Mitigation                                                |
 | --------------------------------------------------- | ---------- | ---------------------------------------------- | --------------------------------------------------------- |
 | Orchestrator ignores script delegation instructions | Medium     | High — unreliable state                        | Circuit breakers + state persistence + resume             |
-| Turn budget exceeded for large pipelines            | High       | Medium — pipeline stops mid-run                | Phase orchestrators + resume capability                   |
+| Turn budget exceeded for large pipelines            | Low        | Medium — pipeline stops mid-run                | maxTurns: 9999 + resume capability (OQ#8 resolved)        |
 | Codex plugin not available/stable                   | Medium     | Low — fallback is fully functional             | Claude Code reviewer with review-protocol skill           |
 | Ollama model quality insufficient                   | Medium     | Low — quality gates catch bad output           | Tier restrictions + unchanged quality gates               |
 | Cross-boundary agent spawning doesn't work          | Low        | High — must copy all agents into plugin        | Test early; fallback: copy agent definitions              |

@@ -8,6 +8,8 @@ This directory contains the follow-up work to address the comprehensive review f
 remediation/
 ├── README.md                  # This file
 ├── tasks.json                 # Flat task list with status — the single source of truth
+├── analysis/
+│   └── 15-turn-budget.md      # Turn budget structural analysis + recommendation
 └── plans/
     ├── 01-critical-safety-hardening.md
     ├── 02-quota-rate-limiting.md
@@ -23,7 +25,8 @@ remediation/
     ├── 12-integration-tests.md
     ├── 13-minor-cleanups.md
     ├── 14-documentation-honesty.md
-    └── 15-turn-budget-review.md
+    ├── 15-turn-budget-review.md
+    └── 15-turn-budget-impl.md
 ```
 
 ## Task schema

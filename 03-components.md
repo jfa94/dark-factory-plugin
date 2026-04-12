@@ -152,7 +152,7 @@ arguments:
 ```yaml
 ---
 model: opus
-maxTurns: 200
+maxTurns: 9999
 description: "Orchestrates the dark-factory pipeline: discovers PRDs, generates specs, executes tasks in dependency order, manages adversarial review, handles completion"
 whenToUse: "When the user invokes /dark-factory:run or needs to run the autonomous coding pipeline"
 tools:

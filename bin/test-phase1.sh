@@ -218,6 +218,37 @@ echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CL
 pipeline-state write "run-test-001" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
 
 echo ""
+echo "=== task_15b_01: pipeline-state increment-turn ==="
+
+# Counter initializes to 0 when absent; increment three times.
+pipeline-init "run-turn-counter" --mode prd --force >/dev/null 2>&1
+pipeline-state increment-turn "run-turn-counter" >/dev/null 2>&1
+pipeline-state increment-turn "run-turn-counter" >/dev/null 2>&1
+pipeline-state increment-turn "run-turn-counter" >/dev/null 2>&1
+turns=$(pipeline-state read "run-turn-counter" '.circuit_breaker.turns_completed')
+assert_eq "increment-turn advances counter from 0 to 3" "3" "$turns"
+
+echo ""
+echo "=== task_15b_02: circuit breaker maxOrchestratorTurns ==="
+
+echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3,"execution":{"maxOrchestratorTurns":500}}' \
+  > "$CLAUDE_PLUGIN_DATA/config.json"
+pipeline-state write "run-turn-counter" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
+pipeline-state write "run-turn-counter" '.circuit_breaker.turns_completed' '500' >/dev/null 2>&1
+assert_exit "circuit breaker tripped (max turns)" 1 pipeline-circuit-breaker "run-turn-counter"
+
+output=$(pipeline-circuit-breaker "run-turn-counter" 2>/dev/null) || true
+reason_has_turns=$(echo "$output" | jq -r '.reason // ""' | grep -qi 'orchestrator turns' && echo "true" || echo "false")
+assert_eq "circuit breaker reason mentions orchestrator turns" "true" "$reason_has_turns"
+
+# Below threshold: safe (other counters already zero).
+pipeline-state write "run-turn-counter" '.circuit_breaker.turns_completed' '499' >/dev/null 2>&1
+assert_exit "circuit breaker safe below turn threshold" 0 pipeline-circuit-breaker "run-turn-counter"
+
+# Restore shared default config for downstream tests.
+echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
+
+echo ""
 echo "=== pipeline-lock ==="
 
 # Acquire
@@ -269,8 +300,9 @@ pipeline-init "run-test-002" --mode discover --force >/dev/null 2>&1
 list_output=$(pipeline-state list)
 count=$(echo "$list_output" | jq 'length')
 # runs created up to this point: run-test-001, run-resume-order,
-# run-resume-legacy (from task_06_01 tests), run-test-002.
-assert_eq "list shows 4 runs" "4" "$count"
+# run-resume-legacy (from task_06_01 tests), run-turn-counter
+# (from task_15b_01/02), run-test-002.
+assert_eq "list shows 5 runs" "5" "$count"
 
 echo ""
 echo "=== task_01_04: pipeline-init --issue numeric validation ==="

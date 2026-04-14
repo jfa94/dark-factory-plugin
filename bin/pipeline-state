@@ -9,6 +9,7 @@
 #   deps-satisfied <run-id> <task-id>        Check if deps done (exit 0/1)
 #   interrupted <run-id>                     Check if run interrupted (exit 0/1)
 #   resume-point <run-id>                    Find first incomplete task
+#   increment-turn <run-id>                  Increment .circuit_breaker.turns_completed
 #   list                                     List all runs
 
 source "$(dirname "$0")/pipeline-lib.sh"
@@ -265,6 +266,22 @@ case "$action" in
     printf '%s' "$task_id"
     ;;
 
+  increment-turn)
+    run_id="${1:?missing run-id}"
+    f=$(_state_file "$run_id")
+    state=$(_read_state_file "$run_id")
+
+    updated=$(printf '%s' "$state" | jq '
+      .circuit_breaker.turns_completed = ((.circuit_breaker.turns_completed // 0) + 1)
+    ')
+    updated=$(printf '%s' "$updated" | jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.updated_at = $t')
+
+    atomic_write "$f" "$updated"
+    new_count=$(printf '%s' "$updated" | jq -r '.circuit_breaker.turns_completed')
+    log_info "turn incremented: $new_count"
+    printf '%s' "$new_count"
+    ;;
+
   list)
     runs_dir="${CLAUDE_PLUGIN_DATA}/runs"
     if [[ ! -d "$runs_dir" ]]; then
@@ -279,7 +296,7 @@ case "$action" in
 
   *)
     log_error "unknown action: $action"
-    echo "Usage: pipeline-state <read|write|task-status|deps-satisfied|interrupted|resume-point|list> <run-id> [args...]" >&2
+    echo "Usage: pipeline-state <read|write|task-status|deps-satisfied|interrupted|resume-point|increment-turn|list> <run-id> [args...]" >&2
     exit 1
     ;;
 esac

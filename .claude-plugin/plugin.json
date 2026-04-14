@@ -168,6 +168,13 @@
       "max": 200,
       "description": "Max turns for complex/opus-tier tasks"
     },
+    "execution.maxOrchestratorTurns": {
+      "type": "number",
+      "default": 500,
+      "min": 50,
+      "max": 9999,
+      "description": "Circuit-breaker threshold on orchestrator assistant turns. Trips when .circuit_breaker.turns_completed reaches this value, enabling graceful wind-down before the runtime maxTurns cap. Default 500 = ~50% headroom over the 334-turn moderate-friction estimate for a 20-task pipeline."
+    },
     "localLlm.enabled": {
       "type": "boolean",
       "default": false,

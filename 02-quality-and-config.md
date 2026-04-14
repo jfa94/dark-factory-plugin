@@ -430,6 +430,13 @@ userConfig:
     max: 200
     description: "Max turns for medium/sonnet-tier tasks"
 
+  execution.maxOrchestratorTurns:
+    type: number
+    default: 500
+    min: 50
+    max: 9999
+    description: "Circuit-breaker threshold on orchestrator assistant turns. Enables graceful wind-down before the runtime maxTurns cap; default 500 = ~50% headroom over the 334-turn moderate-friction estimate for a 20-task pipeline."
+
   # === Local LLM Fallback ===
   localLlm.enabled:
     type: boolean

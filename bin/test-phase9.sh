@@ -85,6 +85,7 @@ for key in \
   execution.maxTurnsSimple \
   execution.maxTurnsMedium \
   execution.maxTurnsComplex \
+  execution.maxOrchestratorTurns \
   localLlm.enabled \
   localLlm.ollamaUrl \
   localLlm.model \

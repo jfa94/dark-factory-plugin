@@ -182,13 +182,16 @@ assert_eq "push origin HEAD:main → block" "2" "$status"
 status=$(_call_protect "$REPO_FEATURE" "git push origin +master")
 assert_eq "push origin +master (force refspec) → block" "2" "$status"
 
-# 5. From `main`, any push must block (on-protected-branch).
+# 5. From `main`, explicit push to a non-protected branch is allowed.
+#    Commit 3e8b0cb narrowed Check 1 so it only blocks when the destination is
+#    implicit (empty) or equals the current protected branch. Publishing
+#    `some-feature` from a main checkout doesn't modify main, so it's safe.
 REPO_MAIN="$TMPROOT/repo-main"
 mkdir -p "$REPO_MAIN"
 git -C "$REPO_MAIN" init -q -b main
 git -C "$REPO_MAIN" -c user.email=t@test -c user.name=t commit -q --allow-empty -m "init"
 status=$(_call_protect "$REPO_MAIN" "git push origin some-feature")
-assert_eq "on main, push origin some-feature → block (on protected)" "2" "$status"
+assert_eq "on main, explicit push to non-protected branch → allow" "0" "$status"
 
 # 6. Decoy: branch named `mainly-fixes` must not match `main`.
 status=$(_call_protect "$REPO_FEATURE" "git push origin mainly-fixes")

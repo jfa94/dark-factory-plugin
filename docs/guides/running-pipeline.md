@@ -212,11 +212,11 @@ cat "${CLAUDE_PLUGIN_DATA}/last-headers.json" | jq '.["anthropic-ratelimit-unifi
 
 ## Environment Variables
 
-| Variable                       | Purpose                                                          |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `DARK_FACTORY_AUTONOMOUS_MODE` | Set to `1` to acknowledge autonomous operation                   |
-| `CLAUDE_PLUGIN_DATA`           | Directory for run state (auto-set by Claude Code)                |
-| `TASK_FAILURE_TYPE`            | Set by orchestrator to provide failure context to retry attempts |
+| Variable                       | Purpose                                                                                                                                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DARK_FACTORY_AUTONOMOUS_MODE` | Set to `1` to bypass the acknowledgment check. **Does not load hooks or permissions** — use `claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json` for real runs (see [Getting Started](../getting-started.md#step-3-launch-with-autonomous-settings)) |
+| `CLAUDE_PLUGIN_DATA`           | Directory for run state (auto-set by Claude Code)                                                                                                                                                                                                            |
+| `TASK_FAILURE_TYPE`            | Set by orchestrator to provide failure context to retry attempts                                                                                                                                                                                             |
 
 ---
 

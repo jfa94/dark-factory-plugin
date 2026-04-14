@@ -53,7 +53,7 @@ Continues an interrupted run from the last checkpoint.
 
 ### Execution Flow
 
-1. Check `DARK_FACTORY_AUTONOMOUS_MODE` environment variable
+1. Check `DARK_FACTORY_AUTONOMOUS_MODE` environment variable. If unset, materialize `$CLAUDE_PLUGIN_DATA/merged-settings.json` from the bundled template and instruct the user to relaunch with `claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json`. Setting the env var bypasses this check but does **not** load hooks or permissions.
 2. Run `pipeline-validate --no-clean-check` to verify preconditions
 3. Parse mode and validate arguments
 4. Initialize run state via `pipeline-init`

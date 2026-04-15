@@ -40,9 +40,8 @@ If no specific setting was requested, show all settings grouped by category:
 
 | Setting                  | Current | Default | Description                              |
 | ------------------------ | ------- | ------- | ---------------------------------------- |
-| `maxTasks`               | -       | 20      | Max tasks per run                        |
-| `maxRuntimeMinutes`      | -       | 360     | Max runtime in minutes                   |
-| `maxConsecutiveFailures` | -       | 3       | Max consecutive failures before stopping |
+| `maxRuntimeMinutes`      | -       | 0       | Max runtime in minutes (0 = unlimited)   |
+| `maxConsecutiveFailures` | -       | 5       | Max consecutive failures before stopping |
 
 ### Review
 
@@ -88,7 +87,8 @@ If the user specifies a setting to change:
    `.claude-plugin/plugin.json`. Examples (canonical key names — these are the
    ones the rest of the plugin reads):
    - `humanReviewLevel`: integer 0-4
-   - `maxTasks`, `maxRuntimeMinutes`, `maxConsecutiveFailures`: positive integers
+   - `maxRuntimeMinutes`: integer 0-1440 (0 = unlimited)
+   - `maxConsecutiveFailures`: integer 1-10
    - `maxParallelTasks`: integer 1-10
    - `review.routineRounds` / `review.featureRounds` / `review.securityRounds`: positive integers
    - `review.preferCodex`: boolean

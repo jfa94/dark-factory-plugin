@@ -271,22 +271,20 @@ Tasks in the same `parallel_group` run concurrently. Groups execute sequentially
 ```json
 {
   "circuit_breaker": {
-    "tasks_completed": 5,
     "consecutive_failures": 0,
     "runtime_minutes": 45,
-    "pause_minutes": 10,
-    "turns_completed": 127
+    "pause_minutes": 10
   }
 }
 ```
 
-| Field                  | Type   | Description                                                     |
-| ---------------------- | ------ | --------------------------------------------------------------- |
-| `tasks_completed`      | number | Tasks finished (resets on new run)                              |
-| `consecutive_failures` | number | Consecutive failures (resets on success)                        |
-| `runtime_minutes`      | number | Active runtime (excludes pauses)                                |
-| `pause_minutes`        | number | Time spent waiting (rate limits)                                |
-| `turns_completed`      | number | Orchestrator assistant turns (incremented via `increment-turn`) |
+| Field                  | Type   | Description                              |
+| ---------------------- | ------ | ---------------------------------------- |
+| `consecutive_failures` | number | Consecutive failures (resets on success) |
+| `runtime_minutes`      | number | Active runtime (excludes pauses)         |
+| `pause_minutes`        | number | Time spent waiting (rate limits)         |
+
+> Legacy state files from 0.1.x runs may contain `tasks_completed` and `turns_completed` fields. These are ignored from 0.2.0 onward — no migration is required.
 
 ---
 

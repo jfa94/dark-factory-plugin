@@ -103,7 +103,7 @@ Reference for script exit codes and their meanings.
 | Exit Code | Meaning                                                            |
 | --------- | ------------------------------------------------------------------ |
 | 0         | Safe to proceed                                                    |
-| 1         | Circuit breaker tripped (max tasks, runtime, or failures exceeded) |
+| 1         | Circuit breaker tripped (consecutive failures or runtime cap exceeded) |
 
 ---
 

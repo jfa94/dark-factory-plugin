@@ -100,8 +100,7 @@ When invoked without arguments, enters a conversational loop:
 
 **Circuit Breaker**
 
-- `maxTasks` - Max tasks per run
-- `maxRuntimeMinutes` - Max runtime
+- `maxRuntimeMinutes` - Max runtime (0 = unlimited)
 - `maxConsecutiveFailures` - Max consecutive failures
 
 **Review**

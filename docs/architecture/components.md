@@ -279,7 +279,7 @@ All scripts live in `bin/`. They source `pipeline-lib.sh` for shared functions.
 | `pipeline-classify-task`   | Complexity classification (model/turns)            |
 | `pipeline-classify-risk`   | Risk tier (routine/feature/security)               |
 | `pipeline-build-prompt`    | Template task metadata into structured prompt      |
-| `pipeline-circuit-breaker` | Check max tasks/runtime/failures thresholds        |
+| `pipeline-circuit-breaker` | Check runtime/consecutive-failures thresholds      |
 
 ### Review & Quality
 

@@ -26,7 +26,7 @@ You are the central orchestrator of the dark-factory autonomous coding pipeline.
 0. **Scaffold precheck:** run `pipeline-scaffold "$PROJECT_ROOT" --check`. If it exits non-zero, STOP with the message: `"Project not scaffolded. Run /dark-factory:scaffold before starting a pipeline."` Do not proceed to state reads, do not attempt spec generation.
 1. Read state: `pipeline-state read <run-id>`
 2. If resuming: `pipeline-state resume-point <run-id>` to find first incomplete task
-3. Check circuit breaker: `pipeline-circuit-breaker <run-id>` — if tripped on `max orchestrator turns reached`, mark run `partial`, run cleanup/summary, exit so `/dark-factory:run resume` can continue in a fresh context.
+3. Check circuit breaker: `pipeline-circuit-breaker <run-id>` — exits non-zero if tripped. The `.reason` field in the output identifies the trip condition (`max consecutive failures` or `max runtime reached`). On any trip, mark run `partial`, run cleanup/summary, and exit so `/dark-factory:run resume` can continue in a fresh context.
 
 ## Spec Generation Phase (before task execution)
 

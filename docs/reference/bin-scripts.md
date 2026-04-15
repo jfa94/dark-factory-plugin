@@ -370,6 +370,7 @@ The runtime check is skipped when `maxRuntimeMinutes` is `0`. The script trips o
 {
   "tripped": false,
   "runtime_minutes": 45,
+  "pause_minutes": 2,
   "consecutive_failures": 0,
   "thresholds": {
     "max_runtime_minutes": 0,

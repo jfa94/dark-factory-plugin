@@ -1,25 +1,18 @@
 {
   "name": "dark-factory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Autonomous coding pipeline: converts GitHub PRD issues into merged pull requests with quality-first review gates",
   "userConfig": {
-    "maxTasks": {
-      "type": "number",
-      "default": 20,
-      "min": 1,
-      "max": 100,
-      "description": "Maximum tasks per run (circuit breaker threshold)"
-    },
     "maxRuntimeMinutes": {
       "type": "number",
-      "default": 360,
-      "min": 10,
+      "default": 0,
+      "min": 0,
       "max": 1440,
-      "description": "Maximum pipeline runtime in minutes before circuit breaker trips"
+      "description": "Maximum pipeline runtime in minutes before circuit breaker trips. 0 = unlimited (default). Set to a positive value to enable a wall-clock emergency brake."
     },
     "maxConsecutiveFailures": {
       "type": "number",
-      "default": 3,
+      "default": 5,
       "min": 1,
       "max": 10,
       "description": "Consecutive task failures before pipeline aborts"
@@ -167,13 +160,6 @@
       "min": 20,
       "max": 200,
       "description": "Max turns for complex/opus-tier tasks"
-    },
-    "execution.maxOrchestratorTurns": {
-      "type": "number",
-      "default": 500,
-      "min": 50,
-      "max": 9999,
-      "description": "Circuit-breaker threshold on orchestrator assistant turns. Trips when .circuit_breaker.turns_completed reaches this value, enabling graceful wind-down before the runtime maxTurns cap. Default 500 = ~50% headroom over the 334-turn moderate-friction estimate for a 20-task pipeline."
     },
     "localLlm.enabled": {
       "type": "boolean",

@@ -62,7 +62,6 @@ assert_valid_json "plugin.json is valid JSON" "$PLUGIN_JSON"
 
 # Every userConfig key documented in 02-quality-and-config.md must be present.
 for key in \
-  maxTasks \
   maxRuntimeMinutes \
   maxConsecutiveFailures \
   humanReviewLevel \
@@ -87,7 +86,6 @@ for key in \
   execution.maxTurnsSimple \
   execution.maxTurnsMedium \
   execution.maxTurnsComplex \
-  execution.maxOrchestratorTurns \
   localLlm.enabled \
   localLlm.ollamaUrl \
   localLlm.model \
@@ -102,6 +100,27 @@ for key in \
   has=$(jq --arg k "$key" -r '.userConfig | has($k) | tostring' "$PLUGIN_JSON")
   assert_eq "userConfig has $key" "true" "$has"
 done
+
+# Removed in 0.2.0: maxTasks and execution.maxOrchestratorTurns circuit breakers.
+# Long-running autonomous pipelines should only trip on consecutive failures or
+# an opt-in wall-clock runtime cap — task/turn count caps fight that purpose.
+for removed in 'maxTasks' 'execution.maxOrchestratorTurns'; do
+  has=$(jq --arg k "$removed" -r '.userConfig | has($k) | tostring' "$PLUGIN_JSON")
+  assert_eq "userConfig does NOT contain $removed" "false" "$has"
+done
+
+# 0.2.0 defaults: runtime unlimited (0 = no cap), failures raised to 5.
+default_runtime=$(jq -r '.userConfig["maxRuntimeMinutes"].default' "$PLUGIN_JSON")
+assert_eq "maxRuntimeMinutes default = 0 (unlimited)" "0" "$default_runtime"
+
+min_runtime=$(jq -r '.userConfig["maxRuntimeMinutes"].min' "$PLUGIN_JSON")
+assert_eq "maxRuntimeMinutes min = 0" "0" "$min_runtime"
+
+default_failures=$(jq -r '.userConfig["maxConsecutiveFailures"].default' "$PLUGIN_JSON")
+assert_eq "maxConsecutiveFailures default = 5" "5" "$default_failures"
+
+plugin_version=$(jq -r '.version' "$PLUGIN_JSON")
+assert_eq "plugin version = 0.2.0" "0.2.0" "$plugin_version"
 
 # Each entry must declare a default value (even arrays/booleans/strings).
 missing_default=$(jq -r '[.userConfig | to_entries[] | select(has("value") | not) | .key] as $_ | [.userConfig | to_entries[] | select(.value | has("default") | not) | .key] | join(",")' "$PLUGIN_JSON")

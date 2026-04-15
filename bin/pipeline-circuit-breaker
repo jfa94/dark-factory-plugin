@@ -18,16 +18,13 @@ state=$(cat "$state_file")
 
 # Read thresholds from config (with defaults).
 # Keys match the canonical schema in .claude-plugin/plugin.json (top-level).
-max_tasks=$(read_config '.maxTasks' '20')
-max_runtime=$(read_config '.maxRuntimeMinutes' '360')
-max_failures=$(read_config '.maxConsecutiveFailures' '3')
-max_turns=$(read_config '.execution.maxOrchestratorTurns' '500')
+# maxRuntimeMinutes=0 means unlimited (default).
+max_runtime=$(read_config '.maxRuntimeMinutes' '0')
+max_failures=$(read_config '.maxConsecutiveFailures' '5')
 
 # Read current values from state
-tasks_completed=$(printf '%s' "$state" | jq -r '.circuit_breaker.tasks_completed // 0')
 consecutive_failures=$(printf '%s' "$state" | jq -r '.circuit_breaker.consecutive_failures // 0')
 pause_minutes=$(printf '%s' "$state" | jq -r '.circuit_breaker.pause_minutes // 0')
-turns_completed=$(printf '%s' "$state" | jq -r '.circuit_breaker.turns_completed // 0')
 
 # Calculate runtime, deducting time the run was paused (e.g. rate-limit waits).
 # pause_minutes is maintained by the orchestrator via pipeline-state when
@@ -48,49 +45,35 @@ else
   runtime_minutes=0
 fi
 
-# Check thresholds
+# Check thresholds. Runtime check is skipped when max_runtime=0 (unlimited).
 tripped="false"
 reason=""
 
-if [[ "$tasks_completed" -ge "$max_tasks" ]]; then
-  tripped="true"
-  reason="max tasks reached ($tasks_completed >= $max_tasks)"
-elif [[ "$runtime_minutes" -ge "$max_runtime" ]]; then
+if (( max_runtime > 0 && runtime_minutes >= max_runtime )); then
   tripped="true"
   reason="max runtime reached (${runtime_minutes}min >= ${max_runtime}min)"
 elif [[ "$consecutive_failures" -ge "$max_failures" ]]; then
   tripped="true"
   reason="max consecutive failures ($consecutive_failures >= $max_failures)"
-elif [[ "$turns_completed" -ge "$max_turns" ]]; then
-  tripped="true"
-  reason="max orchestrator turns reached ($turns_completed >= $max_turns)"
 fi
 
 # Output
 jq -n \
   --argjson tripped "$tripped" \
-  --argjson tasks_completed "$tasks_completed" \
   --argjson runtime_minutes "$runtime_minutes" \
   --argjson pause_minutes "$pause_minutes" \
   --argjson consecutive_failures "$consecutive_failures" \
-  --argjson turns_completed "$turns_completed" \
-  --argjson max_tasks "$max_tasks" \
   --argjson max_runtime "$max_runtime" \
   --argjson max_failures "$max_failures" \
-  --argjson max_turns "$max_turns" \
   --arg reason "$reason" \
   '{
     tripped: $tripped,
-    tasks_completed: $tasks_completed,
     runtime_minutes: $runtime_minutes,
     pause_minutes: $pause_minutes,
     consecutive_failures: $consecutive_failures,
-    turns_completed: $turns_completed,
     thresholds: {
-      max_tasks: $max_tasks,
       max_runtime_minutes: $max_runtime,
-      max_consecutive_failures: $max_failures,
-      max_orchestrator_turns: $max_turns
+      max_consecutive_failures: $max_failures
     },
     reason: (if $tripped then $reason else null end)
   }'

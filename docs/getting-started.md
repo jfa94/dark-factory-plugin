@@ -45,12 +45,12 @@ This opens an interactive settings editor. It reads your current config from `${
 
 Key settings to review on first setup:
 
-| Setting            | Default | Description                   |
-| ------------------ | ------- | ----------------------------- |
-| `humanReviewLevel` | 1       | Human oversight level (0–4)   |
-| `maxTasks`         | 20      | Circuit breaker threshold     |
-| `maxParallelTasks` | 3       | Concurrent task executors     |
-| `localLlm.enabled` | false   | Enable Ollama for rate limits |
+| Setting                  | Default | Description                                   |
+| ------------------------ | ------- | --------------------------------------------- |
+| `humanReviewLevel`       | 1       | Human oversight level (0–4)                   |
+| `maxConsecutiveFailures` | 5       | Consecutive failures before pipeline aborts   |
+| `maxParallelTasks`       | 3       | Concurrent task executors                     |
+| `localLlm.enabled`       | false   | Enable Ollama for rate limits                 |
 
 **`humanReviewLevel` values:**
 

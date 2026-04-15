@@ -167,39 +167,30 @@ Cost estimates in metrics only apply to API/overage users. Subscription users sh
 
 ---
 
-## Turn-Budget Circuit Breaker
+## Wall-Clock Circuit Breaker
 
-Independent of API rate limits, the orchestrator tracks its own assistant turns via `pipeline-state increment-turn <run-id>`. This counter lives at `.circuit_breaker.turns_completed` in state.
+Independent of API rate limits, the pipeline can enforce a wall-clock cap via `maxRuntimeMinutes`. When set to a positive value, `pipeline-circuit-breaker` trips if the active runtime (excluding pauses) exceeds the threshold.
 
-**Why track turns?**
+**Default: `0` (disabled).** The pipeline runs until all tasks complete or `maxConsecutiveFailures` is reached.
 
-Claude Code imposes a per-conversation `maxTurns` ceiling. If the orchestrator exhausts this ceiling mid-task, the conversation terminates abruptly with no cleanup. The turn-budget circuit breaker trips _before_ this happens, allowing the pipeline to wind down gracefully and set up a clean resume point.
+**When to enable:**
 
-**How it works:**
+Set a positive `maxRuntimeMinutes` as an emergency brake on unattended cost exposure:
 
-1. The orchestrator calls `increment-turn` as the first Bash call of every assistant turn
-2. `pipeline-circuit-breaker` reads `turns_completed` and compares to `execution.maxOrchestratorTurns` (default 500)
-3. If `turns_completed >= maxOrchestratorTurns`, the breaker trips with reason `"max orchestrator turns reached (N >= M)"`
-4. The orchestrator marks the run `partial`, runs cleanup/summary, and exits
+```
+/dark-factory:configure
+> Set maxRuntimeMinutes to 480
+```
 
-**Resuming after turn-budget trip:**
+Pause time (rate-limit waits) is excluded from the runtime counter, so a pipeline that waits for API windows will not trip the breaker prematurely.
+
+**Resuming after a runtime trip:**
 
 ```
 /dark-factory:run resume
 ```
 
-A fresh conversation starts with turn counter at 0, continuing from the first incomplete task.
-
-**Tuning the threshold:**
-
-The default 500 provides ~50% headroom over the 334-turn moderate-friction estimate for a 20-task pipeline. For pipelines with more tasks or higher review friction, increase the limit:
-
-```
-/dark-factory:configure
-> Set execution.maxOrchestratorTurns to 800
-```
-
-Turn tracking is advisory: if `increment-turn` fails, the orchestrator logs the error and continues rather than aborting the turn.
+The orchestrator reads persisted state and continues from the first incomplete task.
 
 ---
 

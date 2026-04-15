@@ -23,38 +23,27 @@ Settings persist across sessions.
 
 ## Pipeline Behavior
 
-### maxTasks
-
-**Default:** 20 | **Range:** 1-100
-
-Maximum tasks per run. The circuit breaker trips when this threshold is reached.
-
-**When to change:**
-
-- Increase for large PRDs with many independent subtasks
-- Decrease when testing the pipeline on a new codebase
-
 ### maxRuntimeMinutes
 
-**Default:** 360 (6 hours) | **Range:** 10-1440
+**Default:** 0 (unlimited) | **Range:** 0-1440
 
-Maximum pipeline runtime before the circuit breaker trips.
+Maximum pipeline runtime before the circuit breaker trips. `0` disables the wall-clock cap entirely.
 
 **When to change:**
 
-- Increase for complex features requiring many review rounds
-- Decrease for time-boxed autonomous runs
+- Set a positive value (e.g., 480) as an emergency brake on cost for unattended runs
+- Leave at 0 to let the pipeline run until all tasks complete
 
 ### maxConsecutiveFailures
 
-**Default:** 3 | **Range:** 1-10
+**Default:** 5 | **Range:** 1-10
 
 Consecutive task failures before the pipeline aborts.
 
 **When to change:**
 
 - Increase if failures are environmental (flaky tests, network issues)
-- Keep low (2-3) for production repos where failures indicate real problems
+- Decrease for production repos where failures indicate real problems
 
 ### humanReviewLevel
 

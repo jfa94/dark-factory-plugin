@@ -183,71 +183,55 @@ pipeline-state write "run-test-001" '.status' '"running"' >/dev/null 2>&1
 echo ""
 echo "=== pipeline-circuit-breaker ==="
 
-# Write config
+# Write config with new defaults: no maxTasks, runtime unlimited (0), failures=5.
 mkdir -p "$CLAUDE_PLUGIN_DATA"
-echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
+echo '{"maxRuntimeMinutes":0,"maxConsecutiveFailures":5}' > "$CLAUDE_PLUGIN_DATA/config.json"
 
-# Should be safe (1 task completed, 0 failures)
+# Safe baseline.
 assert_exit "circuit breaker safe" 0 pipeline-circuit-breaker "run-test-001"
 
-# Simulate 3 consecutive failures
-pipeline-state write "run-test-001" '.circuit_breaker.consecutive_failures' '3' >/dev/null 2>&1
+# Large task counts and stale turn counters must NOT trip the breaker —
+# those circuit breakers have been removed.
+pipeline-state write "run-test-001" '.circuit_breaker.tasks_completed' '1000' >/dev/null 2>&1
+pipeline-state write "run-test-001" '.circuit_breaker.turns_completed' '9999' >/dev/null 2>&1
+assert_exit "circuit breaker ignores tasks_completed" 0 pipeline-circuit-breaker "run-test-001"
+
+# consecutive_failures=5 trips (new default).
+pipeline-state write "run-test-001" '.circuit_breaker.consecutive_failures' '5' >/dev/null 2>&1
 assert_exit "circuit breaker tripped (failures)" 1 pipeline-circuit-breaker "run-test-001"
 
-# Reset and test max tasks
-pipeline-state write "run-test-001" '.circuit_breaker.consecutive_failures' '0' >/dev/null 2>&1
-pipeline-state write "run-test-001" '.circuit_breaker.tasks_completed' '20' >/dev/null 2>&1
-assert_exit "circuit breaker tripped (max tasks)" 1 pipeline-circuit-breaker "run-test-001"
+# consecutive_failures=4 is still safe at the new default.
+pipeline-state write "run-test-001" '.circuit_breaker.consecutive_failures' '4' >/dev/null 2>&1
+assert_exit "circuit breaker safe at 4 failures" 0 pipeline-circuit-breaker "run-test-001"
 
-# Runtime threshold: set maxRuntimeMinutes to 1 and started_at well in the past
-pipeline-state write "run-test-001" '.circuit_breaker.tasks_completed' '0' >/dev/null 2>&1
+# Reset failures for remaining assertions.
+pipeline-state write "run-test-001" '.circuit_breaker.consecutive_failures' '0' >/dev/null 2>&1
+
+# maxRuntimeMinutes=0 (unlimited) must NOT trip regardless of elapsed time.
 pipeline-state write "run-test-001" '.started_at' '"2020-01-01T00:00:00Z"' >/dev/null 2>&1
-echo '{"maxTasks":20,"maxRuntimeMinutes":1,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
+assert_exit "circuit breaker safe when maxRuntimeMinutes=0" 0 pipeline-circuit-breaker "run-test-001"
+
+# Positive maxRuntimeMinutes still trips when elapsed exceeds it.
+echo '{"maxRuntimeMinutes":1,"maxConsecutiveFailures":5}' > "$CLAUDE_PLUGIN_DATA/config.json"
 output=$(pipeline-circuit-breaker "run-test-001" 2>/dev/null) || true
 assert_exit "circuit breaker tripped (runtime)" 1 pipeline-circuit-breaker "run-test-001"
-# Reason field should mention runtime
 if echo "$output" | jq -e '.reason // empty' >/dev/null 2>&1; then
   reason_has_runtime=$(echo "$output" | jq -r '.reason' | grep -qi 'runtime' && echo "true" || echo "false")
   assert_eq "circuit breaker reason mentions runtime" "true" "$reason_has_runtime"
 else
-  # Script might log reason to stderr instead — check exit code only
   assert_eq "circuit breaker reason check (skipped)" "skipped" "skipped"
 fi
 
-# Restore defaults for subsequent tests
-echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
-pipeline-state write "run-test-001" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
-
-echo ""
-echo "=== task_15b_01: pipeline-state increment-turn ==="
-
-# Counter initializes to 0 when absent; increment three times.
-pipeline-init "run-turn-counter" --mode prd --force >/dev/null 2>&1
-pipeline-state increment-turn "run-turn-counter" >/dev/null 2>&1
-pipeline-state increment-turn "run-turn-counter" >/dev/null 2>&1
-pipeline-state increment-turn "run-turn-counter" >/dev/null 2>&1
-turns=$(pipeline-state read "run-turn-counter" '.circuit_breaker.turns_completed')
-assert_eq "increment-turn advances counter from 0 to 3" "3" "$turns"
-
-echo ""
-echo "=== task_15b_02: circuit breaker maxOrchestratorTurns ==="
-
-echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3,"execution":{"maxOrchestratorTurns":500}}' \
-  > "$CLAUDE_PLUGIN_DATA/config.json"
-pipeline-state write "run-turn-counter" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
-pipeline-state write "run-turn-counter" '.circuit_breaker.turns_completed' '500' >/dev/null 2>&1
-assert_exit "circuit breaker tripped (max turns)" 1 pipeline-circuit-breaker "run-turn-counter"
-
-output=$(pipeline-circuit-breaker "run-turn-counter" 2>/dev/null) || true
-reason_has_turns=$(echo "$output" | jq -r '.reason // ""' | grep -qi 'orchestrator turns' && echo "true" || echo "false")
-assert_eq "circuit breaker reason mentions orchestrator turns" "true" "$reason_has_turns"
-
-# Below threshold: safe (other counters already zero).
-pipeline-state write "run-turn-counter" '.circuit_breaker.turns_completed' '499' >/dev/null 2>&1
-assert_exit "circuit breaker safe below turn threshold" 0 pipeline-circuit-breaker "run-turn-counter"
+# Output must NOT expose removed threshold keys.
+output=$(pipeline-circuit-breaker "run-test-001" 2>/dev/null) || true
+has_max_tasks=$(echo "$output" | jq '.thresholds | has("max_tasks")' 2>/dev/null || echo "false")
+has_max_turns=$(echo "$output" | jq '.thresholds | has("max_orchestrator_turns")' 2>/dev/null || echo "false")
+assert_eq "output.thresholds does NOT include max_tasks" "false" "$has_max_tasks"
+assert_eq "output.thresholds does NOT include max_orchestrator_turns" "false" "$has_max_turns"
 
 # Restore shared default config for downstream tests.
-echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' > "$CLAUDE_PLUGIN_DATA/config.json"
+echo '{"maxRuntimeMinutes":0,"maxConsecutiveFailures":5}' > "$CLAUDE_PLUGIN_DATA/config.json"
+pipeline-state write "run-test-001" '.started_at' '"2099-01-01T00:00:00Z"' >/dev/null 2>&1
 
 echo ""
 echo "=== pipeline-lock ==="
@@ -301,9 +285,8 @@ pipeline-init "run-test-002" --mode discover --force >/dev/null 2>&1
 list_output=$(pipeline-state list)
 count=$(echo "$list_output" | jq 'length')
 # runs created up to this point: run-test-001, run-resume-order,
-# run-resume-legacy (from task_06_01 tests), run-turn-counter
-# (from task_15b_01/02), run-test-002.
-assert_eq "list shows 5 runs" "5" "$count"
+# run-resume-legacy (from task_06_01 tests), run-test-002.
+assert_eq "list shows 4 runs" "4" "$count"
 
 echo ""
 echo "=== task_01_04: pipeline-init --issue numeric validation ==="
@@ -553,7 +536,7 @@ else
   past_240m=$(date -u -v-240M +%Y-%m-%dT%H:%M:%SZ)
 fi
 pipeline-state write "run-cb-pause" '.started_at' "\"$past_240m\"" >/dev/null 2>&1
-echo '{"maxTasks":20,"maxRuntimeMinutes":180,"maxConsecutiveFailures":3}' \
+echo '{"maxRuntimeMinutes":180,"maxConsecutiveFailures":5}' \
   > "$CLAUDE_PLUGIN_DATA/config.json"
 
 # Without pause: breaker should trip (240 > 180).
@@ -589,7 +572,7 @@ runtime=$(printf '%s' "$output" | jq -r '.runtime_minutes')
 assert_eq "breaker clamps runtime at 0 when pause > wall clock" "0" "$runtime"
 
 # Restore defaults for subsequent tests and reset state.
-echo '{"maxTasks":20,"maxRuntimeMinutes":360,"maxConsecutiveFailures":3}' \
+echo '{"maxRuntimeMinutes":0,"maxConsecutiveFailures":5}' \
   > "$CLAUDE_PLUGIN_DATA/config.json"
 
 echo ""

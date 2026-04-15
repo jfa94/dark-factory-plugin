@@ -128,16 +128,15 @@ pipeline-state <action> <run-id> [args...]
 
 **Actions:**
 
-| Action           | Arguments                     | Description                                       |
-| ---------------- | ----------------------------- | ------------------------------------------------- |
-| `read`           | `<run-id> [key]`              | Read full state or jq key                         |
-| `write`          | `<run-id> <key> <value>`      | Atomic write to state key                         |
-| `task-status`    | `<run-id> <task-id> <status>` | Update task status                                |
-| `deps-satisfied` | `<run-id> <task-id>`          | Check if deps done                                |
-| `interrupted`    | `<run-id>`                    | Check if run interrupted                          |
-| `resume-point`   | `<run-id>`                    | Find first incomplete task                        |
-| `increment-turn` | `<run-id>`                    | Increment `.circuit_breaker.turns_completed` by 1 |
-| `list`           | -                             | List all runs                                     |
+| Action           | Arguments                     | Description              |
+| ---------------- | ----------------------------- | ------------------------ |
+| `read`           | `<run-id> [key]`              | Read full state or jq key |
+| `write`          | `<run-id> <key> <value>`      | Atomic write to state key |
+| `task-status`    | `<run-id> <task-id> <status>` | Update task status        |
+| `deps-satisfied` | `<run-id> <task-id>`          | Check if deps done        |
+| `interrupted`    | `<run-id>`                    | Check if run interrupted  |
+| `resume-point`   | `<run-id>`                    | Find first incomplete task |
+| `list`           | -                             | List all runs             |
 
 **Task statuses:** pending, executing, reviewing, done, failed, interrupted, needs_human_review, ci_fixing
 
@@ -358,27 +357,24 @@ pipeline-circuit-breaker <run-id>
 
 **Thresholds checked:**
 
-| Threshold    | Config Key                       | Default |
-| ------------ | -------------------------------- | ------- |
-| Max tasks    | `maxTasks`                       | 20      |
-| Max runtime  | `maxRuntimeMinutes`              | 360     |
-| Max failures | `maxConsecutiveFailures`         | 3       |
-| Max turns    | `execution.maxOrchestratorTurns` | 500     |
+| Threshold    | Config Key               | Default    |
+| ------------ | ------------------------ | ---------- |
+| Max runtime  | `maxRuntimeMinutes`      | 0 (off)    |
+| Max failures | `maxConsecutiveFailures` | 5          |
+
+The runtime check is skipped when `maxRuntimeMinutes` is `0`. The script trips on two conditions only: `maxConsecutiveFailures` being reached, or a positive `maxRuntimeMinutes` being exceeded.
 
 **Output:**
 
 ```json
 {
   "tripped": false,
-  "tasks_completed": 5,
   "runtime_minutes": 45,
+  "pause_minutes": 2,
   "consecutive_failures": 0,
-  "turns_completed": 127,
   "thresholds": {
-    "max_tasks": 20,
-    "max_runtime_minutes": 360,
-    "max_consecutive_failures": 3,
-    "max_orchestrator_turns": 500
+    "max_runtime_minutes": 0,
+    "max_consecutive_failures": 5
   },
   "reason": null
 }

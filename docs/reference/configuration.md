@@ -4,34 +4,23 @@ Complete reference for all `userConfig` options in `plugin.json`.
 
 ## Pipeline Behavior
 
-### maxTasks
-
-| Property | Value  |
-| -------- | ------ |
-| Type     | number |
-| Default  | 20     |
-| Min      | 1      |
-| Max      | 100    |
-
-Maximum tasks per run. Circuit breaker trips when this threshold is reached.
-
 ### maxRuntimeMinutes
 
 | Property | Value  |
 | -------- | ------ |
 | Type     | number |
-| Default  | 360    |
-| Min      | 10     |
+| Default  | 0      |
+| Min      | 0      |
 | Max      | 1440   |
 
-Maximum pipeline runtime in minutes before circuit breaker trips.
+Maximum pipeline runtime in minutes before circuit breaker trips. `0` = unlimited (default). Set to a positive value to enable a wall-clock emergency brake.
 
 ### maxConsecutiveFailures
 
 | Property | Value  |
 | -------- | ------ |
 | Type     | number |
-| Default  | 3      |
+| Default  | 5      |
 | Min      | 1      |
 | Max      | 10     |
 
@@ -253,17 +242,6 @@ Max turns for medium/sonnet-tier tasks.
 | Max      | 200    |
 
 Max turns for complex/opus-tier tasks.
-
-### execution.maxOrchestratorTurns
-
-| Property | Value  |
-| -------- | ------ |
-| Type     | number |
-| Default  | 500    |
-| Min      | 50     |
-| Max      | 9999   |
-
-Circuit-breaker threshold on orchestrator assistant turns. Trips when `.circuit_breaker.turns_completed` reaches this value, enabling graceful wind-down before the runtime `maxTurns` cap. Default 500 provides ~50% headroom over the 334-turn moderate-friction estimate for a 20-task pipeline.
 
 ---
 

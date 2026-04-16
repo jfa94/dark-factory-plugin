@@ -393,19 +393,32 @@ Check Codex availability, return reviewer configuration.
 **Usage:**
 
 ```bash
-pipeline-detect-reviewer
+pipeline-detect-reviewer [--base <ref>]
 ```
 
-**Output:**
+**Flags:**
+
+| Flag     | Default   | Description             |
+| -------- | --------- | ----------------------- |
+| `--base` | `staging` | Git ref to diff against |
+
+**Detection logic:**
+
+1. Check if `codex` command exists
+2. Run `codex login status` to verify authentication
+3. If both pass: return Codex config with command path
+4. Otherwise: return Claude Code fallback
+
+**Output (Codex available):**
 
 ```json
 {
   "reviewer": "codex",
-  "command": "codex adversarial-review --base <ref> --wait"
+  "command": "/path/to/plugin/bin/pipeline-codex-review --base staging"
 }
 ```
 
-Or:
+**Output (fallback):**
 
 ```json
 {
@@ -413,6 +426,85 @@ Or:
   "agent": "task-reviewer"
 }
 ```
+
+---
+
+### pipeline-codex-review
+
+Codex exec wrapper for adversarial code review. Builds a prompt from task metadata, spec files, and git diff, invokes Codex with structured output, and maps the result to the normalized pipeline verdict JSON.
+
+**Usage:**
+
+```bash
+pipeline-codex-review --base <ref> --task-id <id> --spec-dir <path>
+```
+
+**Arguments:**
+
+| Argument     | Required | Default   | Description                                                 |
+| ------------ | -------- | --------- | ----------------------------------------------------------- |
+| `--base`     | No       | `staging` | Git ref for diff base                                       |
+| `--task-id`  | Yes      | -         | Task identifier for prompt context                          |
+| `--spec-dir` | No       | -         | Path to spec directory (spec.md, acceptance.md, holdout.md) |
+
+**Behavior:**
+
+1. Compute `git diff --unified=5 <base> HEAD`
+2. If diff is empty: emit auto-approve verdict and exit 0
+3. Build prompt from `skills/review-protocol/SKILL.md` + spec files + diff
+4. Invoke Codex with sandbox cascade: `read-only` → `workspace-read` → no sandbox
+5. Parse Codex JSON output via `schemas/codex-review.schema.json`
+6. Map to normalized verdict JSON (same shape as `pipeline-parse-review`)
+
+**Output:**
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "round": 1,
+  "confidence": "HIGH",
+  "findings": [
+    {
+      "title": "SQL injection risk",
+      "file": "src/db.ts",
+      "severity": "critical",
+      "category": "codex",
+      "description": "User input passed directly to query",
+      "suggestion": "",
+      "blocking": true
+    }
+  ],
+  "blocking_count": 1,
+  "non_blocking_count": 0,
+  "declared_blockers": 1,
+  "criteria_passed": 0,
+  "criteria_failed": 0,
+  "holdout_passed": 0,
+  "holdout_failed": 0,
+  "summary": "Patch has one critical security issue.",
+  "reviewer": "codex"
+}
+```
+
+**Exit codes:** 0=success (JSON on stdout), 1=failure
+
+**Schema:** `schemas/codex-review.schema.json`
+
+The Codex output schema defines:
+
+| Field                         | Type   | Description                                    |
+| ----------------------------- | ------ | ---------------------------------------------- |
+| `findings`                    | array  | Individual issues found                        |
+| `findings[].title`            | string | One-line summary                               |
+| `findings[].body`             | string | Detailed explanation                           |
+| `findings[].priority`         | enum   | `critical`, `high`, `medium`, `low`            |
+| `findings[].confidence_score` | number | 0-1 confidence this is a real issue            |
+| `findings[].code_location`    | object | Optional `absolute_file_path` and `line_range` |
+| `overall_correctness`         | enum   | `patch is correct` or `patch is incorrect`     |
+| `overall_explanation`         | string | One-paragraph assessment                       |
+| `overall_confidence_score`    | number | 0-1 overall confidence                         |
+
+Priority mapping: `critical`/`high` = blocking, `medium`/`low` = non-blocking.
 
 ---
 
@@ -638,6 +730,70 @@ Create project scaffolding files.
 ```bash
 pipeline-scaffold [--type <type>]
 ```
+
+---
+
+## Statusline Integration
+
+### statusline-wrapper.sh
+
+Composable statusline script that captures Claude Code rate limit data for pipeline quota checks.
+
+**Usage:**
+
+Configure as `statusLine.command` in `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/path/to/dark-factory/bin/statusline-wrapper.sh"
+  }
+}
+```
+
+**Behavior:**
+
+1. Reads Claude Code statusline JSON from stdin
+2. Extracts `.rate_limits` and writes to `${CLAUDE_PLUGIN_DATA}/usage-cache.json` with `captured_at` timestamp
+3. Chains to original statusline if `DARK_FACTORY_ORIGINAL_STATUSLINE` env var is set
+4. Otherwise, outputs default statusline: `<model> in <dir> | <remaining%> left for <time>`
+
+**Chaining to existing statusline:**
+
+```json
+{
+  "env": {
+    "DARK_FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/path/to/dark-factory/bin/statusline-wrapper.sh"
+  }
+}
+```
+
+**Output file (`usage-cache.json`):**
+
+```json
+{
+  "five_hour": {
+    "used_percentage": 45.2,
+    "resets_at": 1776329771
+  },
+  "seven_day": {
+    "used_percentage": 25.0,
+    "resets_at": 1776900000
+  },
+  "captured_at": 1776312000
+}
+```
+
+**Notes:**
+
+- Fails silently on cache write errors to never break statusline output
+- `CLAUDE_PLUGIN_DATA` defaults to `~/.claude/plugin-data/dark-factory` when not set
+- Required for `pipeline-quota-check` to function
 
 ---
 

@@ -286,6 +286,7 @@ All scripts live in `bin/`. They source `pipeline-lib.sh` for shared functions.
 | Script                     | Purpose                                          |
 | -------------------------- | ------------------------------------------------ |
 | `pipeline-detect-reviewer` | Check Codex availability, return reviewer config |
+| `pipeline-codex-review`    | Codex exec wrapper for adversarial review        |
 | `pipeline-parse-review`    | Extract structured verdict from reviewer output  |
 | `pipeline-coverage-gate`   | Compare coverage before/after, block decreases   |
 
@@ -293,6 +294,7 @@ All scripts live in `bin/`. They source `pipeline-lib.sh` for shared functions.
 
 | Script                  | Purpose                                                  |
 | ----------------------- | -------------------------------------------------------- |
+| `statusline-wrapper.sh` | Capture rate limits from Claude Code statusline          |
 | `pipeline-quota-check`  | Read usage-cache.json, compute window position           |
 | `pipeline-model-router` | Return proceed/wait/end_gracefully action based on quota |
 

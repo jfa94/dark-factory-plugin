@@ -166,6 +166,18 @@ The orchestrator reads persisted state and continues from the first incomplete t
 
 ---
 
+## Consecutive Wait Limit
+
+To prevent infinite sleep loops, the orchestrator tracks consecutive wait cycles. If 3 consecutive quota checks still return `over_threshold: true` after waiting, the pipeline treats it as `end_gracefully` and stops spawning new tasks.
+
+This handles edge cases where:
+
+- The statusline data is stale and not updating
+- Rate limits are not resetting as expected
+- External factors prevent quota recovery
+
+---
+
 ## Graceful Exit
 
 When 7d limits are exceeded:

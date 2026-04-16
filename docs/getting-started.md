@@ -33,7 +33,38 @@ Claude Code discovers the plugin via `~/.claude/plugins/dark-factory/.claude-plu
 
 To verify the plugin is registered, open Claude Code and run `/help` — you should see `/dark-factory:run`, `/dark-factory:configure`, and other `/dark-factory:*` commands listed.
 
-## Step 2: Configure Your Project
+## Step 2: Configure Rate Limit Detection
+
+The pipeline requires real-time rate limit data to make pause/continue decisions. This is captured via a statusline wrapper script.
+
+**One-time setup:** Add to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/plugins/dark-factory/bin/statusline-wrapper.sh"
+  }
+}
+```
+
+If you already have a custom statusline, chain to it:
+
+```json
+{
+  "env": {
+    "DARK_FACTORY_ORIGINAL_STATUSLINE": "~/.claude/your-statusline.sh"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/plugins/dark-factory/bin/statusline-wrapper.sh"
+  }
+}
+```
+
+The wrapper writes rate limit data to `~/.claude/plugin-data/dark-factory/usage-cache.json` on every statusline update. Without this, `pipeline-quota-check` will fail.
+
+## Step 3: Configure Your Project
 
 Run the configuration command to review and adjust settings:
 
@@ -65,7 +96,7 @@ For your first run, set `humanReviewLevel` to 3 so you can review the generated 
 
 See [Configuration](./guides/configuration.md) for the full settings reference.
 
-## Step 3: Launch with Autonomous Settings
+## Step 4: Launch with Autonomous Settings
 
 The pipeline requires a specific Claude Code session with safety hooks, permission allowlists, and deny-lists loaded. This is a **one-time bootstrap** — once the settings file is materialized you reuse it for every subsequent run.
 
@@ -102,7 +133,7 @@ Autonomous mode enables:
 
 > **For CI or advanced use only:** Setting `DARK_FACTORY_AUTONOMOUS_MODE=1` in your environment bypasses the acknowledgment check but does **not** load the hooks or permission lists. Always use the settings file for real runs.
 
-## Step 4: Create a PRD Issue
+## Step 5: Create a PRD Issue
 
 Create a GitHub issue with the `prd` label describing the work you want done. The issue body should contain:
 
@@ -134,7 +165,7 @@ Users cannot reset their password from the login page.
 
 > The `prd` label is used by `/dark-factory:run discover` to find issues automatically. When using `prd` mode with `--issue`, the label is not required unless you pass `--strict`.
 
-## Step 5: Run the Pipeline
+## Step 6: Run the Pipeline
 
 Execute the pipeline targeting your PRD issue (from Session B):
 
@@ -151,7 +182,7 @@ The pipeline will:
 5. Run adversarial code review
 6. Create pull requests targeting the `staging` branch
 
-## Step 6: Monitor Progress
+## Step 7: Monitor Progress
 
 The pipeline logs progress to stderr. Key checkpoints:
 
@@ -167,7 +198,7 @@ To check the state of a run (macOS example path):
 cat "${CLAUDE_PLUGIN_DATA}/runs/current/state.json" | jq '.tasks | to_entries | map({task: .key, status: .value.status})'
 ```
 
-## Step 7: Resume an Interrupted Run
+## Step 8: Resume an Interrupted Run
 
 If the pipeline stops mid-run (network issue, rate limit, manual stop):
 

@@ -17,6 +17,39 @@ require_command jq
 action="${1:?missing action}"
 shift
 
+# Per-run advisory lock using mkdir (atomic on all POSIX systems, no flock needed).
+# Serialises concurrent read-modify-write cycles in write and task-status actions.
+_state_lock_dir() { echo "$CLAUDE_PLUGIN_DATA/runs/$1/state.lock"; }
+
+_state_lock() {
+  local run_id="$1" lock_dir attempts=0
+  lock_dir=$(_state_lock_dir "$run_id")
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    attempts=$((attempts + 1))
+    if (( attempts > 200 )); then
+      local pid_file="$lock_dir/pid"
+      if [[ -f "$pid_file" ]]; then
+        local holder
+        holder=$(<"$pid_file")
+        if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+          rm -rf "$lock_dir"
+          log_warn "removed stale state lock (dead PID $holder)"
+          attempts=0
+          continue
+        fi
+      fi
+      log_error "state lock timeout for run $run_id after 10s"
+      exit 1
+    fi
+    sleep 0.05
+  done
+  printf '%s' "$$" > "$lock_dir/pid"
+}
+
+_state_unlock() {
+  rm -rf "$(_state_lock_dir "$1")"
+}
+
 # Parse a jq-style dotted/bracketed path into a JSON array for use with setpath.
 # Accepts: .foo, .foo.bar, .foo.bar[0].baz
 # Each identifier segment must match ^[a-zA-Z_][a-zA-Z0-9_]*$; index segments ^[0-9]+$.
@@ -128,11 +161,13 @@ case "$action" in
     key="${2:?missing key}"
     value="${3:?missing value}"
     f=$(_state_file "$run_id")
-    state=$(_read_state_file "$run_id")
 
-    # Parse and validate key via allowlist — rejects any segment that isn't a
-    # plain identifier or numeric index, preventing jq expression injection.
+    # Parse and validate key before acquiring lock to fail fast on bad input.
     jq_path=$(_parse_state_key "$key") || exit 1
+
+    _state_lock "$run_id"
+    trap '_state_unlock "$run_id"' EXIT
+    state=$(_read_state_file "$run_id")
 
     # Determine if value is valid JSON; if so, use argjson
     if printf '%s' "$value" | jq empty 2>/dev/null; then
@@ -145,6 +180,8 @@ case "$action" in
     updated=$(printf '%s' "$updated" | jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.updated_at = $t')
 
     atomic_write "$f" "$updated"
+    _state_unlock "$run_id"
+    trap - EXIT
     log_info "state updated: $key"
     ;;
 
@@ -153,14 +190,16 @@ case "$action" in
     task_id="${2:?missing task-id}"
     status="${3:?missing status}"
     f=$(_state_file "$run_id")
-    state=$(_read_state_file "$run_id")
 
-    # Validate status
+    # Validate status before acquiring lock to fail fast on bad input.
     case "$status" in
       pending|executing|reviewing|done|failed|interrupted|needs_human_review|ci_fixing) ;;
       *) log_error "invalid task status: $status"; exit 1 ;;
     esac
 
+    _state_lock "$run_id"
+    trap '_state_unlock "$run_id"' EXIT
+    state=$(_read_state_file "$run_id")
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     updated=$(printf '%s' "$state" | jq \
       --arg tid "$task_id" \
@@ -181,6 +220,8 @@ case "$action" in
     ')
 
     atomic_write "$f" "$updated"
+    _state_unlock "$run_id"
+    trap - EXIT
     log_info "task $task_id → $status"
 
     # task_16_11: emit lifecycle events (start/end) into metrics.jsonl.

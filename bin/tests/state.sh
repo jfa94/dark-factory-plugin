@@ -106,6 +106,38 @@ consec=$(pipeline-state read "run-test-001" '.circuit_breaker.consecutive_failur
 assert_eq "consecutive_failures reset on done" "0" "$consec"
 
 echo ""
+echo "=== concurrency: parallel task-status updates ==="
+
+# Seed a fresh run with 10 pending tasks (--force: bypass active-run guard)
+pipeline-init "run-concurrent" --mode prd --force >/dev/null 2>&1
+for i in $(seq 1 10); do
+  pipeline-state write "run-concurrent" ".tasks.task_c${i}" '{"status":"pending","depends_on":[]}' >/dev/null 2>&1
+done
+
+# Fire all 10 task-status "done" updates in parallel
+for i in $(seq 1 10); do
+  pipeline-state task-status "run-concurrent" "task_c${i}" "done" >/dev/null 2>&1 &
+done
+wait
+
+concur_completed=$(pipeline-state read "run-concurrent" '.circuit_breaker.tasks_completed')
+assert_eq "concurrent: tasks_completed not lost (no race)" "10" "$concur_completed"
+
+concur_all_done=true
+for i in $(seq 1 10); do
+  s=$(pipeline-state read "run-concurrent" ".tasks.task_c${i}.status" 2>/dev/null || echo "missing")
+  if [[ "$s" != "done" ]]; then
+    concur_all_done=false
+    echo "  FAIL: concurrent: task_c${i} status='$s' (expected 'done')"
+    fail=$((fail + 1))
+  fi
+done
+if [[ "$concur_all_done" == "true" ]]; then
+  echo "  PASS: concurrent: all 10 task statuses are 'done'"
+  pass=$((pass + 1))
+fi
+
+echo ""
 echo "=== pipeline-state deps-satisfied ==="
 
 pipeline-state write "run-test-001" '.tasks.task_2' '{"status":"pending","depends_on":["task_1"]}' >/dev/null 2>&1
@@ -286,7 +318,7 @@ list_output=$(pipeline-state list)
 count=$(echo "$list_output" | jq 'length')
 # runs created up to this point: run-test-001, run-resume-order,
 # run-resume-legacy (from task_06_01 tests), run-test-002.
-assert_eq "list shows 4 runs" "4" "$count"
+assert_eq "list shows 5 runs" "5" "$count"
 
 echo ""
 echo "=== task_01_04: pipeline-init --issue numeric validation ==="

@@ -753,6 +753,8 @@ else
   echo "  PASS: pnpm workflow has no non-pnpm run commands"
   pass=$((pass + 1))
 fi
+assert_contains "pnpm workflow has typegen step" "Generate types" "$PNPM_YML"
+assert_contains "pnpm workflow typegen uses pnpm" "pnpm run typegen" "$PNPM_YML"
 
 # --- yarn ---
 _scaffold_with_lockfile yarn-proj yarn.lock
@@ -767,6 +769,8 @@ else
   echo "  PASS: yarn workflow has no pnpm/action-setup"
   pass=$((pass + 1))
 fi
+assert_contains "yarn workflow has typegen step" "Generate types" "$YARN_YML"
+assert_contains "yarn workflow typegen uses yarn" "yarn run typegen" "$YARN_YML"
 
 # --- bun ---
 _scaffold_with_lockfile bun-proj bun.lockb
@@ -781,6 +785,8 @@ else
   echo "  PASS: bun workflow has no pnpm/action-setup"
   pass=$((pass + 1))
 fi
+assert_contains "bun workflow has typegen step" "Generate types" "$BUN_YML"
+assert_contains "bun workflow typegen uses bun" "bun run typegen" "$BUN_YML"
 
 # Also accept the newer text-format bun.lock
 _scaffold_with_lockfile bun-text-proj bun.lock
@@ -800,6 +806,8 @@ else
   echo "  PASS: npm workflow has no pnpm/action-setup"
   pass=$((pass + 1))
 fi
+assert_contains "npm workflow has typegen step" "Generate types" "$NPM_YML"
+assert_contains "npm workflow typegen uses npm" "npm run typegen" "$NPM_YML"
 
 # --- no-lockfile fallback ---
 _scaffold_with_lockfile bare-proj ""

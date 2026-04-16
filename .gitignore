@@ -335,6 +335,7 @@ web_modules/
 .next
 out
 .vercel
+next-env.d.ts
 
 # Nuxt.js build / generate output
 .nuxt

@@ -72,7 +72,7 @@ Conversational settings editor.
 2. Load defaults from `plugin.json`
 3. Present settings grouped by category
 4. Validate and apply changes
-5. For `localLlm` changes, probe Ollama availability
+5. Validate changes against schema
 
 ---
 
@@ -291,10 +291,10 @@ All scripts live in `bin/`. They source `pipeline-lib.sh` for shared functions.
 
 ### Rate Limiting
 
-| Script                  | Purpose                                           |
-| ----------------------- | ------------------------------------------------- |
-| `pipeline-quota-check`  | Parse rate limit headers, compute window position |
-| `pipeline-model-router` | Route to Anthropic or Ollama based on quota       |
+| Script                  | Purpose                                                  |
+| ----------------------- | -------------------------------------------------------- |
+| `pipeline-quota-check`  | Read usage-cache.json, compute window position           |
+| `pipeline-model-router` | Return proceed/wait/end_gracefully action based on quota |
 
 ### Completion
 

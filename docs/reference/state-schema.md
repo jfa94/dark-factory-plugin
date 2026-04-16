@@ -174,7 +174,7 @@ ${CLAUDE_PLUGIN_DATA}/
 | `tier`           | string | Complexity tier (simple/medium/complex) |
 | `risk_tier`      | string | Risk tier (routine/feature/security)    |
 | `model_used`     | string | Model that executed task                |
-| `provider`       | string | anthropic or ollama                     |
+| `provider`       | string | anthropic                               |
 | `depends_on`     | array  | Task IDs this depends on                |
 | `branch`         | string | Git branch name                         |
 | `worktree_path`  | string | Path to worktree                        |
@@ -298,7 +298,7 @@ Tasks in the same `parallel_group` run concurrently. Groups execute sequentially
     "by_model": {
       "opus": { "tokens": 30000, "usd": 0.45 },
       "sonnet": { "tokens": 80000, "usd": 0.35 },
-      "ollama/qwen2.5-coder:14b": { "tokens": 10000, "usd": 0.0 }
+      "haiku": { "tokens": 10000, "usd": 0.05 }
     }
   }
 }

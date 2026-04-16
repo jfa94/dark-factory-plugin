@@ -45,12 +45,11 @@ This opens an interactive settings editor. It reads your current config from `${
 
 Key settings to review on first setup:
 
-| Setting                  | Default | Description                                   |
-| ------------------------ | ------- | --------------------------------------------- |
-| `humanReviewLevel`       | 1       | Human oversight level (0–4)                   |
-| `maxConsecutiveFailures` | 5       | Consecutive failures before pipeline aborts   |
-| `maxParallelTasks`       | 3       | Concurrent task executors                     |
-| `localLlm.enabled`       | false   | Enable Ollama for rate limits                 |
+| Setting                  | Default | Description                                 |
+| ------------------------ | ------- | ------------------------------------------- |
+| `humanReviewLevel`       | 1       | Human oversight level (0–4)                 |
+| `maxConsecutiveFailures` | 5       | Consecutive failures before pipeline aborts |
+| `maxParallelTasks`       | 3       | Concurrent task executors                   |
 
 **`humanReviewLevel` values:**
 
@@ -182,4 +181,4 @@ The orchestrator reads the persisted state in `runs/current/` and continues from
 
 - Read [Running the Pipeline](./guides/running-pipeline.md) for all operating modes
 - Review [Configuration](./guides/configuration.md) to tune quality gates
-- Set up [Local LLM Fallback](./guides/local-llm.md) for rate-limit resilience
+- See [Rate Limiting](./explanation/rate-limiting.md) for pause/resume behavior when approaching limits

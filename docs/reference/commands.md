@@ -81,7 +81,7 @@ Interactive settings editor.
 2. Load defaults from `plugin.json`
 3. Present settings grouped by category
 4. Validate and apply changes
-5. For `localLlm` changes, probe Ollama availability
+5. Validate changes against schema
 
 ### Interactive Mode
 
@@ -117,12 +117,6 @@ When invoked without arguments, enters a conversational loop:
 - `quality.mutationScoreTarget` - Mutation score target
 - `quality.mutationTestingTiers` - Tiers requiring mutation testing
 - `quality.coverageMustNotDecrease` - Block coverage decreases
-
-**Local LLM**
-
-- `localLlm.enabled` - Enable Ollama fallback
-- `localLlm.ollamaUrl` - Ollama server URL
-- `localLlm.model` - Ollama model tag
 
 **Parallel Execution**
 

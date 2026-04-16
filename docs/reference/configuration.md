@@ -69,7 +69,7 @@ Maximum concurrent task-executor agents.
 | Min      | 1      |
 | Max      | 5      |
 
-Review rounds for routine-tier tasks (cloud models).
+Review rounds for routine-tier tasks.
 
 ### review.featureRounds
 
@@ -80,7 +80,7 @@ Review rounds for routine-tier tasks (cloud models).
 | Min      | 1      |
 | Max      | 10     |
 
-Maximum adversarial review rounds for feature-tier tasks (cloud models).
+Maximum adversarial review rounds for feature-tier tasks.
 
 ### review.securityRounds
 
@@ -91,40 +91,7 @@ Maximum adversarial review rounds for feature-tier tasks (cloud models).
 | Min      | 1      |
 | Max      | 10     |
 
-Maximum adversarial review rounds for security-tier tasks (cloud models).
-
-### review.ollamaRoutineRounds
-
-| Property | Value  |
-| -------- | ------ |
-| Type     | number |
-| Default  | 15     |
-| Min      | 5      |
-| Max      | 50     |
-
-Review rounds for routine-tier tasks when running on Ollama.
-
-### review.ollamaFeatureRounds
-
-| Property | Value  |
-| -------- | ------ |
-| Type     | number |
-| Default  | 20     |
-| Min      | 5      |
-| Max      | 50     |
-
-Review rounds for feature-tier tasks when running on Ollama.
-
-### review.ollamaSecurityRounds
-
-| Property | Value  |
-| -------- | ------ |
-| Type     | number |
-| Default  | 25     |
-| Min      | 5      |
-| Max      | 50     |
-
-Review rounds for security-tier tasks when running on Ollama.
+Maximum adversarial review rounds for security-tier tasks.
 
 ### review.preferCodex
 
@@ -242,37 +209,6 @@ Max turns for medium/sonnet-tier tasks.
 | Max      | 200    |
 
 Max turns for complex/opus-tier tasks.
-
----
-
-## Local LLM Fallback
-
-### localLlm.enabled
-
-| Property | Value   |
-| -------- | ------- |
-| Type     | boolean |
-| Default  | false   |
-
-Enable Ollama fallback when Anthropic rate limits approach.
-
-### localLlm.ollamaUrl
-
-| Property | Value                  |
-| -------- | ---------------------- |
-| Type     | string                 |
-| Default  | http://localhost:11434 |
-
-Ollama server URL. Supports local or remote servers.
-
-### localLlm.model
-
-| Property | Value             |
-| -------- | ----------------- |
-| Type     | string            |
-| Default  | qwen2.5-coder:14b |
-
-Ollama model tag. Auto-pulled on first use if not present on server.
 
 ---
 

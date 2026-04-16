@@ -76,7 +76,7 @@ The pipeline:
 Runs can be interrupted by:
 
 - Network failures
-- Rate limit exhaustion (without Ollama fallback)
+- Rate limit exhaustion (7d window exceeded)
 - Manual stop
 - System shutdown
 
@@ -152,20 +152,13 @@ For low-risk routine work:
 
 1. Create multiple PRD issues with `[PRD]` marker
 2. Set `humanReviewLevel` to 0 or 1
-3. Enable local LLM fallback for rate-limit resilience:
-
-```
-/dark-factory:configure
-> Set localLlm.enabled to true
-```
-
-4. Launch:
+3. Launch:
 
 ```
 /dark-factory:run discover
 ```
 
-The pipeline processes all issues, using Ollama when API limits approach.
+The pipeline processes all issues, pausing automatically when 5h rate limits approach and resuming after reset. If 7d limits are exceeded, the run ends gracefully and can be resumed later.
 
 ### Re-running a Failed Task
 
@@ -195,18 +188,13 @@ If the pipeline stops due to rate limits:
 cat "${CLAUDE_PLUGIN_DATA}/usage-cache.json" | jq '.five_hour.used_percentage'
 ```
 
-2. Wait for the reset window:
-
-```
-/dark-factory:configure
-> Set localLlm.enabled to true
-```
-
-3. Resume:
+2. Wait for the reset window, then resume:
 
 ```
 /dark-factory:run resume
 ```
+
+The pipeline automatically waits when 5h limits approach. If it ended due to 7d limits, wait for the window to reset before resuming.
 
 ---
 

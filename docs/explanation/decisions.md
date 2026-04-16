@@ -161,37 +161,19 @@ Detection is deterministic: `pipeline-detect-reviewer` checks Codex availability
 
 **5-hour behavior:**
 
-- Over threshold + Ollama: route to Ollama
-- Over threshold + no Ollama: wait until reset
+- Over threshold: wait until reset
 
 **7-day behavior:**
 
-- Over threshold + Ollama: route to Ollama
-- Over threshold + no Ollama: end gracefully, mark partial
+- Over threshold: end gracefully, mark partial
 
-**Why source from response headers?**
+**Why source from statusline?**
 
-The `unified-*` response headers carry rate limit data and are already saved after each API call. No separate API call needed, cross-platform.
-
----
-
-## Decision 11: Ollama Configuration and Auto-Pull
-
-**Choice:** Remote Ollama supported via `localLlm.ollamaUrl`. Model validation and auto-pull integrated into `pipeline-model-router`.
-
-**Default model:** `qwen2.5-coder:14b` (16GB minimum GPU)
-
-**Why auto-pull in model-router?**
-
-Model validation is part of the routing decision. If the model isn't available, Ollama effectively isn't available.
-
-**Why auto-pull fires on server?**
-
-`POST /api/pull` triggers download on the Ollama server. Correct for remote setups where the client doesn't need the model files.
+Claude Code's statusline JSON includes `rate_limits` data. The `statusline-wrapper.sh` script captures this to `usage-cache.json` on every statusline update — no API calls, no token cost, real-time data.
 
 ---
 
-## Decision 12: Existing User Hooks Fire Automatically
+## Decision 11: Existing User Hooks Fire Automatically
 
 **Choice:** Do NOT duplicate the user's existing hooks in the plugin.
 
@@ -205,7 +187,7 @@ Plugin-specific hooks (branch-protection, run-tracker, stop-gate) cover pipeline
 
 ---
 
-## Decision 13: Staging Branch as Integration Point
+## Decision 12: Staging Branch as Integration Point
 
 **Choice:** All task worktrees branch from `staging`, and all task PRs target `staging`.
 
@@ -222,7 +204,7 @@ Task B waits for Task A's PR to merge into `staging` before starting. Sequential
 
 ---
 
-## Decision 14: Bundled Autonomous Settings
+## Decision 13: Bundled Autonomous Settings
 
 **Choice:** The plugin ships `templates/settings.autonomous.json`. The `/dark-factory:run` command detects whether the session was launched with these settings.
 
@@ -234,7 +216,7 @@ The session must start with correct settings. Subagents inherit parent session s
 
 ---
 
-## Decision 15: CI Integration and Conflict Handling
+## Decision 14: CI Integration and Conflict Handling
 
 **Choice:** `pipeline-wait-pr` polls both PR merge status AND CI checks. On CI failure, attempt up to 2 automated fixes. On merge conflicts, attempt one rebase.
 
@@ -248,7 +230,7 @@ One rebase resolves most simple conflicts. If it still fails, the conflict is li
 
 ---
 
-## Decision 16: Project Scaffolding
+## Decision 15: Project Scaffolding
 
 **Choice:** `pipeline-scaffold` creates project files on first run. Files only created if absent (idempotent).
 
@@ -293,15 +275,3 @@ The orchestrator emits multiple `Agent()` calls in one message. Claude Code invo
 Is the Codex Claude Code plugin stable and publicly available?
 
 **Status:** Unvalidated. Fallback via Claude Code reviewer is fully functional.
-
-### Ollama Model Routing
-
-Can `ANTHROPIC_BASE_URL` be overridden per-subagent spawn?
-
-**Status:** Design validated, runtime untested. LiteLLM proxy documented as fallback.
-
-### Local Model Tool-Use Compatibility
-
-Does Claude Code's agent framework work correctly with Ollama models?
-
-**Status:** Untested. Quality gates apply regardless of model provider.

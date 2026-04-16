@@ -82,7 +82,7 @@ Maximum concurrent task-executor agents.
 
 ### review.routineRounds / featureRounds / securityRounds
 
-Maximum adversarial review rounds by risk tier when using cloud models.
+Maximum adversarial review rounds by risk tier.
 
 | Tier     | Default | Range |
 | -------- | ------- | ----- |
@@ -94,16 +94,6 @@ Maximum adversarial review rounds by risk tier when using cloud models.
 
 - Increase for codebases with complex review requirements
 - Decrease to reduce API costs on low-risk changes
-
-### review.ollamaRoutineRounds / ollamaFeatureRounds / ollamaSecurityRounds
-
-Review rounds when running on local Ollama models. Higher than cloud defaults to compensate for lower model quality.
-
-| Tier     | Default | Range |
-| -------- | ------- | ----- |
-| Routine  | 15      | 5-50  |
-| Feature  | 20      | 5-50  |
-| Security | 25      | 5-50  |
 
 ### review.preferCodex
 
@@ -210,44 +200,6 @@ Maximum turns per task by complexity tier.
 
 - Increase for tasks that require extensive exploration
 - Decrease to fail fast on tasks that aren't converging
-
----
-
-## Local LLM Fallback
-
-### localLlm.enabled
-
-**Default:** false
-
-Enable Ollama fallback when API rate limits approach.
-
-**When to change:**
-
-- Set true for overnight runs where rate limits are likely
-- Keep false if you have Pro Max subscription or prefer waiting for limits
-
-### localLlm.ollamaUrl
-
-**Default:** `http://localhost:11434`
-
-Ollama server URL. Supports local or remote servers.
-
-**When to change:**
-
-- Point to a remote server: `http://192.168.1.50:11434`
-- The remote server must be running `OLLAMA_HOST=0.0.0.0:11434 ollama serve`
-
-### localLlm.model
-
-**Default:** `qwen2.5-coder:14b`
-
-Ollama model tag. Auto-pulled on first use if not present.
-
-| VRAM  | Model               | Use Case                |
-| ----- | ------------------- | ----------------------- |
-| 8GB   | `qwen2.5-coder:7b`  | Simple tasks only       |
-| 16GB+ | `qwen2.5-coder:14b` | Routine + feature tasks |
-| 24GB+ | `qwen2.5-coder:32b` | Near cloud quality      |
 
 ---
 

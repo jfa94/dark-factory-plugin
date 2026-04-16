@@ -1,8 +1,8 @@
-<!-- last-documented: 6f6521b5d8c6be5e5c861ce0d2098e9d0a61af13 -->
+<!-- last-documented: f3ca0fea948102bff2758e11ca091cc195014099 -->
 
 # Dark Factory Plugin
 
-A Claude Code plugin that converts GitHub PRD (Product Requirements Document) issues into merged pull requests with minimal human intervention. The plugin implements a 9-phase autonomous coding pipeline with quality-first review gates, adversarial code review, and local LLM fallback.
+A Claude Code plugin that converts GitHub PRD (Product Requirements Document) issues into merged pull requests with minimal human intervention. The plugin implements a 9-phase autonomous coding pipeline with quality-first review gates and adversarial code review.
 
 ## What Problem It Solves
 
@@ -39,7 +39,6 @@ The plugin automates the end-to-end software development workflow: reading a req
 
 - [Running the Pipeline](./guides/running-pipeline.md) - Operating modes and invocation patterns
 - [Configuring Settings](./guides/configuration.md) - Adjusting quality gates, review rounds, and autonomy levels
-- [Setting Up Local LLM Fallback](./guides/local-llm.md) - Ollama configuration for rate-limit resilience
 
 ### Reference
 
@@ -53,5 +52,5 @@ The plugin automates the end-to-end software development workflow: reading a req
 
 - [Quality Gates](./explanation/quality-gates.md) - The 5-layer quality stack and why each layer exists
 - [Adversarial Review](./explanation/adversarial-review.md) - Actor-Critic pattern and review protocol
-- [Rate Limiting](./explanation/rate-limiting.md) - 5h and 7d budget management with Ollama fallback
+- [Rate Limiting](./explanation/rate-limiting.md) - 5h and 7d budget management with pause/end_gracefully behavior
 - [Design Decisions](./explanation/decisions.md) - Key architectural choices and their rationale

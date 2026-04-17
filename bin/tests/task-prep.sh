@@ -496,6 +496,99 @@ eo_valid=$(echo "$output" | jq '.execution_order | map(.task_id) | all(type == "
 assert_eq "execution_order task_ids are JSON strings" "true" "$eo_valid"
 
 echo ""
+echo "=== pipeline-holdout-validate ==="
+
+# Seed a holdout file as pipeline-build-prompt would have.
+holdout_dir="$CLAUDE_PLUGIN_DATA/runs/r-holdout/holdouts"
+mkdir -p "$holdout_dir"
+cat > "$holdout_dir/t1.json" <<'EOF'
+{"task_id":"t1","withheld_criteria":["criterion alpha","criterion beta"],"total_criteria":5,"withheld_count":2}
+EOF
+
+# prompt subcommand: emits the focused reviewer prompt
+prompt_out=$(pipeline-holdout-validate prompt r-holdout t1 2>/dev/null)
+assert_eq "holdout prompt mentions task id" "true" "$(printf '%s' "$prompt_out" | grep -q 't1' && echo true || echo false)"
+assert_eq "holdout prompt lists alpha"     "true" "$(printf '%s' "$prompt_out" | grep -q 'criterion alpha' && echo true || echo false)"
+assert_eq "holdout prompt lists beta"      "true" "$(printf '%s' "$prompt_out" | grep -q 'criterion beta'  && echo true || echo false)"
+
+# prompt: missing holdout file → exit 2
+assert_exit "holdout prompt missing file → 2" 2 pipeline-holdout-validate prompt r-holdout no-such-task
+
+# Seed a config so the gate uses the documented default threshold (80) rather
+# than skipping the read entirely. The check subcommand reads
+# .quality.holdoutPassRate via read_config.
+cat > "$CLAUDE_PLUGIN_DATA/config.json" <<'EOF'
+{"quality.holdoutPassRate": 80}
+EOF
+
+# check: 2/2 satisfied → pass, exit 0
+cat > "$holdout_dir/../resp-pass.json" <<'EOF'
+{"criteria":[{"criterion":"criterion alpha","satisfied":true,"evidence":"src/a.ts:1"},{"criterion":"criterion beta","satisfied":true,"evidence":"src/b.ts:2"}]}
+EOF
+out=$(pipeline-holdout-validate check r-holdout t1 "$holdout_dir/../resp-pass.json" 2>/dev/null)
+rc=$?
+assert_eq "holdout pass status" "pass" "$(printf '%s' "$out" | jq -r '.status')"
+assert_eq "holdout pass exit"   "0"    "$rc"
+assert_eq "holdout pass pct"    "100"  "$(printf '%s' "$out" | jq -r '.pass_pct')"
+
+# check: 1/2 satisfied (50% < 80%) → fail, exit 1
+cat > "$holdout_dir/../resp-fail.json" <<'EOF'
+{"criteria":[{"criterion":"criterion alpha","satisfied":true,"evidence":"src/a.ts:1"},{"criterion":"criterion beta","satisfied":false,"evidence":"missing"}]}
+EOF
+set +e
+out=$(pipeline-holdout-validate check r-holdout t1 "$holdout_dir/../resp-fail.json" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "holdout fail status" "fail" "$(printf '%s' "$out" | jq -r '.status')"
+assert_eq "holdout fail exit"   "1"    "$rc"
+assert_eq "holdout fail pct"    "50"   "$(printf '%s' "$out" | jq -r '.pass_pct')"
+
+# check: missing entries treated as failures (only first criterion answered)
+cat > "$holdout_dir/../resp-partial.json" <<'EOF'
+{"criteria":[{"criterion":"criterion alpha","satisfied":true,"evidence":"src/a.ts:1"}]}
+EOF
+set +e
+out=$(pipeline-holdout-validate check r-holdout t1 "$holdout_dir/../resp-partial.json" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "holdout partial counts as fail (status)" "fail" "$(printf '%s' "$out" | jq -r '.status')"
+assert_eq "holdout partial counts as fail (exit)"   "1"    "$rc"
+assert_eq "holdout partial criteria.len"            "2"    "$(printf '%s' "$out" | jq -r '.criteria | length')"
+assert_eq "holdout partial second is unsatisfied"   "false" "$(printf '%s' "$out" | jq -r '.criteria[1].satisfied')"
+
+# check: malformed reviewer JSON → exit 2
+echo "this is not json" > "$holdout_dir/../resp-bad.json"
+assert_exit "holdout malformed JSON → 2" 2 pipeline-holdout-validate check r-holdout t1 "$holdout_dir/../resp-bad.json"
+
+# check: ```json ... ``` fenced block is unwrapped
+cat > "$holdout_dir/../resp-fenced.json" <<'EOF'
+Sure, here is my analysis:
+
+```json
+{"criteria":[{"criterion":"criterion alpha","satisfied":true,"evidence":"src/a.ts:1"},{"criterion":"criterion beta","satisfied":true,"evidence":"src/b.ts:2"}]}
+```
+
+Hope that helps.
+EOF
+out=$(pipeline-holdout-validate check r-holdout t1 "$holdout_dir/../resp-fenced.json" 2>/dev/null)
+rc=$?
+assert_eq "holdout fenced JSON parsed" "pass" "$(printf '%s' "$out" | jq -r '.status')"
+assert_eq "holdout fenced JSON exit"   "0"    "$rc"
+
+# check: zero withheld_count → defensive 100% pass, exit 0
+cat > "$holdout_dir/empty.json" <<'EOF'
+{"task_id":"empty","withheld_criteria":[],"total_criteria":3,"withheld_count":0}
+EOF
+echo '{"criteria":[]}' > "$holdout_dir/../resp-empty.json"
+out=$(pipeline-holdout-validate check r-holdout empty "$holdout_dir/../resp-empty.json" 2>/dev/null)
+rc=$?
+assert_eq "holdout zero-withheld status" "pass" "$(printf '%s' "$out" | jq -r '.status')"
+assert_eq "holdout zero-withheld exit"   "0"    "$rc"
+
+# Unknown subcommand → exit 2
+assert_exit "holdout unknown subcommand → 2" 2 pipeline-holdout-validate frob r-holdout t1
+
+echo ""
 echo "================================"
 echo "Results: $pass passed, $fail failed"
 echo "================================"

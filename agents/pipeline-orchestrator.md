@@ -178,7 +178,41 @@ success/failure path; every status transition is explicit.
        - `pipeline-gh-comment <issue> ci-escalation --data '{"reason":"quality_gate exhausted"}'`
        - Jump to step 7.
 
-3b. **Mutation Testing** (Layer 5 — feature and security tiers only)
+3b. **Holdout Validation** (Layer 4)
+
+- Skip when `quality.holdoutPercent` is `0` or no holdout file exists at
+  `${CLAUDE_PLUGIN_DATA}/runs/$run_id/holdouts/$t.json` (the latter happens
+  for tasks with too few acceptance criteria to withhold any).
+- `prompt=$(pipeline-holdout-validate prompt $run_id $t)` — builds the
+  focused reviewer prompt from the persisted holdout file.
+- Spawn `task-reviewer` via `Agent({subagent_type: "task-reviewer", isolation: "worktree", prompt: "$prompt"})`.
+  The reviewer runs cold against the diff in the same worktree the executor
+  produced and must respond with the strict JSON shape the prompt requests.
+- Capture the reviewer output to `.state/$run_id/$t.holdout.out`, then run
+  `pipeline-holdout-validate check $run_id $t .state/$run_id/$t.holdout.out`.
+- On exit 0 (`pass`): record `.tasks.$t.quality_gates.holdout = pass` and
+  continue to step 3c.
+- On exit 1 (`fail`):
+  - `prior=$(pipeline-state read $run_id ".tasks.$t.holdout_attempts // 0")`
+  - `pipeline-state write $run_id ".tasks.$t.holdout_attempts" $((prior + 1))`
+  - If `holdout_attempts < 2`:
+    - `pipeline-state task-status $run_id $t ci_fixing`
+    - Re-spawn `task-executor` with the failed-criteria evidence as fix
+      context (`TASK_FAILURE_TYPE=holdout`). The unsatisfied criteria are
+      now visible — that is intentional, but record `.tasks.$t.holdout_revealed = true`
+      so reporting reflects that the task no longer meets the surprise-test bar.
+    - Goto step 2.
+  - If `holdout_attempts >= 2`:
+    - `pipeline-state task-status $run_id $t needs_human_review`
+    - `pipeline-gh-comment <issue> review-escalation --data '{"reason":"holdout_validation_exhausted"}'`
+    - Jump to step 7.
+- On exit 2 (input/parse error): log a warning, record
+  `.tasks.$t.quality_gates.holdout = error`, and continue to step 3c. Holdout
+  is a quality signal, not a hard gate — a malformed reviewer response
+  shouldn't block an otherwise-passing task, but the metric must surface in
+  the run summary.
+
+3c. **Mutation Testing** (Layer 5 — feature and security tiers only)
 
 - Check whether `risk_tier` is in `quality.mutationTestingTiers` config (default: `["feature","security"]`). If not, skip to step 4.
 - Run `stryker run` (or the project's configured mutation command) in the worktree. Read the summary score.

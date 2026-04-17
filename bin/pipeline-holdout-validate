@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Layer 4 — Holdout validation gate.
+#
+# Two subcommands:
+#   prompt <run-id> <task-id>
+#     Read the holdout file written by `pipeline-build-prompt --holdout` and
+#     emit a focused reviewer prompt asking for criterion-by-criterion
+#     verification. Stdout is the prompt body, ready to feed task-reviewer
+#     (or the dedicated holdout-validator) via Agent({prompt: ...}).
+#
+#   check <run-id> <task-id> <reviewer-output-file>
+#     Parse the reviewer's structured response. Compute the pass rate and
+#     compare it against `quality.holdoutPassRate` (default 80). Exit 0 when
+#     the gate passes, 1 when it fails, 2 on input/parse errors. Always
+#     emits a summary JSON object on stdout regardless of exit code.
+#
+# Holdout file format (written by pipeline-build-prompt):
+#   { "task_id": "...", "withheld_criteria": ["...", ...],
+#     "total_criteria": N, "withheld_count": K }
+#
+# Reviewer output format (must conform):
+#   { "criteria": [
+#       { "criterion": "<text>", "satisfied": true|false, "evidence": "..." },
+#       ... one entry per withheld criterion
+#     ] }
+#
+# The reviewer is responsible for matching its responses 1:1 with the input
+# criteria list (the prompt enforces this). Missing entries count as failures
+# so a partial response cannot quietly satisfy the gate.
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+subcommand="${1:?missing subcommand (prompt|check)}"
+shift
+
+case "$subcommand" in
+  prompt)
+    run_id="${1:?missing run-id}"
+    task_id="${2:?missing task-id}"
+    holdout_file="${CLAUDE_PLUGIN_DATA}/runs/${run_id}/holdouts/${task_id}.json"
+
+    if [[ ! -f "$holdout_file" ]]; then
+      log_error "no holdout file at $holdout_file (was --holdout passed to pipeline-build-prompt?)"
+      exit 2
+    fi
+
+    withheld_count=$(jq -r '.withheld_count // 0' "$holdout_file")
+    if [[ "$withheld_count" -lt 1 ]]; then
+      log_error "holdout file has zero withheld criteria; nothing to validate"
+      exit 2
+    fi
+
+    # Build the reviewer prompt. The instructions are intentionally strict
+    # about the response format: the `check` subcommand keys off `.criteria[]`
+    # and silently treats missing entries as failures, so a freeform answer
+    # would always fail-closed — but the explicit instructions reduce the
+    # likelihood of that happening at all.
+    jq -r '
+      .withheld_criteria as $crits
+      | "Layer 4 holdout validation for task \(.task_id).\n\n"
+        + "The implementer was NOT shown the following acceptance criteria during execution.\n"
+        + "Independently verify whether the current diff satisfies each one.\n\n"
+        + "Withheld criteria (\(.withheld_count) of \(.total_criteria) total):\n"
+        + ($crits | to_entries | map("  \(.key + 1). \(.value)") | join("\n"))
+        + "\n\nRespond with a single JSON object, no prose, exactly this shape:\n"
+        + "{\n  \"criteria\": [\n    { \"criterion\": \"<exact text from above>\", \"satisfied\": true|false, \"evidence\": \"<file:line or short rationale>\" },\n    ...\n  ]\n}\n\n"
+        + "One entry per withheld criterion, in the same order. A missing entry is treated as failure."
+    ' "$holdout_file"
+    ;;
+
+  check)
+    run_id="${1:?missing run-id}"
+    task_id="${2:?missing task-id}"
+    output_file="${3:?missing reviewer output file}"
+
+    holdout_file="${CLAUDE_PLUGIN_DATA}/runs/${run_id}/holdouts/${task_id}.json"
+    if [[ ! -f "$holdout_file" ]]; then
+      log_error "no holdout file at $holdout_file"
+      exit 2
+    fi
+    if [[ ! -f "$output_file" ]]; then
+      log_error "reviewer output file not found: $output_file"
+      exit 2
+    fi
+
+    withheld=$(jq -rc '.withheld_criteria' "$holdout_file")
+    withheld_count=$(jq -r '.withheld_count // 0' "$holdout_file")
+
+    # Extract a JSON object from the reviewer output. Reviewers occasionally
+    # wrap the JSON in code fences; strip a single ```json ... ``` block if
+    # present, otherwise pass the file through as-is.
+    raw=$(cat "$output_file")
+    cleaned=$(printf '%s' "$raw" \
+      | sed -n '/```json/,/```/p' \
+      | sed '1d;$d')
+    if [[ -z "$cleaned" ]]; then
+      cleaned="$raw"
+    fi
+
+    if ! parsed=$(printf '%s' "$cleaned" | jq -ec '.criteria // []' 2>/dev/null); then
+      log_error "reviewer output is not valid JSON or lacks .criteria"
+      jq -cn --arg run_id "$run_id" --arg task_id "$task_id" --arg reason "invalid_reviewer_output" \
+        '{run_id:$run_id, task_id:$task_id, status:"error", reason:$reason}'
+      exit 2
+    fi
+
+    threshold=$(read_config '.quality.holdoutPassRate' '80')
+
+    # Walk the withheld criteria one by one. Missing entries count as fails.
+    summary=$(jq -nc \
+      --argjson crits "$withheld" \
+      --argjson resp "$parsed" \
+      '
+      ($crits | length) as $n
+      | [ range(0; $n) as $i
+          | $crits[$i] as $c
+          | ($resp[$i] // null) as $r
+          | { criterion: $c,
+              satisfied: ($r != null and ($r.satisfied == true)),
+              evidence: ($r.evidence // null) } ]
+      ')
+
+    satisfied=$(printf '%s' "$summary" | jq '[.[] | select(.satisfied)] | length')
+    if [[ "$withheld_count" -gt 0 ]]; then
+      pass_pct=$(( satisfied * 100 / withheld_count ))
+    else
+      pass_pct=100
+    fi
+
+    status="pass"
+    if (( pass_pct < threshold )); then
+      status="fail"
+    fi
+
+    jq -nc \
+      --arg run_id "$run_id" \
+      --arg task_id "$task_id" \
+      --arg status "$status" \
+      --argjson satisfied "$satisfied" \
+      --argjson withheld_count "$withheld_count" \
+      --argjson pass_pct "$pass_pct" \
+      --argjson threshold "$threshold" \
+      --argjson criteria "$summary" \
+      '{run_id:$run_id, task_id:$task_id, status:$status,
+        satisfied:$satisfied, withheld:$withheld_count,
+        pass_pct:$pass_pct, threshold:$threshold,
+        criteria:$criteria}'
+
+    [[ "$status" == "pass" ]] && exit 0 || exit 1
+    ;;
+
+  *)
+    log_error "unknown subcommand: $subcommand (expected: prompt|check)"
+    exit 2
+    ;;
+esac

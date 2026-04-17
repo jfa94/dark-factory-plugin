@@ -38,13 +38,36 @@ Claude Code handles cloning, discovery, and future updates automatically. Verify
 
 ### Manual install (fallback)
 
-For older Claude Code versions or air-gapped environments:
+For older Claude Code versions, air-gapped environments, or if the marketplace install hit the SSH error above:
 
 ```bash
-git clone https://github.com/jfa94/factory.git ~/.claude/plugins/factory
+git clone https://github.com/jfa94/factory.git ~/code/factory-plugin
 ```
 
-Claude Code discovers the plugin via `~/.claude/plugins/factory/.claude-plugin/plugin.json`.
+Then load the plugin directly when starting Claude Code:
+
+```bash
+claude --plugin-dir ~/code/factory-plugin
+```
+
+Claude Code reads `.claude-plugin/plugin.json` from the given directory and activates all bundled commands, agents, skills, and hooks for that session.
+
+To persist the plugin across sessions without relying on the marketplace installer, register it in `~/.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "jfa94-local": {
+      "source": { "source": "local", "path": "~/code/factory-plugin" }
+    }
+  },
+  "enabledPlugins": {
+    "factory@jfa94-local": true
+  }
+}
+```
+
+Restart Claude Code. The plugin is discovered from the local path and `/help` should list the `/factory:*` commands.
 
 ## Step 2: Configure Rate Limit Detection
 

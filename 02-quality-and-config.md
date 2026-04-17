@@ -115,11 +115,11 @@ Round 3: Actor fixes → Critic re-reviews → APPROVE (or escalate)
 
 **Round configuration by risk tier:**
 
-| Risk Tier | Cloud Max Rounds | Ollama Max Rounds | Additional Reviewers                          | Cost Estimate (API/overage only) |
-| --------- | ---------------- | ----------------- | --------------------------------------------- | -------------------------------- |
-| Routine   | 2                | 15                | None                                          | ~$0.05-$0.10                     |
-| Feature   | 4                | 20                | None                                          | ~$0.20-$0.50                     |
-| Security  | 6                | 25                | `security-reviewer` + `architecture-reviewer` | ~$0.50-$1.00                     |
+| Risk Tier | Max Rounds | Additional Reviewers                          | Cost Estimate (API/overage only) |
+| --------- | ---------- | --------------------------------------------- | -------------------------------- |
+| Routine   | 2          | None                                          | ~$0.05-$0.10                     |
+| Feature   | 4          | None                                          | ~$0.20-$0.50                     |
+| Security  | 6          | `security-reviewer` + `architecture-reviewer` | ~$0.50-$1.00                     |
 
 **Note:** Cost estimates apply only when billing via API key or extra usage overage. Subscription allowance users show $0 cost (pre-paid flat rate). Billing mode is auto-detected from response headers (`unified-*` = subscription, standard `ratelimit-*` = API).
 
@@ -262,19 +262,12 @@ Complete schema for all tunables in `plugin.json`. These are user-configurable v
 ```yaml
 userConfig:
   # === Pipeline Behavior ===
-  maxTasks:
-    type: number
-    default: 20
-    min: 1
-    max: 100
-    description: "Maximum tasks per run (circuit breaker threshold)"
-
   maxRuntimeMinutes:
     type: number
-    default: 360
-    min: 10
+    default: 0
+    min: 0
     max: 1440
-    description: "Maximum pipeline runtime in minutes before circuit breaker trips"
+    description: "Maximum pipeline runtime in minutes before circuit breaker trips. 0 = unlimited (default); set a positive value as an emergency wall-clock brake."
 
   maxConsecutiveFailures:
     type: number
@@ -408,13 +401,6 @@ userConfig:
     min: 20
     max: 200
     description: "Max turns for medium/sonnet-tier tasks"
-
-  execution.maxOrchestratorTurns:
-    type: number
-    default: 500
-    min: 50
-    max: 9999
-    description: "Circuit-breaker threshold on orchestrator assistant turns. Enables graceful wind-down before the runtime maxTurns cap; default 500 = ~50% headroom over the 334-turn moderate-friction estimate for a 20-task pipeline."
 
   # === Dependencies ===
   dependencies.prMergeTimeout:
@@ -586,13 +572,13 @@ Every tool use by every agent in the pipeline is logged to `${CLAUDE_PLUGIN_DATA
 
 ## Success Criteria
 
-| Criterion                        | Target                                          | Measurement                                                   |
-| -------------------------------- | ----------------------------------------------- | ------------------------------------------------------------- |
-| Feature parity                   | 100% of Bash pipeline features reproduced       | Checklist against 17 module feature inventory                 |
-| Mutation score                   | >80% on generated code                          | Mutation testing framework output                             |
-| Holdout pass rate                | >90% of runs pass holdout validation            | Metrics query over 10+ runs                                   |
-| Adversarial review effectiveness | >70% of issues caught before human review       | Compare review findings vs post-merge bugs                    |
-| Resume reliability               | 100% of interrupted runs resume correctly       | Test: kill pipeline mid-run, restart, verify completion       |
-| Audit completeness               | 100% of tool uses logged                        | Compare audit.jsonl entry count vs actual tool calls          |
-| Rate limit resilience            | <5min stall on rate limit (with Ollama enabled) | Measure time between rate limit detection and task resumption |
-| Deterministic ratio              | ≥3:1 scripts-to-agents                          | Count component types in plugin                               |
+| Criterion                        | Target                                                                        | Measurement                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Feature parity                   | 100% of Bash pipeline features reproduced                                     | Checklist against 17 module feature inventory                                  |
+| Mutation score                   | >80% on generated code                                                        | Mutation testing framework output                                              |
+| Holdout pass rate                | >90% of runs pass holdout validation                                          | Metrics query over 10+ runs                                                    |
+| Adversarial review effectiveness | >70% of issues caught before human review                                     | Compare review findings vs post-merge bugs                                     |
+| Resume reliability               | 100% of interrupted runs resume correctly                                     | Test: kill pipeline mid-run, restart, verify completion                        |
+| Audit completeness               | 100% of tool uses logged                                                      | Compare audit.jsonl entry count vs actual tool calls                           |
+| Rate limit resilience            | Pipeline detects 5h/7d limits and waits or exits gracefully (no silent stall) | Measure detection-to-action latency; verify graceful exit on 7d over-threshold |
+| Deterministic ratio              | ≥3:1 scripts-to-agents                                                        | Count component types in plugin                                                |

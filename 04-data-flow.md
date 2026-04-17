@@ -89,10 +89,9 @@
 │      │    → {tier, model, maxTurns}                               │     │
 │      │ 5. pipeline-classify-risk <task-json>                      │     │
 │      │    → {tier, review_rounds, extra_reviewers}                │     │
-│      │ 6. pipeline-model-router --quota <quota> --task-tier <tier>│     │
-│      │    → validates Ollama connectivity + model on first use    │     │
-│      │    → auto-pulls model if missing (local or remote server)  │     │
-│      │    → {provider, model, base_url, action, review_cap}       │     │
+│      │ 6. pipeline-model-router --quota <quota> --tier <tier>     │     │
+│      │    → {provider: "anthropic", action, review_cap, tier}     │     │
+│      │    → action=proceed: continue                              │     │
 │      │    → action=wait: sleep to 5h boundary, retry              │     │
 │      │    → action=end_gracefully: drain in-flight, mark partial  │     │
 │      │ 7. pipeline-build-prompt <task> <spec> --holdout 20%       │     │
@@ -105,7 +104,7 @@
 │      │    - isolation: worktree                                   │     │
 │      │    - background: true (if parallel group)                  │     │
 │      │    - model/maxTurns: from classify-task                    │     │
-│      │    - env overrides: from model-router (if Ollama)          │     │
+│      │    - model routes via Anthropic API (no per-spawn override)│     │
 │      │    - input: structured prompt from build-prompt            │     │
 │      │                                                            │     │
 │      │    executor internally:                                    │     │
@@ -293,22 +292,22 @@
 
 ---
 
-## Local LLM Fallback Routing Flow
+## Quota-Aware Routing Flow
 
-Both 5h and 7d checks run independently. Results compose — neither short-circuits the other.
+Both 5h and 7d checks run independently before each task spawn. Results compose — neither short-circuits the other. The router never swaps providers (per-spawn model routing is not supported by the subagent architecture; see claude-code#38698); it either continues, waits for the 5h window to reset, or ends the run gracefully when the 7d budget is exhausted.
 
 ```
                     ┌──────────────────────────┐
-                    │  Before each task spawn   │
+                    │  Before each task spawn  │
                     └────────────┬─────────────┘
                                  │
                                  ▼
               ┌──────────────────────────────────────┐
-              │  pipeline-quota-check                 │
-              │    read usage-cache.json              │
-              │    parse five_hour.used_percentage    │
-              │    parse seven_day.used_percentage    │
-              └──────┬───────────────────────┬────────┘
+              │  pipeline-quota-check                │
+              │    read usage-cache.json             │
+              │    parse five_hour.used_percentage   │
+              │    parse seven_day.used_percentage   │
+              └──────┬───────────────────────┬───────┘
                      │                       │
              5h check│               7d check│
                      ▼                       ▼
@@ -317,82 +316,33 @@ Both 5h and 7d checks run independently. Results compose — neither short-circu
           │ threshold?       │   │ threshold?           │
           └────────┬─────────┘   └──────────┬───────────┘
                    │                         │
-          ┌────────┴────────┐       ┌────────┴────────┐
-          │                 │       │                 │
-         yes               no      yes               no
-          │                 │       │                 │
-          ▼                 │       ▼                 │
-   ┌─────────────┐          │  ┌─────────────┐        │
-   │5h_over=true │          │  │7d_over=true │        │
-   └──────┬──────┘          │  └──────┬──────┘        │
-          │                 │         │                │
-          └────────┬────────┘         └───────┬────────┘
-                   │                          │
-                   ▼                          │
-     ┌─────────────────────────┐              │
-     │  pipeline-model-router  │◄─────────────┘
+                   ▼                         ▼
+     ┌─────────────────────────┐
+     │  pipeline-model-router  │
      │  compose: {5h,7d} flags │
      └────────────┬────────────┘
                   │
     ┌─────────────┼──────────────┐
     │             │              │
- neither       5h only      7d over
-  over           over     (±5h over)
+ neither       5h only        7d over
+  over           over       (±5h over)
     │             │              │
     ▼             ▼              ▼
 ┌────────┐  ┌──────────────┐  ┌──────────────────────┐
-│Anthropic│  │Check Ollama  │  │Check Ollama          │
-│(normal) │  │(5h fallback) │  │(7d fallback)         │
-└────────┘  └──────┬───────┘  └──────────┬───────────┘
-                   │                      │
-            ┌──────┴──────┐        ┌──────┴──────┐
-            │             │        │             │
-         up+loaded      down     up+loaded     down
-            │             │        │             │
-            ▼             ▼        ▼             ▼
-        ┌────────┐  ┌──────────┐ ┌────────┐ ┌──────────────┐
-        │Ollama  │  │Wait for  │ │Ollama  │ │End gracefully│
-        │(elev.  │  │5h reset  │ │(elev.  │ │drain in-flight│
-        │ caps)  │  │retry on  │ │ caps)  │ │mark partial  │
-        └───┬────┘  │Claude    │ └───┬────┘ │update state  │
-            │       └──────────┘     │       └──────────────┘
-            ▼                        ▼
-   ┌─────────────────┐    ┌─────────────────────┐
-   │Exhausts max     │    │Exhausts max         │
-   │review rounds?   │    │review rounds?       │
-   └────────┬────────┘    └──────────┬──────────┘
-            │                        │
-     ┌──────┴──────┐          ┌──────┴──────┐
-     │             │          │             │
-    yes            no        yes            no
-     │             │          │             │
-     ▼             ▼          ▼             ▼
- ┌────────┐   ┌────────┐  ┌──────────────┐ ┌────────┐
- │Wait for│   │ Done   │  │End gracefully│ │ Done   │
- │5h reset│   │(passed)│  │(mark partial)│ │(passed)│
- │retry on│   └────────┘  └──────────────┘ └────────┘
- │Claude  │
- └────────┘
+│proceed │  │ action=wait  │  │ action=end_gracefully│
+│(normal │  │ wait_minutes │  │  drain in-flight      │
+│ caps)  │  │ from         │  │  mark partial         │
+└────────┘  │ resets_at    │  │  update state         │
+            └──────────────┘  └──────────────────────┘
 ```
 
-**Elevated review caps (all tiers, both triggers):**
+**Review caps (standard, no elevation):**
 
-| Tier     | Cloud | Ollama |
-| -------- | ----- | ------ |
-| Routine  | 2     | 15     |
-| Feature  | 4     | 20     |
-| Security | 6     | 25     |
-
-**Environment override for Ollama tasks:**
-
-When `pipeline-model-router` returns Ollama, the orchestrator sets these env vars before spawning `task-executor`:
-
-```
-ANTHROPIC_BASE_URL=http://localhost:11434/v1
-ANTHROPIC_AUTH_TOKEN=dummy
-```
-
-The task-executor agent operates identically — it doesn't know it's running on a local model. Quality gates are unchanged: if the local model produces inferior code, it fails the same gates and triggers the same fix-retry loop.
+| Tier     | Max Rounds |
+| -------- | ---------- |
+| Routine  | 2          |
+| Feature  | 4          |
+| Security | 6          |
 
 ---
 
@@ -533,7 +483,7 @@ ${CLAUDE_PLUGIN_DATA}/
       "tier": "simple|medium|complex",
       "risk_tier": "routine|feature|security",
       "model_used": "sonnet",
-      "provider": "anthropic|ollama",
+      "provider": "anthropic",
       "branch": "dark-factory/42/task-1-setup-auth",
       "worktree_path": "/tmp/worktrees/task_1",
       "pr_number": 123,
@@ -575,7 +525,6 @@ ${CLAUDE_PLUGIN_DATA}/
   },
 
   "circuit_breaker": {
-    "tasks_completed": 3,
     "consecutive_failures": 0,
     "runtime_minutes": 26
   },
@@ -586,7 +535,7 @@ ${CLAUDE_PLUGIN_DATA}/
     "by_model": {
       "opus": { "tokens": 30000, "usd": 0.45 },
       "sonnet": { "tokens": 80000, "usd": 0.35 },
-      "ollama/qwen2.5-coder:14b": { "tokens": 10000, "usd": 0.0 }
+      "haiku": { "tokens": 10000, "usd": 0.01 }
     }
   }
 }

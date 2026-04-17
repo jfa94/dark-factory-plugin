@@ -35,12 +35,12 @@ dark-factory-plugin/
 │   ├── pipeline-classify-task         # Complexity classification → model/turns config
 │   ├── pipeline-classify-risk         # File-path heuristics → risk tier
 │   ├── pipeline-build-prompt          # Template task metadata into structured prompt
-│   ├── pipeline-circuit-breaker       # Check max tasks/runtime/failures thresholds
+│   ├── pipeline-circuit-breaker       # Check max runtime + consecutive failures thresholds
 │   ├── pipeline-state                 # Read/write task status, dep satisfaction
 │   ├── pipeline-wait-pr               # Poll gh pr view until merged
 │   ├── pipeline-detect-reviewer       # Check Codex availability, return reviewer config
 │   ├── pipeline-parse-review          # Extract structured verdict from reviewer output
-│   ├── pipeline-model-router          # Rate limit check + Ollama availability → model config
+│   ├── pipeline-model-router          # Rate limit check → proceed / wait / end_gracefully routing
 │   ├── pipeline-quota-check           # API rate limit monitoring + exponential backoff
 │   ├── pipeline-coverage-gate         # Compare coverage before/after, block if decreased
 │   ├── pipeline-gh-comment            # Post comments + labels to GitHub issues
@@ -124,16 +124,16 @@ arguments:
 1. Read all current `userConfig` values from `plugin.json`
 2. Present grouped settings with current values:
    - **Autonomy:** `humanReviewLevel` (0–4)
-   - **Execution:** `execution.maxTurns*`, `maxParallelTasks`
-   - **Review:** `review.preferCodex`, cloud round caps (`review.routineRounds`/`featureRounds`/`securityRounds`), Ollama round caps
-   - **Quality:** `quality.holdoutPercent`, `quality.holdoutPassRate`, `quality.mutationScoreTarget`, `quality.mutationTestingTiers`, `quality.coverageMustNotDecrease`
-   - **Circuit breaker:** `maxTasks`, `maxRuntimeMinutes`, `maxConsecutiveFailures`
-   - **Local LLM:** `enabled`, `ollamaUrl`, `model`, `useLiteLlm`, `liteLlmUrl`
-   - **Dependencies:** `prMergeTimeout`, `pollInterval`
+   - **Execution:** `execution.defaultModel`, `execution.modelByTier.*`, `execution.maxTurns*`, `maxParallelTasks`
+   - **Review:** `review.preferCodex`, round caps (`review.routineRounds`/`featureRounds`/`securityRounds`)
+   - **Quality:** `quality.holdoutPercent`, `quality.holdoutPassRate`, `quality.mutationScoreTarget`, `quality.mutationTestingTiers`, `quality.coverageMustNotDecrease`, `quality.coverageRegressionTolerancePct`
+   - **Circuit breaker:** `maxRuntimeMinutes`, `maxConsecutiveFailures`
+   - **Safety:** `safety.writeBlockedPaths`, `safety.useTruffleHog`, `safety.allowedSecretPatterns`
+   - **Dependencies:** `dependencies.prMergeTimeout`, `dependencies.pollInterval`
+   - **Observability:** `observability.auditLog`, `observability.metricsExport`, `observability.metricsRetentionDays`
 3. Ask user what to change
 4. Validate changes (type checking, range checking for numeric fields)
-5. For `localLlm` changes: probe Ollama URL, check model presence, auto-pull if missing
-6. Write updated config and confirm
+5. Write updated config and confirm
 
 > **Note:** Claude Code's Bash tool has no TTY access, so interactive TUI scripts are not possible from plugin commands. This command uses the agent's conversational interface instead.
 
@@ -287,11 +287,6 @@ tools:
 - Simple (haiku-tier): `model: haiku, maxTurns: 40`
 - Medium (sonnet-tier): `model: sonnet, maxTurns: 60`
 - Complex (opus-tier): `model: opus, maxTurns: 80`
-
-When Ollama fallback is active (rate-limited + routine tier), orchestrator sets environment variables:
-
-- `ANTHROPIC_BASE_URL=http://localhost:11434/v1`
-- `ANTHROPIC_AUTH_TOKEN=dummy`
 
 **Key behaviors:**
 
@@ -660,15 +655,16 @@ Tier = max(file_tier, dep_tier). Ties broken upward.
 
 **Checks against state:**
 
-| Threshold                | Default | Configurable via                    |
-| ------------------------ | ------- | ----------------------------------- |
-| Max tasks                | 20      | `userConfig.maxTasks`               |
-| Max runtime              | 360 min | `userConfig.maxRuntimeMinutes`      |
-| Max consecutive failures | 3       | `userConfig.maxConsecutiveFailures` |
+| Threshold                | Default       | Configurable via                    |
+| ------------------------ | ------------- | ----------------------------------- |
+| Max runtime              | 0 (unlimited) | `userConfig.maxRuntimeMinutes`      |
+| Max consecutive failures | 5             | `userConfig.maxConsecutiveFailures` |
+
+`maxRuntimeMinutes=0` disables the wall-clock cap entirely. Only the consecutive-failures check runs.
 
 **Exit codes:** 0 = safe to proceed, 1 = circuit breaker tripped (reason on stderr)
 
-**Output:** JSON `{"tripped": false, "tasks_completed": 5, "runtime_minutes": 45, "consecutive_failures": 0}`
+**Output:** JSON `{"tripped": false, "runtime_minutes": 45, "consecutive_failures": 0}`
 
 ### `pipeline-state`
 
@@ -816,40 +812,31 @@ statusline JSON and writes it to `usage-cache.json`. No cold-start probe needed.
 
 ### `pipeline-model-router`
 
-**Replaces:** NEW (local LLM fallback)
+**Replaces:** NEW (rate-limit response routing)
 
-**Usage:** `pipeline-model-router --quota <pipeline-quota-check-output> --task-tier <tier>`
+**Usage:** `pipeline-model-router --quota <pipeline-quota-check-output> --tier <routine|feature|security>`
 
 **Behavior:**
 
-1. Parse `pipeline-quota-check` output (`five_hour` and `seven_day` status)
-2. Apply composed decision logic (both checks are independent; results compose):
-   - Both within limits → return Anthropic config
-   - 5h over, 7d within → check Ollama; if available return Ollama config; else return `action: wait`
-   - 7d over (regardless of 5h) → check Ollama; if available return Ollama config; else return `action: end_gracefully`
-   - Both over → 7d behavior takes precedence
-3. Ollama check: `curl -sf ${ollamaUrl}/api/tags` (reachable?) — resolve `ollamaUrl` from `localLlm.ollamaUrl` userConfig (default `http://localhost:11434`; supports remote URLs)
-4. Model validation (first use or re-validation after 24h, keyed by `${CLAUDE_PLUGIN_DATA}/ollama-validated`):
-   - Check if configured model is present in `/api/tags` response
-   - Missing → auto-pull: `POST ${ollamaUrl}/api/pull {"name": "<model>", "stream": false}` (executes on server; ~9GB for 14B; 30min timeout)
-   - Pull failure → treat as Ollama unavailable
-   - Write marker: `${CLAUDE_PLUGIN_DATA}/ollama-validated` with `{timestamp, model, url}`; re-validate after 24h
-5. When routing to Ollama, include elevated review cap for the tier (routine=15, feature=20, security=25)
+1. Parse `pipeline-quota-check` output (`five_hour` and `seven_day` over-threshold flags)
+2. Apply composed decision logic:
+   - Both within limits → `action: proceed` with tier-appropriate review cap
+   - 5h over, 7d within → `action: wait` with `wait_minutes` computed from the 5h `resets_at_epoch`
+   - 7d over (regardless of 5h) → `action: end_gracefully` (cannot wait out the 7-day window mid-run)
+3. Review cap comes from standard cloud caps (`review.routineRounds`/`featureRounds`/`securityRounds`)
+
+Subagent-based architecture means per-spawn provider routing is not possible (claude-code#38698), so this router does not attempt to switch providers when quota is exhausted — it either waits for the session to refresh or ends the run gracefully.
 
 **Output:**
 
 ```json
 {
-  "provider": "anthropic|ollama",
-  "model": "claude-sonnet-4-20250514|qwen2.5-coder:14b",
-  "base_url": null|"http://localhost:11434/v1",
+  "provider": "anthropic",
   "action": "proceed|wait|end_gracefully",
-  "trigger": "within_limits|five_hour|seven_day|both",
+  "trigger": "5h_over|7d_over",
   "review_cap": 4,
-  "quota": {
-    "five_hour": { "utilization": 0.45, "over_threshold": false },
-    "seven_day": { "utilization": 0.52, "over_threshold": false }
-  }
+  "tier": "feature",
+  "wait_minutes": 150
 }
 ```
 
@@ -909,7 +896,7 @@ statusline JSON and writes it to `usage-cache.json`. No cold-start probe needed.
   "cost": {
     "total_tokens": 450000,
     "estimated_usd": 2.35,
-    "models_used": { "opus": 2, "sonnet": 5, "ollama/qwen2.5-coder:14b": 1 }
+    "models_used": { "opus": 2, "sonnet": 5, "haiku": 1 }
   },
   "prs_created": ["#123", "#124", "#125"],
   "partial_tasks": ["task_3"],
@@ -1172,12 +1159,12 @@ All hooks are defined in a single JSON file. Each hook fires automatically for a
 
 **Tools exposed:**
 
-| Tool              | Parameters                                                            | Purpose                                                                                      |
-| ----------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `metrics_record`  | `run_id`, `event_type`, `data` (JSON)                                 | Record a metric event (task_start, task_end, review_round, quality_gate, model_switch, etc.) |
-| `metrics_query`   | `run_id` (optional), `event_type` (optional), `since` (ISO timestamp) | Query recorded metrics with filters                                                          |
-| `metrics_summary` | `run_id`                                                              | Aggregate summary: total tokens, cost, duration, model breakdown                             |
-| `metrics_export`  | `run_id`, `format` (`json`\|`csv`)                                    | Export metrics for external analysis                                                         |
+| Tool              | Parameters                                                            | Purpose                                                                                         |
+| ----------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `metrics_record`  | `run_id`, `event_type`, `data` (JSON)                                 | Record a metric event (task_start, task_end, review_round, quality_gate, circuit_breaker, etc.) |
+| `metrics_query`   | `run_id` (optional), `event_type` (optional), `since` (ISO timestamp) | Query recorded metrics with filters                                                             |
+| `metrics_summary` | `run_id`                                                              | Aggregate summary: total tokens, cost, duration, model breakdown                                |
+| `metrics_export`  | `run_id`, `format` (`json`\|`csv`)                                    | Export metrics for external analysis                                                            |
 
 **Event types:**
 
@@ -1187,8 +1174,7 @@ All hooks are defined in a single JSON file. Each hook fires automatically for a
 | `task_end`        | run_id, task_id, status, duration_ms, tokens_used, model                 |
 | `review_round`    | run_id, task_id, round, reviewer (codex/claude), verdict, findings_count |
 | `quality_gate`    | run_id, task_id, gate (coverage/mutation/holdout), passed, details       |
-| `model_switch`    | run_id, from_provider, to_provider, reason, task_id                      |
-| `circuit_breaker` | run_id, reason (max_tasks/max_runtime/max_failures), values              |
+| `circuit_breaker` | run_id, reason (max_runtime/max_failures), values                        |
 | `run_start`       | run_id, mode, issue_numbers, timestamp                                   |
 | `run_end`         | run_id, status, duration_ms, total_tokens, total_cost_usd                |
 
@@ -1203,22 +1189,18 @@ The PRD `02-quality-and-config.md` is the source of truth for defaults and range
 
 ```json
 {
-  "name": "dark-factory",
-  "version": "0.1.0",
+  "name": "factory",
+  "version": "0.3.0",
   "description": "Autonomous coding pipeline: converts GitHub PRD issues into merged pull requests with quality-first review gates",
   "userConfig": {
-    "humanReviewLevel": { "type": "number", "default": 1 },
-    "maxTasks": { "type": "number", "default": 20 },
-    "maxRuntimeMinutes": { "type": "number", "default": 360 },
-    "maxConsecutiveFailures": { "type": "number", "default": 3 },
+    "humanReviewLevel": { "type": "number", "default": 0 },
+    "maxRuntimeMinutes": { "type": "number", "default": 0 },
+    "maxConsecutiveFailures": { "type": "number", "default": 5 },
     "maxParallelTasks": { "type": "number", "default": 3 },
     "review.preferCodex": { "type": "boolean", "default": true },
     "review.routineRounds": { "type": "number", "default": 2 },
     "review.featureRounds": { "type": "number", "default": 4 },
     "review.securityRounds": { "type": "number", "default": 6 },
-    "review.ollamaRoutineRounds": { "type": "number", "default": 15 },
-    "review.ollamaFeatureRounds": { "type": "number", "default": 20 },
-    "review.ollamaSecurityRounds": { "type": "number", "default": 25 },
     "quality.holdoutPercent": { "type": "number", "default": 20 },
     "quality.holdoutPassRate": { "type": "number", "default": 80 },
     "quality.mutationScoreTarget": { "type": "number", "default": 80 },
@@ -1227,26 +1209,25 @@ The PRD `02-quality-and-config.md` is the source of truth for defaults and range
       "default": ["feature", "security"]
     },
     "quality.coverageMustNotDecrease": { "type": "boolean", "default": true },
+    "quality.coverageRegressionTolerancePct": {
+      "type": "number",
+      "default": 0.5
+    },
     "execution.defaultModel": { "type": "string", "default": "sonnet" },
+    "execution.modelByTier.simple": { "type": "string", "default": "haiku" },
+    "execution.modelByTier.medium": { "type": "string", "default": "sonnet" },
+    "execution.modelByTier.complex": { "type": "string", "default": "opus" },
     "execution.maxTurnsSimple": { "type": "number", "default": 40 },
     "execution.maxTurnsMedium": { "type": "number", "default": 60 },
     "execution.maxTurnsComplex": { "type": "number", "default": 80 },
-    "localLlm.enabled": { "type": "boolean", "default": false },
-    "localLlm.ollamaUrl": {
-      "type": "string",
-      "default": "http://localhost:11434"
-    },
-    "localLlm.model": { "type": "string", "default": "qwen2.5-coder:14b" },
-    "localLlm.useLiteLlm": { "type": "boolean", "default": false },
-    "localLlm.liteLlmUrl": {
-      "type": "string",
-      "default": "http://localhost:4000"
-    },
     "dependencies.prMergeTimeout": { "type": "number", "default": 45 },
     "dependencies.pollInterval": { "type": "number", "default": 60 },
     "observability.auditLog": { "type": "boolean", "default": true },
     "observability.metricsExport": { "type": "string", "default": "json" },
-    "observability.metricsRetentionDays": { "type": "number", "default": 90 }
+    "observability.metricsRetentionDays": { "type": "number", "default": 90 },
+    "safety.writeBlockedPaths": { "type": "array", "default": [] },
+    "safety.useTruffleHog": { "type": "boolean", "default": false },
+    "safety.allowedSecretPatterns": { "type": "array", "default": [] }
   }
 }
 ```
@@ -1301,7 +1282,7 @@ Complete mapping of every dark-factory Bash module to its plugin equivalent(s):
 | `repository.sh`             | `bin/pipeline-branch` + `branch-protection` hook                                  | Bin script + Hook          | Hook replaces agent-instruction branch protection   |
 | `multi-prd.sh`              | `bin/pipeline-fetch-prd` + orchestrator agent                                     | Bin script + Agent         | Script fetches, agent discovers issues              |
 | `lock.sh`                   | `bin/pipeline-lock` (secondary) + worktree isolation (primary)                    | Bin script + native        | Worktree isolation is the primary mechanism         |
-| `usage.sh`                  | `bin/pipeline-quota-check` + `bin/pipeline-model-router`                          | Bin scripts                | Adds Ollama fallback routing                        |
+| `usage.sh`                  | `bin/pipeline-quota-check` + `bin/pipeline-model-router`                          | Bin scripts                | Quota-aware wait / graceful-exit routing            |
 | `utils.sh`                  | `bin/pipeline-lib.sh`                                                             | Bin script (shared lib)    | Same utility functions, adapted for plugin env vars |
 | `validator.sh`              | `bin/pipeline-validate`                                                           | Bin script                 | Adds plugin-specific checks                         |
 | `scaffolding.sh`            | `bin/pipeline-init`                                                               | Bin script                 | Creates richer state structure                      |

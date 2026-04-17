@@ -8,27 +8,20 @@ This directory contains the follow-up work to address the comprehensive review f
 remediation/
 ├── README.md                  # This file
 ├── tasks.json                 # Flat task list with status — the single source of truth
-├── analysis/
-│   └── 15-turn-budget.md      # Turn budget structural analysis + recommendation
 └── plans/
     ├── 01-critical-safety-hardening.md
-    ├── 02-quota-rate-limiting.md
     ├── 03-spec-propagation.md
     ├── 04-production-safety-template.md
     ├── 05-branch-rebase-handling.md
     ├── 06-state-resume-correctness.md
     ├── 07-orchestrator-prompt-flow.md
-    ├── 08-config-schema-alignment.md
     ├── 09-hook-robustness.md
     ├── 10-scaffolding-parity.md
     ├── 11-validator-discovery.md
-    ├── 12-integration-tests.md
-    ├── 13-minor-cleanups.md
-    ├── 14-documentation-honesty.md
-    ├── 15-turn-budget-review.md
-    ├── 15-turn-budget-impl.md
-    └── 16-runnable-posture.md
+    └── 13-minor-cleanups.md
 ```
+
+Plans 02, 08, 12, 14, 15, 16 were removed in 0.3.0 along with the Ollama/LiteLLM local-LLM routing, `maxTasks`, and `execution.maxOrchestratorTurns` features they were written against. History lives in git.
 
 ## Task schema
 
@@ -90,8 +83,8 @@ status=done. Commit the work.
 Alternatively, tackle a whole plan in a single session:
 
 ```
-Read remediation/plans/02-quota-rate-limiting.md and the tasks in
-remediation/tasks.json with plan_id=02-quota-rate-limiting. Execute all
+Read remediation/plans/<plan_id>.md and the tasks in
+remediation/tasks.json with plan_id=<plan_id>. Execute all
 tasks in dependency order. After each task: write the regression tests,
 run the full test suite (`bin/test` or `bin/tests/*.sh`), update tasks.json,
 and commit.
@@ -117,13 +110,11 @@ Tests live in `bin/tests/*.sh`, organized by domain: `state.sh`, `spec-intake.sh
 
 Execute plans roughly in this order. Later plans depend on earlier ones.
 
-| Phase                        | Plans              | Why                                                                           |
-| ---------------------------- | ------------------ | ----------------------------------------------------------------------------- |
-| **P0 — Block any real run**  | 01, 02, 03, 04     | Injection, broken quota, broken spec handoff, missing safety template         |
-| **P1 — Feature parity**      | 05, 06, 07, 08, 09 | Branch handling, state/resume, orchestrator flow, config, hooks               |
-| **P1 — Test coverage**       | 12                 | Integration tests for all P0/P1 fixes                                         |
-| **P2 — Polish**              | 10, 11, 13, 14, 15 | Scaffolding, validator, cleanups, docs, turn-budget analysis                  |
-| **P0/P1 — Runnable posture** | 16                 | Safety hooks, config alignment, observability, scaffold command (post-review) |
+| Phase                       | Plans          | Why                                                     |
+| --------------------------- | -------------- | ------------------------------------------------------- |
+| **P0 — Block any real run** | 01, 03, 04     | Injection, broken spec handoff, missing safety template |
+| **P1 — Feature parity**     | 05, 06, 07, 09 | Branch handling, state/resume, orchestrator flow, hooks |
+| **P2 — Polish**             | 10, 11, 13     | Scaffolding, validator discovery, cleanups              |
 
 ## Finding reference
 

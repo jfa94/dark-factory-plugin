@@ -17,8 +17,6 @@ The [dark-factory](https://github.com/jfa94/dark-factory) autonomous coding pipe
 
 **No adversarial review** — the pipeline uses a single reviewer pass. Actor-Critic adversarial review (3-5 rounds) eliminates 90%+ issues at ~$0.20-$1.00/feature vs $50-$100/hr human review (Autonoma: 73% more issues caught, 71% fewer bugs, 42% less review time).
 
-**No rate limit resilience** — when Anthropic API rate limits are reached, the pipeline stalls entirely. Local LLM fallback via Ollama could keep routine tasks progressing.
-
 **Opportunity:** Claude Code's plugin system provides native primitives (agents, hooks, bin scripts, skills, commands, MCP servers) that map directly to pipeline concerns. A plugin re-implementation gains worktree isolation, background execution, un-bypassable hooks, skill injection, and persistent state — while maintaining the deterministic-first architecture that makes the Bash pipeline reliable.
 
 ---
@@ -29,7 +27,7 @@ The [dark-factory](https://github.com/jfa94/dark-factory) autonomous coding pipe
 
    **One-time setup (per project):**
    - Install the plugin from the marketplace
-   - Run `/factory:configure` to set project-specific thresholds (quota.pause_threshold, parallel.max_concurrent, review.spec_threshold)
+   - Run `/factory:configure` to set project-specific thresholds (maxParallelTasks, review.featureRounds, quality.mutationScoreTarget, etc.)
    - Create a GitHub label `prd` for PRD issues (or use file-based PRDs)
 
    **Per run:**
@@ -57,10 +55,9 @@ The [dark-factory](https://github.com/jfa94/dark-factory) autonomous coding pipe
    - Adversarial code review (Actor-Critic, multi-round, Codex-first with Claude Code fallback)
    - Risk-based task classification (routine/feature/security → tiered review intensity)
    - Holdout validation (StrongDM Attractor pattern)
-4. **Local LLM fallback** via Ollama when Anthropic rate limits are approached — keep routine tasks progressing instead of stalling
-5. **All agents bundled** — all pipeline agents ship inside the plugin. No user agent setup required. Leverage existing hooks (pre-commit, pre-push, dangerous-patterns, etc.) that fire automatically.
-6. **Observability and compliance** — tamper-evident audit logs, delegation chains, metrics (EU AI Act Aug 2026 readiness)
-7. **Resume capability** — pipeline recovers from interruptions by reading persisted state
+4. **All agents bundled** — all pipeline agents ship inside the plugin. No user agent setup required. Leverage existing hooks (pre-commit, pre-push, dangerous-patterns, etc.) that fire automatically.
+5. **Observability and compliance** — tamper-evident audit logs, delegation chains, metrics (EU AI Act Aug 2026 readiness)
+6. **Resume capability** — pipeline recovers from interruptions by reading persisted state
 
 ---
 
@@ -77,7 +74,7 @@ The [dark-factory](https://github.com/jfa94/dark-factory) autonomous coding pipe
 
 ### Solo Developer (primary)
 
-Runs the pipeline autonomously on personal projects. Wants to convert a PRD issue into a merged PR overnight. Values: speed, minimal supervision, cost efficiency. Uses local LLM fallback to stay within API budget.
+Runs the pipeline autonomously on personal projects. Wants to convert a PRD issue into a merged PR overnight. Values: speed, minimal supervision, cost efficiency.
 
 ### Team Lead
 
@@ -91,14 +88,14 @@ Works on repositories with auth, payment, or PII handling. Needs security-tier r
 
 ## Feature Parity Summary
 
-The plugin reimplements the bash pipeline with substantial enhancements. Of 80 features across 11 stages:
+The plugin reimplements the bash pipeline with substantial enhancements. Of 71 features across 10 stages:
 
 | Classification | Count | Description                                                     |
 | -------------- | ----- | --------------------------------------------------------------- |
 | Preserved      | 26    | Same behavior as bash pipeline                                  |
 | Enhanced       | 15    | Same behavior + new capabilities                                |
 | Rewritten      | 2     | Reimplemented with different mechanism                          |
-| New            | 36    | No bash equivalent                                              |
+| New            | 27    | No bash equivalent                                              |
 | Deprecated     | 1     | Directory locking — replaced by worktree isolation (Decision 8) |
 
 | Stage                     | Preserved | Enhanced | Rewritten | New | Deprecated |
@@ -112,8 +109,7 @@ The plugin reimplements the bash pipeline with substantial enhancements. Of 80 f
 | G: Dependency Resolution  | 3         | —        | —         | —   | —          |
 | H: Completion             | 3         | 1        | —         | 3   | —          |
 | I: Safety & Observability | 3         | 3        | 1         | 3   | 1          |
-| J: Local LLM Fallback     | —         | —        | —         | 9   | —          |
-| K: Configuration          | 2         | 3        | —         | 3   | —          |
+| J: Configuration          | 2         | 3        | —         | 3   | —          |
 
 The deterministic-first ratio is 3.5:1 (21 bin scripts + 4 hooks vs 6 agents), exceeding the 3:1 target.
 
@@ -214,34 +210,19 @@ The deterministic-first ratio is 3.5:1 (21 bin scripts + 4 hooks vs 6 agents), e
 
 ### Stage I: Safety & Observability
 
-| Feature                   | Existing Behavior (Bash)                   | Plugin Primitive                                                   | Enhancements                                                                                            |
-| ------------------------- | ------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| **Circuit breakers**      | 20 tasks / 360min / 3 consecutive failures | `bin/pipeline-circuit-breaker` script                              | Same thresholds, configurable via userConfig                                                            |
-| **Directory locking**     | SHA256 lock file (`lock.sh`)               | ELIMINATED — worktree isolation                                    | Better: true isolation vs mutual exclusion                                                              |
-| **5h usage pacing**       | 90% cap, polling                           | `bin/pipeline-quota-check` script                                  | Reads `unified-5h-utilization` header; hourly thresholds 20/40/60/80/90%; Ollama fallback or wait       |
-| **7d budget enforcement** | Not in Bash pipeline                       | `bin/pipeline-quota-check` script                                  | NEW: reads `unified-7d-utilization` header; daily thresholds 14.2–95%; Ollama fallback or graceful exit |
-| **Resume capability**     | Reads state files on restart               | `pipeline-state` + orchestrator `--resume` flag                    | Same pattern, richer state schema                                                                       |
-| **Git safety**            | Branch protection checks                   | `branch-protection` hook (PreToolUse)                              | Un-bypassable hook vs agent instruction                                                                 |
-| **Audit logging**         | Not in Bash pipeline                       | `run-tracker` hook (PostToolUse)                                   | NEW: every tool use logged to `audit.jsonl`. EU AI Act compliance.                                      |
-| **Metrics collection**    | Not in Bash pipeline                       | `pipeline-metrics` MCP server                                      | NEW: token counts, durations, model usage, quality gate results, cost                                   |
-| **Run state consistency** | Basic state checks                         | `stop-gate` hook (Stop) + `subagent-stop-gate` hook (SubagentStop) | NEW: validates state on session end, marks interrupted runs                                             |
+| Feature                   | Existing Behavior (Bash)                   | Plugin Primitive                                                   | Enhancements                                                                                                  |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| **Circuit breakers**      | 20 tasks / 360min / 3 consecutive failures | `bin/pipeline-circuit-breaker` script                              | Same thresholds, configurable via userConfig                                                                  |
+| **Directory locking**     | SHA256 lock file (`lock.sh`)               | ELIMINATED — worktree isolation                                    | Better: true isolation vs mutual exclusion                                                                    |
+| **5h usage pacing**       | 90% cap, polling                           | `bin/pipeline-quota-check` script                                  | Reads `unified-5h-utilization` header; hourly thresholds 20/40/60/80/90%; wait for window reset when exceeded |
+| **7d budget enforcement** | Not in Bash pipeline                       | `bin/pipeline-quota-check` script                                  | NEW: reads `unified-7d-utilization` header; daily thresholds 14.2–95%; graceful exit when exceeded            |
+| **Resume capability**     | Reads state files on restart               | `pipeline-state` + orchestrator `--resume` flag                    | Same pattern, richer state schema                                                                             |
+| **Git safety**            | Branch protection checks                   | `branch-protection` hook (PreToolUse)                              | Un-bypassable hook vs agent instruction                                                                       |
+| **Audit logging**         | Not in Bash pipeline                       | `run-tracker` hook (PostToolUse)                                   | NEW: every tool use logged to `audit.jsonl`. EU AI Act compliance.                                            |
+| **Metrics collection**    | Not in Bash pipeline                       | `pipeline-metrics` MCP server                                      | NEW: token counts, durations, model usage, quality gate results, cost                                         |
+| **Run state consistency** | Basic state checks                         | `stop-gate` hook (Stop) + `subagent-stop-gate` hook (SubagentStop) | NEW: validates state on session end, marks interrupted runs                                                   |
 
-### Stage J: Local LLM Fallback
-
-| Feature                       | Existing Behavior (Bash) | Plugin Primitive                                                       | Enhancements                                                                                             |
-| ----------------------------- | ------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **5h rate detection**         | 90% cap polling          | `bin/pipeline-quota-check` reads `unified-5h-utilization` header       | NEW: proactive header-based detection (no OAuth API call); hourly thresholds 20–90%                      |
-| **7d budget detection**       | Not in Bash pipeline     | `bin/pipeline-quota-check` reads `unified-7d-utilization` header       | NEW: separate daily threshold check; graceful exit when budget pacing exceeded                           |
-| **Ollama availability check** | Not in Bash pipeline     | `bin/pipeline-model-router` checks `curl -sf localhost:11434/api/tags` | NEW: verify Ollama running + model loaded                                                                |
-| **Model routing**             | Not in Bash pipeline     | `bin/pipeline-model-router` consumes quota-check output                | NEW: routes all tiers to Ollama when either limit triggers (5h=wait fallback, 7d=graceful-exit fallback) |
-| **Elevated review caps**      | Not in Bash pipeline     | Orchestrator uses tier-specific Ollama caps (15/20/25 rounds)          | NEW: stricter review compensates for lower local model quality                                           |
-| **Quality gate parity**       | Not in Bash pipeline     | Same quality gates regardless of model provider                        | NEW: local model output must pass identical gates                                                        |
-| **Model recommendations**     | Not in Bash pipeline     | userConfig.localLlm.model                                              | NEW: default Qwen 2.5-Coder 14B (16GB min, 9GB Q4_K_M); also: 7B (8GB), 32B (24GB+)                      |
-| **Remote Ollama support**     | Not in Bash pipeline     | userConfig.localLlm.ollamaUrl                                          | NEW: point to any Ollama server on LAN (server: `OLLAMA_HOST=0.0.0.0:11434`)                             |
-| **Model auto-pull**           | Not in Bash pipeline     | `bin/pipeline-model-router` calls `/api/pull` on server                | NEW: auto-downloads model if not present; works for local and remote servers                             |
-| **LiteLLM proxy**             | Not in Bash pipeline     | Optional advanced config                                               | NEW: unified gateway for multi-provider routing + cost tracking                                          |
-
-### Stage K: Configuration
+### Stage J: Configuration
 
 | Feature                         | Existing Behavior (Bash)    | Plugin Primitive                               | Enhancements                                                                                                                                                                                                                                                              |
 | ------------------------------- | --------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

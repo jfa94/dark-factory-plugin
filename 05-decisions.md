@@ -185,23 +185,14 @@ Response headers require a layer to capture and write `last-headers.json` after 
 
 ---
 
-### Decision 11: Ollama Configuration, Remote Support & Auto-Pull
+### Decision 11: Configuration via Conversational `/factory:configure`
 
-**Choice:** Remote Ollama is supported via `localLlm.ollamaUrl` (existing key). Model validation and auto-pull are integrated into `pipeline-model-router`. Configuration uses a conversational `/factory:configure` agent command covering all settings.
+**Choice:** Configuration uses a conversational `/factory:configure` agent command covering all `userConfig` settings.
 
-**Default model:** `qwen2.5-coder:14b` — 9GB disk, ~10-12GB VRAM at Q4_K_M quantization. **16GB minimum GPU** to allow headroom for KV cache and OS overhead. The "14B model needs 16GB" concern conflates unquantized weight size (~28GB at FP16) with the actual Q4_K_M size. Ollama uses Q4_K_M by default; the model fits comfortably on 16GB without a context cap.
+**Why conversational, not a TUI:**
+Claude Code's Bash tool has no TTY access — interactive scripts (gum, fzf, dialog) cannot receive keyboard input when invoked by an agent. A standalone TUI script would require the user to run it outside Claude Code. The conversational approach works natively within the plugin without extra dependencies.
 
-**Why auto-pull is in `pipeline-model-router`, not a separate script:**
-Model validation is part of the routing decision — if the model isn't available, Ollama effectively isn't available. Bundling the check in the router keeps the logic in one place and avoids an extra bin script.
-
-**Why auto-pull fires on the server (even for remote):**
-`POST /api/pull` triggers download on the Ollama server, not the client. This is correct behavior for remote setups — the client machine doesn't need 9GB of disk space. Documented explicitly to avoid confusion.
-
-**Why `configure` is conversational, not a TUI:**
-Claude Code's Bash tool has no TTY access — interactive scripts (gum, fzf, dialog) cannot receive keyboard input when invoked by an agent. A standalone TUI script would require the user to run it outside Claude Code. The conversational approach works natively within the plugin without extra dependencies, and covers all `userConfig` settings, not just localLlm.
-
-**Security for remote Ollama:**
-Ollama has no built-in auth. The plugin documents LAN-only exposure and recommends a reverse proxy for access control if needed. No attempt is made to abstract this — it's the user's infrastructure concern.
+**Historical note:** An earlier design (0.1.x) included Ollama/LiteLLM local-LLM fallback with auto-pull and remote server support. That feature was removed in 0.3.0 because Claude Code's `Agent()` subagent framework does not expose per-spawn provider routing (claude-code#38698); without that, local-model routing cannot be enforced from the orchestrator.
 
 ---
 
@@ -364,9 +355,7 @@ The spec directory is scaffolding for the pipeline's execution, not a permanent 
 
 ### Constraint: Turn Budget
 
-**Status:** Resolved (Plan 15 analysis, 2026-04-12). See `remediation/analysis/15-turn-budget.md`.
-
-**Finding:** The 200-turn concern was based on a stale spec value. The actual orchestrator uses `maxTurns: 9999`. Subagent turns don't count against the parent — each Agent() call costs ~2 orchestrator turns regardless of subagent complexity. A 20-task pipeline consumes ~254-334 orchestrator turns, well within the 9999 limit. The circuit breaker's `maxTasks: 20` is the effective pipeline size limit, not turn count. Resume capability (Decision 7) handles any interruption.
+**Status:** Resolved (Plan 15 analysis, 2026-04-12; superseded by 0.2.0 cap removal). The orchestrator uses `maxTurns: 9999`. Subagent turns don't count against the parent — each `Agent()` call costs ~2 orchestrator turns regardless of subagent complexity. A 20-task pipeline consumes ~254-334 orchestrator turns, well within the 9999 limit. The earlier `maxTasks` and `execution.maxOrchestratorTurns` circuit breakers were removed in 0.2.0 (long-running autonomous pipelines should only trip on consecutive failures or an opt-in wall-clock cap); resume capability (Decision 7) handles any interruption.
 
 ---
 
@@ -416,37 +405,17 @@ Both `${CLAUDE_PLUGIN_DATA}` and `${CLAUDE_PLUGIN_ROOT}` are injected by the plu
 
 **Mitigation:** `pipeline-detect-reviewer` checks Codex availability at runtime. If unavailable, Claude Code's reviewer with adversarial posture is used. No pipeline functionality depends exclusively on Codex.
 
-### 6. Ollama Model Routing via Environment Variables
+### 6. (Resolved) Per-Spawn Model Routing — Local LLM Fallback Removed
 
-**Status:** Design validated, runtime untested
+**Resolved: 2026-04-15** — feature removed.
 
-**Question:** Can `ANTHROPIC_BASE_URL` be overridden per-subagent spawn, or is it process-global?
+Claude Code's `Agent()` subagent framework does not expose per-spawn `ANTHROPIC_BASE_URL` overrides (claude-code#38698). Without that, local-model fallback cannot be enforced from the orchestrator. The Ollama/LiteLLM routing was removed in 0.3.0; rate-limit detection now ends gracefully or waits for the 5h window to reset instead of switching providers.
 
-- Options considered: (A) Per-spawn env override, (B) LiteLLM proxy as intermediary
-- Current lean: A — `pipeline-model-router` outputs `base_url` for the orchestrator to pass when spawning task-executor
-- Blocker for: Local LLM fallback (Stage J). Without per-spawn override, LiteLLM proxy is required
+### 7. Turn Budget Sufficiency
 
-**Mitigation:** LiteLLM proxy fallback documented in Decision 11. Auto-pull and availability checking work regardless of routing mechanism.
+**Resolved: 2026-04-12** (Plan 15, consolidated analysis; superseded by 0.2.0 cap removal)
 
-### 7. Local Model Tool-Use Compatibility
-
-**Status:** Untested — requires live Claude Code + Ollama session
-
-**Question:** Does Claude Code's agent framework work correctly with Ollama models (non-Anthropic tool-use format)?
-
-- Options considered: (A) Full agent compatibility via OpenAI-format tool-use, (B) Bash-only invocation for local models
-- Current lean: A — Ollama's OpenAI-compatible API supports function calling for Qwen 2.5+ and Llama 3.1+
-- Blocker for: Local LLM fallback quality. Without tool-use, local models limited to generation tasks
-
-**Mitigation:** Quality gates apply identically regardless of model provider. Even without tool-use, code generation tasks can proceed; review and validation remain on Claude.
-
-### 8. Turn Budget Sufficiency
-
-**Resolved: 2026-04-12** (Plan 15, consolidated analysis)
-
-The 200-turn concern was based on a stale spec value (`03-components.md` said 200; actual orchestrator uses `maxTurns: 9999`). Subagent turns don't count against the parent orchestrator. A 20-task pipeline consumes ~254-334 orchestrator turns — well within 9999. The circuit breaker's `maxTasks: 20` is the effective pipeline size limit.
-
-Full analysis: `remediation/analysis/15-turn-budget.md`. Future scaling (>20 tasks): checkpoint-resume with turn tracking (Option E in analysis).
+The orchestrator uses `maxTurns: 9999`. Subagent turns don't count against the parent. A 20-task pipeline consumes ~254-334 orchestrator turns — well within 9999. The `maxTasks` and `execution.maxOrchestratorTurns` circuit breakers were removed in 0.2.0; the `maxConsecutiveFailures` brake (default 5) and the opt-in wall-clock `maxRuntimeMinutes` cap remain as the only orchestrator-level brakes.
 
 ---
 
@@ -455,9 +424,8 @@ Full analysis: `remediation/analysis/15-turn-budget.md`. Future scaling (>20 tas
 | Risk                                                | Likelihood | Impact                                         | Mitigation                                                |
 | --------------------------------------------------- | ---------- | ---------------------------------------------- | --------------------------------------------------------- |
 | Orchestrator ignores script delegation instructions | Medium     | High — unreliable state                        | Circuit breakers + state persistence + resume             |
-| Turn budget exceeded for large pipelines            | Low        | Medium — pipeline stops mid-run                | maxTurns: 9999 + resume capability (OQ#8 resolved)        |
+| Turn budget exceeded for large pipelines            | Low        | Medium — pipeline stops mid-run                | maxTurns: 9999 + resume capability (OQ#7 resolved)        |
 | Codex plugin not available/stable                   | Medium     | Low — fallback is fully functional             | Claude Code reviewer with review-protocol skill           |
-| Ollama model quality insufficient                   | Medium     | Low — quality gates catch bad output           | Tier restrictions + unchanged quality gates               |
 | Cross-boundary agent spawning doesn't work          | Low        | High — must copy all agents into plugin        | Test early; fallback: copy agent definitions              |
 | Rate limit detection via headers unreliable         | Low        | Medium — reactive (429) instead of proactive   | Catch 429 errors as secondary detection                   |
 | User modifies existing agent breaking pipeline      | Low        | Medium — parse-review or spec validation fails | Best-effort parsing with fallback patterns                |

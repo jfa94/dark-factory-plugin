@@ -276,8 +276,9 @@ git add -A
 git diff --cached --quiet || git commit -q -m "restore"
 output=$(pipeline-validate --strict --no-clean-check 2>/dev/null)
 check_count=$(echo "$output" | jq '.checks | length')
-# 5 base + 5 optional agents = 10
-assert_eq "strict mode adds optional checks" "10" "$check_count"
+# 5 base + 1 optional agent (scout; architecture-reviewer, security-reviewer,
+# test-writer, scribe are now bundled in agents/) = 6
+assert_eq "strict mode adds optional checks" "6" "$check_count"
 
 echo ""
 echo "=== pipeline-gh-comment ==="

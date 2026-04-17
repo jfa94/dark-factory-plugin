@@ -60,7 +60,7 @@ PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
 assert_file_exists "plugin.json exists" "$PLUGIN_JSON"
 assert_valid_json "plugin.json is valid JSON" "$PLUGIN_JSON"
 
-# Every userConfig key documented in 02-quality-and-config.md must be present.
+# Every userConfig key documented in docs/reference/configuration.md must be present.
 for key in \
   maxRuntimeMinutes \
   maxConsecutiveFailures \
@@ -281,19 +281,19 @@ assert_contains "configure.md gives a string-valued example (execution.defaultMo
 assert_contains "configure.md gives a numeric example (review.routineRounds)" \
   'review.routineRounds' "$CONFIGURE"
 
-# task_08_04: plugin.json keys must match the canonical names used in the PRD.
-# Both directions: every key in plugin.json must appear in 02-quality-and-config.md,
-# and every key documented in the PRD must exist in plugin.json. (We restrict to
-# the user-config schema section, not prose mentions.)
-PRD="$PLUGIN_ROOT/02-quality-and-config.md"
-assert_file_exists "PRD 02-quality-and-config.md exists" "$PRD"
+# task_08_04: plugin.json keys must match the canonical names documented in the
+# configuration reference. Every key in plugin.json must appear as an `### key`
+# heading in docs/reference/configuration.md (restricted to the schema section,
+# not prose mentions).
+CONFIG_REF="$PLUGIN_ROOT/docs/reference/configuration.md"
+assert_file_exists "docs/reference/configuration.md exists" "$CONFIG_REF"
 
 while IFS= read -r key; do
-  if grep -qF "$key:" "$PRD"; then
-    echo "  PASS: PRD documents userConfig key $key"
+  if grep -qE "^### ${key//./\\.}\$" "$CONFIG_REF"; then
+    echo "  PASS: configuration.md documents userConfig key $key"
     pass=$((pass + 1))
   else
-    echo "  FAIL: PRD missing userConfig key $key"
+    echo "  FAIL: configuration.md missing userConfig key $key"
     fail=$((fail + 1))
   fi
 done < <(jq -r '.userConfig | keys[]' "$PLUGIN_JSON")
@@ -303,7 +303,6 @@ done < <(jq -r '.userConfig | keys[]' "$PLUGIN_JSON")
 # describing the migration itself).
 for legacy in 'circuitBreaker.maxTasks' 'parallel.maxConcurrent' 'holdout.percent' 'mutationTesting.scoreThreshold'; do
   hits=$(grep -RIl --exclude-dir=remediation --exclude-dir=.git \
-    --exclude='03-components.md' --exclude='01-prd.md' \
     --exclude-dir=node_modules \
     -F "$legacy" "$PLUGIN_ROOT" 2>/dev/null | grep -v 'tests/config.sh' || true)
   if [[ -z "$hits" ]]; then

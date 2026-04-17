@@ -202,10 +202,9 @@ test_resume_after_crash() {
 #      parallel group, each carrying its own task_id and content.
 #  (b) the underlying spawn primitive (background processes) actually runs
 #      concurrently — a 3x parallel sleep finishes in ~one sleep, not 3x.
-# Note: a bash test cannot exercise the Claude Code Agent tool directly.
-# Open Question #2 from 05-decisions.md is partially answered: the OS-level
-# parallelism is verified; full Agent-tool concurrency must still be probed
-# inside a real Claude Code session.
+# Note: a bash test cannot exercise the Claude Code Agent tool directly. OS-
+# level parallelism is verified here; full Agent-tool concurrency must still be
+# probed inside a real Claude Code session.
 # ---------------------------------------------------------------------------
 test_parallel_spawn() {
   new_scenario "parallel-spawn"

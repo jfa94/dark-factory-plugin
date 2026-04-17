@@ -58,7 +58,7 @@ The [dark-factory](https://github.com/jfa94/dark-factory) autonomous coding pipe
    - Risk-based task classification (routine/feature/security → tiered review intensity)
    - Holdout validation (StrongDM Attractor pattern)
 4. **Local LLM fallback** via Ollama when Anthropic rate limits are approached — keep routine tasks progressing instead of stalling
-5. **Reuse existing `.claude/` setup** — spawn the user's spec-reviewer, code-reviewer, and scout agents directly. Bundle architecture-reviewer, security-reviewer, test-writer, and scribe inside the plugin. Leverage existing hooks (pre-commit, pre-push, dangerous-patterns, etc.) that fire automatically.
+5. **All agents bundled** — all pipeline agents ship inside the plugin. No user agent setup required. Leverage existing hooks (pre-commit, pre-push, dangerous-patterns, etc.) that fire automatically.
 6. **Observability and compliance** — tamper-evident audit logs, delegation chains, metrics (EU AI Act Aug 2026 readiness)
 7. **Resume capability** — pipeline recovers from interruptions by reading persisted state
 
@@ -138,7 +138,7 @@ The deterministic-first ratio is 3.5:1 (21 bin scripts + 4 hooks vs 6 agents), e
 | **PRD → spec conversion**  | `spec-gen.sh` invokes Claude with prd-to-spec skill | `spec-generator` agent (opus, 40 turns, worktree) with `prd-to-spec` skill injected | Native skill injection; worktree isolation                                                            |
 | **Autonomous mode**        | Skips interactive prompts                           | Skill step 5 (quiz user) skipped via agent instructions                             | Same behavior                                                                                         |
 | **Spec output validation** | Basic file existence checks                         | `bin/pipeline-validate-spec` script                                                 | Structured validation (file exists, non-empty, valid format)                                          |
-| **Spec review loop**       | Calls spec-reviewer, retries up to 5x               | Spawns existing `spec-reviewer` agent (score ≥54/60, PASS/NEEDS_REVISION)           | Increased turns (40), threshold (90%), and retries (5)                                                |
+| **Spec review loop**       | Calls spec-reviewer, retries up to 5x               | Spawns bundled `spec-reviewer` agent (score ≥54/60, PASS/NEEDS_REVISION)            | Increased turns (40), threshold (90%), and retries (5)                                                |
 | **tasks.json generation**  | Part of prd-to-spec output                          | Same — embedded in prd-to-spec skill                                                | Same behavior                                                                                         |
 | **Transient error retry**  | Not in Bash pipeline                                | spec-generator agent retries on 500/502/503/529                                     | NEW: up to 3 attempts with exponential backoff (15s × attempt); separate from review iteration budget |
 | **Spec failure reporting** | Not in Bash pipeline                                | `bin/pipeline-gh-comment` posts to GitHub issue                                     | NEW: on spec failure, post comment + add `needs-manual-spec` label to issue                           |

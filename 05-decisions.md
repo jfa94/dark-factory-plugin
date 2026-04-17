@@ -46,16 +46,16 @@ State management, circuit breakers, DAG traversal, and classification MUST be 10
 
 ---
 
-### Decision 3: Reuse Existing Agents by Reference
+### Decision 3: Bundle All Pipeline Agents
 
-**Choice:** Bundle architecture-reviewer, security-reviewer, test-writer, and scribe directly inside the plugin's `agents/` directory. Spawn the user's existing agents (spec-reviewer, code-reviewer, scout) by name via the Agent tool for agents that benefit from user customization.
+**Choice:** All pipeline agents ship inside the plugin's `agents/` directory. No user agent setup required.
 
 **Alternatives considered:**
 
-- **Bundle all agents:** Used for architecture-reviewer, security-reviewer, test-writer, scribe — these have fixed interfaces and no user customization benefit.
-- **Reuse all by reference:** Used for spec-reviewer, code-reviewer, scout — user improvements propagate automatically and these benefit from per-project customization.
+- **Reuse by reference:** User improvements propagate automatically — but pipeline behavior becomes unpredictable when user modifies agent output format, and documented features silently degrade when agents are missing.
+- **Bundle all agents (chosen):** Fixed interfaces, predictable behavior, zero setup. Plugin ships as a complete unit.
 
-**Trade-off:** Bundled agents pin behavior to the plugin version. Mitigated by: the bundled agents have stable, spec-driven output formats enforced by the `review-protocol` skill and structured output schemas.
+**Trade-off:** Bundled agents pin behavior to the plugin version. Mitigated by: output formats are spec-driven and enforced by the `review-protocol` skill and structured schemas.
 
 ---
 
@@ -378,7 +378,7 @@ The following questions were raised during design and confirmed through implemen
 
 **Validated: 2026-04-08** (Plan 03, spec propagation testing)
 
-Plugin agents can spawn agents by name via the Agent tool's `subagent_type` parameter. Claude Code resolves names against plugin-local `agents/` first, then the user's `.claude/agents/`. The orchestrator spawns `spec-reviewer`, `code-reviewer`, and `scout` from user agents; `architecture-reviewer`, `security-reviewer`, `test-writer`, and `scribe` from bundled plugin agents. See Decision 3.
+Plugin agents can spawn agents by name via the Agent tool's `subagent_type` parameter. Claude Code resolves names against plugin-local `agents/` first. All pipeline agents are bundled — spawning by name resolves to plugin-local files without user setup. See Decision 3.
 
 ### 2. Background Agent Result Reading
 

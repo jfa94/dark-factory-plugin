@@ -231,16 +231,41 @@ Incrementally updates `/docs` after each pipeline run using the Diátaxis framew
 - Rewrites the last-documented marker to current HEAD on completion
 - Spawned as the final enforced step of every pipeline run, before `pipeline-cleanup`
 
----
+### spec-reviewer
 
-## Existing Agents (Reused by Reference)
+Validates spec output before task execution begins.
 
-These agents are defined in the user's `.claude/agents/` directory. The plugin spawns them by name via the Agent tool.
+| Property  | Value            |
+| --------- | ---------------- |
+| Model     | sonnet           |
+| Max Turns | 20               |
+| Tools     | Read, Grep, Glob |
 
-| Agent           | Spawned By     | Purpose                                     |
-| --------------- | -------------- | ------------------------------------------- |
-| `spec-reviewer` | spec-generator | Validates spec quality (score >= 54/60)     |
-| `scout`         | spec-generator | Codebase exploration during spec generation |
+**Key behaviors:**
+
+- Reviews with fresh context — did not write the spec
+- Scores across 6 dimensions: granularity, deps, criteria, tests, vertical slices, alignment
+- Returns structured PASS/NEEDS_REVISION verdict (score >= 54/60 required)
+- Spawned by spec-generator; failure triggers regeneration (max 5 iterations)
+
+### code-reviewer
+
+Fresh-context code review with semi-formal reasoning and structured findings.
+
+| Property  | Value            |
+| --------- | ---------------- |
+| Model     | sonnet           |
+| Max Turns | 25               |
+| Skills    | review-protocol  |
+| Tools     | Read, Grep, Glob |
+
+**Key behaviors:**
+
+- Reviews cold (zero implementation context)
+- Uses evidence-first grounding: every finding quotes the code
+- Signal-over-noise filtering: scores likelihood × impact, drops low-signal findings
+- Output is structured and parseable by `pipeline-parse-review`
+- Spawned for security-tier tasks alongside task-reviewer
 
 ---
 

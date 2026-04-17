@@ -30,7 +30,7 @@
 │    ├── transient errors (500/502/503/529): retry up to 3× (15s backoff) │
 │    └── pipeline-validate-spec checks output (max 5 retries on failure)  │
 │                                                                         │
-│  orchestrator spawns spec-reviewer agent (existing, 40 turns)           │
+│  orchestrator spawns spec-reviewer agent (bundled, 40 turns)            │
 │    ├── scores on 6 dimensions (max 60)                                  │
 │    ├── if score < 54 → NEEDS_REVISION → regenerate (max 5 iterations)   │
 │    └── if score ≥ 54 → PASS → continue                                 │
@@ -429,7 +429,7 @@ Orchestrator Agent (judgment + control flow)
         ├── spec-generator (code generation)
         ├── task-executor (code generation)
         ├── task-reviewer (code review)
-        ├── spec-reviewer (spec quality — user-provided)
+        ├── spec-reviewer (spec quality — bundled)
         ├── security-reviewer (security review — bundled)
         ├── architecture-reviewer (architecture review — bundled)
         ├── test-writer (mutation killing — bundled)

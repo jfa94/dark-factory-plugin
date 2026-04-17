@@ -392,22 +392,16 @@ One paragraph summary of overall assessment.
 
 ## Existing Agents Reused Directly
 
-These agents live in the user's `.claude/agents/` directory. The plugin's orchestrator spawns them by name via the Agent tool.
+All pipeline agents are **bundled inside the plugin** (`agents/` directory). No user agent setup required.
 
-| Agent           | Spawned By              | Purpose in Pipeline                                                                                                                      | Config           |
-| --------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `spec-reviewer` | spec-generator          | Validates spec quality (score ≥54/60, PASS/NEEDS_REVISION). 6 dimensions: granularity, deps, criteria, tests, vertical slices, alignment | sonnet, 40 turns |
-| `code-reviewer` | orchestrator (fallback) | General code review when Codex unavailable. review-protocol skill injected for adversarial posture                                       | sonnet, 20 turns |
-| `scout`         | spec-generator          | Codebase exploration during spec generation. Maps architecture, patterns, dependencies                                                   | haiku, varies    |
-
-The following agents are **bundled inside the plugin** (`agents/` directory) and require no user setup:
-
-| Agent                   | Spawned By   | Purpose in Pipeline                                                                              |
-| ----------------------- | ------------ | ------------------------------------------------------------------------------------------------ |
-| `architecture-reviewer` | orchestrator | Extra review pass for feature/security-tier tasks. Module boundaries, coupling, AI anti-patterns |
-| `security-reviewer`     | orchestrator | Security-tier tasks only. OWASP Top 10, secrets exposure, AI-specific insecure defaults          |
-| `test-writer`           | orchestrator | Kills mutation testing survivors. Spawned when mutation score < 80% threshold                    |
-| `scribe`                | orchestrator | Post-pipeline docs update. Enforced final step before pipeline-cleanup                           |
+| Agent                   | Spawned By     | Purpose in Pipeline                                                                                                                      | Config           |
+| ----------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `spec-reviewer`         | spec-generator | Validates spec quality (score ≥54/60, PASS/NEEDS_REVISION). 6 dimensions: granularity, deps, criteria, tests, vertical slices, alignment | sonnet, 20 turns |
+| `code-reviewer`         | orchestrator   | Fresh-context code review; evidence-first findings. Spawned for security-tier tasks alongside task-reviewer                              | sonnet, 25 turns |
+| `architecture-reviewer` | orchestrator   | Extra review pass for feature/security-tier tasks. Module boundaries, coupling, AI anti-patterns                                         | sonnet, 20 turns |
+| `security-reviewer`     | orchestrator   | Security-tier tasks only. OWASP Top 10, secrets exposure, AI-specific insecure defaults                                                  | sonnet, 20 turns |
+| `test-writer`           | orchestrator   | Kills mutation testing survivors. Spawned when mutation score < 80% threshold                                                            | sonnet, 20 turns |
+| `scribe`                | orchestrator   | Post-pipeline docs update. Enforced final step before pipeline-cleanup                                                                   | sonnet, varies   |
 
 ---
 
@@ -451,10 +445,8 @@ Shared Bash library sourced by all other scripts. Not executable directly.
 1. Git remote configured (`git remote get-url origin`)
 2. Clean working tree (no uncommitted changes, unless `--no-clean-check`)
 3. `gh` CLI installed and authenticated (`gh auth status`)
-4. Required agents exist in `.claude/agents/` (spec-reviewer, code-reviewer)
-5. Required skills exist in `.claude/skills/` (prd-to-spec)
-6. `${CLAUDE_PLUGIN_DATA}` directory writable
-7. `--strict`: also checks optional user-provided agents (scout)
+4. Required skills exist in `.claude/skills/` (prd-to-spec)
+5. `${CLAUDE_PLUGIN_DATA}` directory writable
 
 **Output:** JSON `{"valid": true, "checks": [{"name": "...", "status": "pass|fail", "detail": "..."}]}`
 

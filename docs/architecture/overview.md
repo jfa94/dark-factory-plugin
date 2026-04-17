@@ -130,10 +130,8 @@ For each task in execution order:
 │ Prompt building │      │   reviewer      │      │                 │
 └─────────────────┘      │ test-writer     │      └─────────────────┘
                          │ scribe          │
-                         ├─────────────────┤
-                         │ User-provided:  │
                          │ spec-reviewer   │
-                         │ scout           │
+                         │ code-reviewer   │
                          └─────────────────┘
 ```
 

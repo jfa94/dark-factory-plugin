@@ -37,17 +37,17 @@ State management, circuit breakers, DAG traversal, and classification MUST be 10
 
 ---
 
-## Decision 3: Reuse Existing Agents by Reference
+## Decision 3: Bundle All Pipeline Agents
 
-**Choice:** Spawn the user's existing agents (spec-reviewer, code-reviewer, security-reviewer, etc.) by name via the Agent tool rather than creating plugin-internal copies.
+**Choice:** All agents used by the pipeline are bundled inside the plugin's `agents/` directory. No user-provided agents are required.
 
 **Why:**
 
-- User improvements propagate automatically
-- Pipeline benefits from user customizations
-- No divergence between plugin and user setup
+- Documented behavior works out of the box — no missing-agent silent degradation
+- Consistent output formats across all consumers; `pipeline-parse-review` never breaks
+- Plugin ships as a complete unit; install = fully functional
 
-**Trade-off:** If the user modifies an agent's output format, parsing might break. Mitigated by best-effort parsing with fallback patterns.
+**Trade-off:** Bundled agents pin behavior to the plugin version. User edits to plugin agents propagate to all pipeline runs from that project.
 
 ---
 

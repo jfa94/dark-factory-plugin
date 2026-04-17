@@ -33,10 +33,10 @@ case "$stage" in
     ;;
 esac
 
-level=$(read_config '.humanReviewLevel' '1')
-# Normalise to integer; missing/invalid falls back to default 1.
+level=$(read_config '.humanReviewLevel' '0')
+# Normalise to integer; missing/invalid falls back to default 0 (full auto).
 if ! [[ "$level" =~ ^[0-9]+$ ]]; then
-  level=1
+  level=0
 fi
 
 if (( level < threshold )); then

@@ -34,7 +34,7 @@ If no specific setting was requested, show all settings grouped by category:
 
 | Setting            | Current | Default | Description                                                                          |
 | ------------------ | ------- | ------- | ------------------------------------------------------------------------------------ |
-| `humanReviewLevel` | -       | 1       | 0=full auto, 1=PR approval, 2=review checkpoint, 3=spec approval, 4=full supervision |
+| `humanReviewLevel` | -       | 0       | 0=full auto, 1=PR approval, 2=review checkpoint, 3=spec approval, 4=full supervision |
 
 ### Circuit Breaker
 

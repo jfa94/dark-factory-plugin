@@ -79,7 +79,7 @@ The autonomous pipeline was unable to generate a valid spec from this PRD after 
       local gate_run_id gate_stage gate_level gate_threshold
       gate_run_id=$(printf '%s' "$data" | jq -r '.run_id // "unknown"')
       gate_stage=$(printf '%s' "$data" | jq -r '.stage // "unknown"')
-      gate_level=$(printf '%s' "$data" | jq -r '.humanReviewLevel // 1')
+      gate_level=$(printf '%s' "$data" | jq -r '.humanReviewLevel // 0')
       gate_threshold=$(printf '%s' "$data" | jq -r '.threshold // 1')
       body="${MARKER}
 ## Pipeline Paused — Human Approval Required

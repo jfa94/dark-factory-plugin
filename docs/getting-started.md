@@ -34,6 +34,8 @@ Inside Claude Code, run:
 
 Claude Code handles cloning, discovery, and future updates automatically. Verify with `/help` — you should see `/factory:run`, `/factory:configure`, and other `/factory:*` commands listed.
 
+> **Install fails with `git@github.com: Permission denied (publickey)`?** Claude Code's plugin installer currently forces SSH cloning for `github.com` hosts, which fails if you don't have an SSH key configured. Use the manual install below as a fallback.
+
 ### Manual install (fallback)
 
 For older Claude Code versions or air-gapped environments:

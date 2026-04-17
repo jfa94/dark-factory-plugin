@@ -16,9 +16,14 @@ case "$action" in
     reconcile_status="skipped"
 
     if git ls-remote --exit-code --heads origin staging &>/dev/null; then
-      git fetch origin staging &>/dev/null || true
-      git checkout staging &>/dev/null
-      git pull origin staging &>/dev/null || true
+      git fetch origin staging &>/dev/null \
+        || log_warn "git fetch origin staging failed; using local refs"
+      if ! git checkout staging &>/dev/null; then
+        log_error "could not check out existing staging branch"
+        exit 1
+      fi
+      git pull origin staging &>/dev/null \
+        || log_warn "git pull origin staging failed; continuing with local HEAD"
 
       # Reconcile staging with base branch to prevent drift between runs.
       # Fast-forward if possible, otherwise non-ff merge, otherwise fail cleanly.
@@ -57,14 +62,22 @@ case "$action" in
     else
       if git ls-remote --exit-code --heads origin "$base_branch" &>/dev/null; then
         base="$base_branch"
-        git fetch origin "$base_branch" &>/dev/null
-        git checkout -b staging "origin/$base_branch" &>/dev/null
-      else
+      elif git ls-remote --exit-code --heads origin main &>/dev/null; then
         base="main"
-        git fetch origin main &>/dev/null
-        git checkout -b staging "origin/main" &>/dev/null
+      else
+        log_error "neither origin/$base_branch nor origin/main exists; cannot create staging"
+        exit 1
       fi
-      git push -u origin staging &>/dev/null || true
+      if ! git fetch origin "$base" &>/dev/null; then
+        log_error "git fetch origin $base failed; cannot create staging from a stale ref"
+        exit 1
+      fi
+      if ! git checkout -b staging "origin/$base" &>/dev/null; then
+        log_error "git checkout -b staging origin/$base failed"
+        exit 1
+      fi
+      git push -u origin staging &>/dev/null \
+        || log_warn "git push -u origin staging failed; staging branch is local-only until pushed"
       json_output staging_branch "staging" \
                   base "$base" \
                   created "true" \
@@ -88,7 +101,10 @@ case "$action" in
       }
     fi
 
-    git add -- "$spec_dir" 2>/dev/null || true
+    if ! git add -- "$spec_dir"; then
+      log_error "git add $spec_dir failed; cannot commit spec"
+      exit 1
+    fi
 
     if git diff --cached --quiet 2>/dev/null; then
       json_output action "commit-spec" \
@@ -169,7 +185,10 @@ case "$action" in
     name="${1:?missing branch name}"
     path="${2:?missing worktree path}"
     base="${3:-staging}"
-    git worktree add -b "$name" "$path" "$base" &>/dev/null
+    if ! err=$(git worktree add -b "$name" "$path" "$base" 2>&1 >/dev/null); then
+      log_error "git worktree add failed: $err"
+      exit 1
+    fi
     json_output branch "$name" path "$path" base "$base" action "created"
     ;;
 
@@ -228,7 +247,10 @@ case "$action" in
       exit 1
     fi
 
-    git -C "$worktree" add -A 2>/dev/null || true
+    if ! git -C "$worktree" add -A; then
+      log_error "git add -A in $worktree failed; cannot finalize task commit"
+      exit 1
+    fi
 
     if git -C "$worktree" diff --cached --quiet 2>/dev/null; then
       json_output action "task-commit" \

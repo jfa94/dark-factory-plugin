@@ -30,7 +30,13 @@ cd "$worktree"
 if [[ ! -f package.json ]]; then
   log_error "no package.json in worktree: $worktree"
   result='{"ok":false,"error":"no_package_json","checks":[]}'
-  pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$result" 2>/dev/null || true
+  run_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}"
+  if [[ -f "$run_dir/state.json" ]]; then
+    if ! pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$result" >/dev/null; then
+      log_error "failed to record quality_gate result for $task_id (state.json present but write failed)"
+      exit 1
+    fi
+  fi
   printf '%s\n' "$result"
   exit 1
 fi
@@ -86,10 +92,16 @@ fi
 summary=$(jq -n --argjson ok "$ok_json" --argjson checks "$results_json" \
   '{ok:$ok, checks:$checks}')
 
-# Write to state. Best-effort: if the run dir was set up by a test fixture
-# without a state.json, skip silently rather than failing the gate.
+# Write to state. If state.json exists, the write must succeed — silently
+# discarding it would leave the orchestrator's view of the run inconsistent
+# with what actually ran. Test fixtures that set up a run dir without a
+# state.json (e.g. integration tests for this script in isolation) are the
+# only legitimate skip path.
 if [[ -f "$run_dir/state.json" ]]; then
-  pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$summary" >/dev/null 2>&1 || true
+  if ! pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$summary" >/dev/null; then
+    log_error "failed to record quality_gate result for $task_id"
+    exit 1
+  fi
 fi
 
 printf '%s\n' "$summary"

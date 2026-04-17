@@ -46,6 +46,8 @@ branches_deleted=0
 branches_skipped=0
 worktrees_removed=0
 issues_closed=0
+issue_errors=()
+worktree_errors=()
 spec_cleaned=false
 branch_warnings=()
 
@@ -125,12 +127,14 @@ if [[ "$remove_worktrees" == "true" ]]; then
 
     if [[ "$task_status" == "done" ]]; then
       if [[ -d "$worktree" ]]; then
-        git worktree remove "$worktree" --force 2>/dev/null || {
-          log_warn "could not remove worktree: $worktree"
+        if err=$(git worktree remove "$worktree" --force 2>&1); then
+          log_info "removed worktree: $worktree"
+          worktrees_removed=$((worktrees_removed + 1))
+        else
+          log_warn "could not remove worktree $worktree: $err"
+          worktree_errors+=("${task_id}:${worktree}")
           continue
-        }
-        log_info "removed worktree: $worktree"
-        worktrees_removed=$((worktrees_removed + 1))
+        fi
       fi
     else
       log_warn "skipping worktree for unmerged task: $task_id"
@@ -150,11 +154,12 @@ if [[ "$close_issues" == "true" ]]; then
     done_tasks=$(printf '%s' "$state" | jq '[.tasks | to_entries[] | select(.value.status == "done")] | length')
 
     if [[ "$done_tasks" -eq "$total_tasks" ]] && [[ "$total_tasks" -gt 0 ]]; then
-      if gh issue close "$issue_number" 2>/dev/null; then
+      if err=$(gh issue close "$issue_number" 2>&1); then
         log_info "closed issue #$issue_number"
         issues_closed=$((issues_closed + 1))
       else
-        log_warn "could not close issue #$issue_number"
+        log_warn "could not close issue #$issue_number: $err"
+        issue_errors+=("$issue_number")
       fi
     else
       log_warn "not closing issue #$issue_number ($done_tasks/$total_tasks tasks done)"
@@ -311,8 +316,23 @@ if (( ${#branch_warnings[@]} > 0 )); then
   warnings_json=$(printf '%s\n' "${branch_warnings[@]}" | jq -R . | jq -s .)
 fi
 
+worktree_errors_json='[]'
+if (( ${#worktree_errors[@]} > 0 )); then
+  worktree_errors_json=$(printf '%s\n' "${worktree_errors[@]}" | jq -R . | jq -s .)
+fi
+issue_errors_json='[]'
+if (( ${#issue_errors[@]} > 0 )); then
+  issue_errors_json=$(printf '%s\n' "${issue_errors[@]}" | jq -R 'tonumber? // .' | jq -s .)
+fi
+
+cleanup_status="ok"
+if (( ${#worktree_errors[@]} > 0 || ${#issue_errors[@]} > 0 )); then
+  cleanup_status="partial"
+fi
+
 jq -n \
   --arg run_id "$run_id" \
+  --arg cleanup_status "$cleanup_status" \
   --argjson branches_deleted "$branches_deleted" \
   --argjson branches_skipped "$branches_skipped" \
   --argjson worktrees_removed "$worktrees_removed" \
@@ -320,13 +340,22 @@ jq -n \
   --argjson spec_cleaned "$spec_cleaned" \
   --arg archive_path "$archive_dir" \
   --argjson warnings "$warnings_json" \
+  --argjson worktree_errors "$worktree_errors_json" \
+  --argjson issue_errors "$issue_errors_json" \
   '{
     run_id: $run_id,
+    cleanup_status: $cleanup_status,
     branches_deleted: $branches_deleted,
     branches_skipped: $branches_skipped,
     worktrees_removed: $worktrees_removed,
     issues_closed: $issues_closed,
     spec_cleaned: $spec_cleaned,
     archive_path: $archive_path,
-    warnings: $warnings
+    warnings: $warnings,
+    worktree_errors: $worktree_errors,
+    issue_errors: $issue_errors
   }'
+
+if [[ "$cleanup_status" == "partial" ]]; then
+  exit 1
+fi

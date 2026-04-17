@@ -128,7 +128,16 @@ if [[ "$use_trufflehog" == "true" ]]; then
   if command -v trufflehog >/dev/null 2>&1; then
     # Scan the commit dir; --only-verified reduces false positives. JSON mode
     # emits one object per finding.
-    trufflehog_output=$(trufflehog filesystem --directory "$commit_dir" --only-verified --no-update --json 2>/dev/null || true)
+    th_err=$(mktemp)
+    set +e
+    trufflehog_output=$(trufflehog filesystem --directory "$commit_dir" --only-verified --no-update --json 2>"$th_err")
+    th_rc=$?
+    set -e
+    if (( th_rc != 0 )); then
+      th_stderr=$(<"$th_err")
+      printf '%s\n' "secret-commit-guard: trufflehog exited $th_rc — falling back to regex-only scan; stderr: ${th_stderr:0:300}" >&2
+    fi
+    rm -f "$th_err"
     if [[ -n "$trufflehog_output" ]]; then
       while IFS= read -r finding; do
         [[ -z "$finding" ]] && continue

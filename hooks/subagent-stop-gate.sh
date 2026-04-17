@@ -88,9 +88,21 @@ case "$agent_type" in
     ;;
 esac
 
-# Log warnings (never block)
-for w in "${warnings[@]+"${warnings[@]}"}"; do
-  echo "[subagent-stop-gate] WARNING: $w" >&2
-done
+# Log warnings (never block) and persist them as a structured event so the
+# orchestrator's run summary can surface missed commits / missing artifacts.
+# stderr alone gets lost across subagent boundaries; the JSONL file is read
+# back by pipeline-summary.
+if (( ${#warnings[@]} > 0 )); then
+  events_file="$run_dir/missed-artifacts.jsonl"
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  for w in "${warnings[@]}"; do
+    echo "[subagent-stop-gate] WARNING: $w" >&2
+    if command -v jq >/dev/null 2>&1; then
+      jq -cn --arg ts "$ts" --arg agent_type "$agent_type" --arg warning "$w" \
+        '{timestamp:$ts, agent_type:$agent_type, warning:$warning}' \
+        >> "$events_file" 2>/dev/null || true
+    fi
+  done
+fi
 
 exit 0

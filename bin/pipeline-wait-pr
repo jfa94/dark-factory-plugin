@@ -52,12 +52,36 @@ _elapsed() {
   echo $(( now - start_time ))
 }
 
+# gh stderr is captured to a script-scoped file so the JSON-on-stdout
+# contract stays clean while the poll loop can surface the actual error
+# (rate limit, auth, network) when a fetch returns empty.
+_GH_LAST_ERROR=""
 _check_pr_status() {
-  gh pr view "$pr" --json state,mergedAt,mergeable,headRefName 2>/dev/null
+  local out err
+  err=$(mktemp)
+  if out=$(gh pr view "$pr" --json state,mergedAt,mergeable,headRefName 2>"$err"); then
+    rm -f "$err"
+    _GH_LAST_ERROR=""
+    printf '%s' "$out"
+  else
+    _GH_LAST_ERROR=$(<"$err")
+    rm -f "$err"
+    return 1
+  fi
 }
 
 _check_pr_checks() {
-  gh pr checks "$pr" --json name,state,conclusion 2>/dev/null
+  local out err
+  err=$(mktemp)
+  if out=$(gh pr checks "$pr" --json name,state,conclusion 2>"$err"); then
+    rm -f "$err"
+    _GH_LAST_ERROR=""
+    printf '%s' "$out"
+  else
+    _GH_LAST_ERROR=$(<"$err")
+    rm -f "$err"
+    return 1
+  fi
 }
 
 # === REBASE_HELPERS_START ===
@@ -197,19 +221,25 @@ _rebase_with_retries() {
 # === REBASE_HELPERS_END ===
 
 _attempt_rebase() {
-  local head_branch
+  local head_branch err
   head_branch=$(printf '%s' "$1" | jq -r '.headRefName')
 
   log_info "attempting rebase for $head_branch"
 
   # Fetch latest
-  git fetch origin 2>/dev/null || return 1
+  if ! err=$(git fetch origin 2>&1); then
+    log_error "git fetch origin failed during rebase: $err"
+    return 1
+  fi
 
   local current_branch
   current_branch=$(git branch --show-current 2>/dev/null)
 
   # Check out the PR branch
-  git checkout "$head_branch" 2>/dev/null || return 1
+  if ! err=$(git checkout "$head_branch" 2>&1); then
+    log_error "git checkout $head_branch failed during rebase: $err"
+    return 1
+  fi
 
   if ! _rebase_with_retries "origin/staging"; then
     local conflicted_files
@@ -225,10 +255,11 @@ _attempt_rebase() {
   fi
 
   # Push the rebased branch
-  git push --force-with-lease origin "$head_branch" 2>/dev/null || {
+  if ! err=$(git push --force-with-lease origin "$head_branch" 2>&1); then
+    log_error "git push --force-with-lease failed for $head_branch: $err"
     git checkout "$current_branch" 2>/dev/null
     return 1
-  }
+  fi
 
   git checkout "$current_branch" 2>/dev/null
   log_info "rebase successful for $head_branch"
@@ -250,9 +281,8 @@ while true; do
   fi
 
   # Check PR status
-  pr_data=$(_check_pr_status)
-  if [[ -z "$pr_data" ]]; then
-    log_warn "could not fetch PR #${pr} status, retrying..."
+  if ! pr_data=$(_check_pr_status) || [[ -z "$pr_data" ]]; then
+    log_warn "could not fetch PR #${pr} status (${_GH_LAST_ERROR:-empty response}); retrying in ${interval_seconds}s"
     sleep "$interval_seconds"
     continue
   fi
@@ -313,7 +343,11 @@ while true; do
   fi
 
   # Check CI status — exit 3 on failure so orchestrator can push a fix and re-invoke
-  checks_data=$(_check_pr_checks)
+  if ! checks_data=$(_check_pr_checks); then
+    log_warn "could not fetch PR #${pr} checks (${_GH_LAST_ERROR:-empty response}); retrying in ${interval_seconds}s"
+    sleep "$interval_seconds"
+    continue
+  fi
   if [[ -n "$checks_data" ]]; then
     failed_checks=$(printf '%s' "$checks_data" | jq '[.[] | select(.conclusion == "FAILURE")] | length')
 

@@ -106,7 +106,9 @@ elif [[ -f "package-lock.json" ]]; then
 fi
 
 echo "Project initialized."'
-chmod +x "$root/init.sh" 2>/dev/null || true
+if ! chmod +x "$root/init.sh"; then
+  log_warn "could not chmod +x $root/init.sh; users will need to run \`bash init.sh\` manually"
+fi
 
 _copy_template_if_absent \
   "$TEMPLATES_DIR/.github/workflows/quality-gate.yml" \
@@ -166,7 +168,7 @@ entries=(
 )
 if [[ -f "$gitignore" ]]; then
   for entry in "${entries[@]}"; do
-    if ! grep -qF "$entry" "$gitignore" 2>/dev/null; then
+    if ! grep -qF -- "$entry" "$gitignore"; then
       printf '\n%s\n' "$entry" >> "$gitignore"
       log_info "appended to .gitignore: $entry"
     fi

@@ -1,6 +1,6 @@
 # Running the Pipeline
 
-This guide covers all operating modes for `/dark-factory:run` and common invocation patterns.
+This guide covers all operating modes for `/factory:run` and common invocation patterns.
 
 ## Operating Modes
 
@@ -9,7 +9,7 @@ This guide covers all operating modes for `/dark-factory:run` and common invocat
 Finds all open GitHub issues with the `[PRD]` marker and processes them in dependency order.
 
 ```
-/dark-factory:run discover
+/factory:run discover
 ```
 
 Use when you have multiple PRD issues to process. The pipeline:
@@ -24,7 +24,7 @@ Use when you have multiple PRD issues to process. The pipeline:
 Processes a single PRD issue by number.
 
 ```
-/dark-factory:run prd --issue 42
+/factory:run prd --issue 42
 ```
 
 The standard mode for autonomous development. The pipeline:
@@ -38,7 +38,7 @@ The standard mode for autonomous development. The pipeline:
 Add `--strict` to require the `[PRD]` marker:
 
 ```
-/dark-factory:run prd --issue 42 --strict
+/factory:run prd --issue 42 --strict
 ```
 
 Without `--strict`, missing markers produce a warning. With `--strict`, missing markers fail the run.
@@ -48,7 +48,7 @@ Without `--strict`, missing markers produce a warning. With `--strict`, missing 
 Executes a single task from an existing spec directory.
 
 ```
-/dark-factory:run task --task-id task_03 --spec-dir .state/run-20260413-140000
+/factory:run task --task-id task_03 --spec-dir .state/run-20260413-140000
 ```
 
 Use when you want to re-run a specific task without re-generating the spec. The pipeline:
@@ -63,7 +63,7 @@ Use when you want to re-run a specific task without re-generating the spec. The 
 Continues an interrupted run from the last checkpoint.
 
 ```
-/dark-factory:run resume
+/factory:run resume
 ```
 
 The pipeline:
@@ -91,7 +91,7 @@ All state is persisted to JSON, so resume is reliable.
 Shows the execution plan without executing.
 
 ```
-/dark-factory:run prd --issue 42 --dry-run
+/factory:run prd --issue 42 --dry-run
 ```
 
 Output includes:
@@ -109,7 +109,7 @@ Use to verify the pipeline understands your PRD correctly before committing to e
 Requires the `[PRD]` marker on issues.
 
 ```
-/dark-factory:run discover --strict
+/factory:run discover --strict
 ```
 
 Behavior:
@@ -128,20 +128,20 @@ Use in CI environments where marker discipline is enforced.
 Set high human oversight for the first few runs:
 
 ```
-/dark-factory:configure
+/factory:configure
 > Set humanReviewLevel to 3
 ```
 
 Then run:
 
 ```
-/dark-factory:run prd --issue 42 --dry-run
+/factory:run prd --issue 42 --dry-run
 ```
 
 Review the execution plan. If it looks correct:
 
 ```
-/dark-factory:run prd --issue 42
+/factory:run prd --issue 42
 ```
 
 The pipeline pauses after spec generation for your approval.
@@ -155,7 +155,7 @@ For low-risk routine work:
 3. Launch:
 
 ```
-/dark-factory:run discover
+/factory:run discover
 ```
 
 The pipeline processes all issues, pausing automatically when 5h rate limits approach and resuming after reset. If 7d limits are exceeded, the run ends gracefully and can be resumed later.
@@ -175,7 +175,7 @@ cat "${CLAUDE_PLUGIN_DATA}/runs/current/state.json" | jq '.tasks.task_03'
 3. Re-run the specific task:
 
 ```
-/dark-factory:run task --task-id task_03 --spec-dir .state/run-20260413-140000
+/factory:run task --task-id task_03 --spec-dir .state/run-20260413-140000
 ```
 
 ### Recovering from Rate Limits
@@ -191,7 +191,7 @@ cat "${CLAUDE_PLUGIN_DATA}/usage-cache.json" | jq '.five_hour.used_percentage'
 2. Wait for the reset window, then resume:
 
 ```
-/dark-factory:run resume
+/factory:run resume
 ```
 
 The pipeline automatically waits when 5h limits approach. If it ended due to 7d limits, wait for the window to reset before resuming.
@@ -200,11 +200,11 @@ The pipeline automatically waits when 5h limits approach. If it ended due to 7d 
 
 ## Environment Variables
 
-| Variable                       | Purpose                                                                                                                                                                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DARK_FACTORY_AUTONOMOUS_MODE` | Set to `1` to bypass the acknowledgment check. **Does not load hooks or permissions** — use `claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json` for real runs (see [Getting Started](../getting-started.md#step-3-launch-with-autonomous-settings)) |
-| `CLAUDE_PLUGIN_DATA`           | Directory for run state (auto-set by Claude Code)                                                                                                                                                                                                            |
-| `TASK_FAILURE_TYPE`            | Set by orchestrator to provide failure context to retry attempts                                                                                                                                                                                             |
+| Variable                  | Purpose                                                                                                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FACTORY_AUTONOMOUS_MODE` | Set to `1` to bypass the acknowledgment check. **Does not load hooks or permissions** — use `claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json` for real runs (see [Getting Started](../getting-started.md#step-3-launch-with-autonomous-settings)) |
+| `CLAUDE_PLUGIN_DATA`      | Directory for run state (auto-set by Claude Code)                                                                                                                                                                                                            |
+| `TASK_FAILURE_TYPE`       | Set by orchestrator to provide failure context to retry attempts                                                                                                                                                                                             |
 
 ---
 

@@ -4,9 +4,9 @@
 # Usage: set statusLine.command in ~/.claude/settings.json to this script:
 #   "statusLine": {"type": "command", "command": "/path/to/bin/statusline-wrapper.sh"}
 #
-# To chain to your existing statusline, set DARK_FACTORY_ORIGINAL_STATUSLINE in
+# To chain to your existing statusline, set FACTORY_ORIGINAL_STATUSLINE in
 # your environment (e.g. via settings.json "env" field):
-#   "env": {"DARK_FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"}
+#   "env": {"FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"}
 #
 # Rate limit data is written to ${CLAUDE_PLUGIN_DATA}/usage-cache.json on every
 # statusline update. pipeline-quota-check reads this file before each task spawn.
@@ -19,7 +19,7 @@ input=$(cat)
 # system when the pipeline runs; for the statusline (which runs in user env)
 # we fall back to a standard location. Set CLAUDE_PLUGIN_DATA in settings.json
 # "env" to override.
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugin-data/dark-factory}"
+PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugin-data/factory}"
 
 # Write rate limit data to usage-cache.json if rate_limits are present.
 # Fail silently so a broken jq or missing dir never breaks the statusline output.
@@ -36,8 +36,8 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 # Chain to original statusline or emit default output.
-if [[ -n "${DARK_FACTORY_ORIGINAL_STATUSLINE:-}" ]]; then
-  printf '%s' "$input" | eval "$DARK_FACTORY_ORIGINAL_STATUSLINE"
+if [[ -n "${FACTORY_ORIGINAL_STATUSLINE:-}" ]]; then
+  printf '%s' "$input" | eval "$FACTORY_ORIGINAL_STATUSLINE"
 else
   # Default: model + dir + 5h usage
   MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "Claude"' 2>/dev/null \

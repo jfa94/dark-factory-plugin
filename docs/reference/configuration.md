@@ -31,19 +31,19 @@ Consecutive task failures before pipeline aborts.
 | Property | Value  |
 | -------- | ------ |
 | Type     | number |
-| Default  | 1      |
+| Default  | 0      |
 | Min      | 0      |
 | Max      | 4      |
 
-Human oversight level:
+Human oversight level. Default (0) assumes CI branch protection and GitHub auto-merge are enabled.
 
-| Value | Name              | Behavior                                   |
-| ----- | ----------------- | ------------------------------------------ |
-| 0     | Full Autonomy     | Pipeline creates PR and enables auto-merge |
-| 1     | PR Approval       | Pipeline creates PR, human merges          |
-| 2     | Review Checkpoint | Human signs off before PR creation         |
-| 3     | Spec Approval     | Human approves spec before execution       |
-| 4     | Full Supervision  | Human approves at every stage              |
+| Value | Name              | Behavior                                             |
+| ----- | ----------------- | ---------------------------------------------------- |
+| 0     | Full Autonomy     | Pipeline creates PR and enables auto-merge (default) |
+| 1     | PR Approval       | Pipeline creates PR, human merges                    |
+| 2     | Review Checkpoint | Human signs off before PR creation                   |
+| 3     | Spec Approval     | Human approves spec before execution                 |
+| 4     | Full Supervision  | Human approves at every stage                        |
 
 ### maxParallelTasks
 

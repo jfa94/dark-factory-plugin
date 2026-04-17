@@ -8,8 +8,8 @@ dark-factory-plugin/
 │   └── plugin.json                    # Manifest: name, version, description, userConfig schema
 │
 ├── commands/
-│   ├── run.md                         # /dark-factory:run entry point
-│   └── configure.md                   # /dark-factory:configure — review/edit all plugin settings
+│   ├── run.md                         # /factory:run entry point
+│   └── configure.md                   # /factory:configure — review/edit all plugin settings
 │
 ├── agents/
 │   ├── pipeline-orchestrator.md       # DAG iteration, subagent spawning, retry logic
@@ -65,7 +65,7 @@ dark-factory-plugin/
 
 ## Commands
 
-### `/dark-factory:run`
+### `/factory:run`
 
 **File:** `commands/run.md`
 
@@ -98,7 +98,7 @@ arguments:
 
 **Behavior:**
 
-1. Check for autonomous settings: verify `DARK_FACTORY_AUTONOMOUS_MODE=1` env var (set by `templates/settings.autonomous.json`). If absent, print:
+1. Check for autonomous settings: verify `FACTORY_AUTONOMOUS_MODE=1` env var (set by `templates/settings.autonomous.json`). If absent, print:
    > "Dark Factory requires autonomous settings. Relaunch with: `claude --settings <plugin-root>/templates/settings.autonomous.json`"
    > and exit.
 2. Call `pipeline-validate` to check preconditions (git remote, required agents/skills exist)
@@ -113,7 +113,7 @@ arguments:
 
 ---
 
-### `/dark-factory:configure`
+### `/factory:configure`
 
 **File:** `commands/configure.md`
 
@@ -154,7 +154,7 @@ arguments:
 model: opus
 maxTurns: 9999
 description: "Orchestrates the dark-factory pipeline: discovers PRDs, generates specs, executes tasks in dependency order, manages adversarial review, handles completion"
-whenToUse: "When the user invokes /dark-factory:run or needs to run the autonomous coding pipeline"
+whenToUse: "When the user invokes /factory:run or needs to run the autonomous coding pipeline"
 tools:
   - Bash
   - Read

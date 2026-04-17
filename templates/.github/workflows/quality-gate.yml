@@ -1,0 +1,97 @@
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [staging, develop]
+
+concurrency:
+  group: quality-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate Next.js type declarations
+        run: pnpm next typegen
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+          NEXT_PUBLIC_SUPABASE_KEY: ci-placeholder
+          NEXT_SECRET_SUPABASE_KEY: ci-placeholder
+      - run: pnpm deps:validate
+      - name: pnpm audit (non-blocking; npm legacy endpoint 410, Snyk covers vulns)
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
+        with:
+          config: >-
+            p/typescript
+            p/security-audit
+            p/secrets
+      - name: TruffleHog secrets scan
+        uses: trufflesecurity/trufflehog@61d57c10a563ba8a33a4c4205c85b5b3505a050e # main 2026-03-27
+        with:
+          extra_args: --only-verified
+
+  mutation:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Mutation testing (incremental for task PRs, full for staging→develop)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$BASE_REF" = "develop" ]; then
+              echo "Full-codebase mutation run (staging→develop PR)"
+              pnpm test:mutation
+          else
+              echo "Incremental mutation run (task PR → $BASE_REF)"
+              git fetch origin "$BASE_REF" --depth=1
+              pnpm test:mutation -- --since "origin/$BASE_REF"
+          fi
+
+  auto-merge:
+    name: Auto Merge
+    runs-on: ubuntu-latest
+    needs: [quality, mutation, security]
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: gh pr merge ${{ github.event.pull_request.number }} --squash --auto
+        env:
+          GH_TOKEN: ${{ github.token }}

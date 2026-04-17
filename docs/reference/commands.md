@@ -2,7 +2,7 @@
 
 Specification for all plugin commands.
 
-## /dark-factory:run
+## /factory:run
 
 Entry point for pipeline invocations.
 
@@ -22,7 +22,7 @@ Entry point for pipeline invocations.
 **discover**
 
 ```
-/dark-factory:run discover
+/factory:run discover
 ```
 
 Finds all open issues with `[PRD]` marker and processes them.
@@ -30,7 +30,7 @@ Finds all open issues with `[PRD]` marker and processes them.
 **prd**
 
 ```
-/dark-factory:run prd --issue 42
+/factory:run prd --issue 42
 ```
 
 Processes a single PRD issue.
@@ -38,7 +38,7 @@ Processes a single PRD issue.
 **task**
 
 ```
-/dark-factory:run task --task-id task_03 --spec-dir .state/run-20260413-140000
+/factory:run task --task-id task_03 --spec-dir .state/run-20260413-140000
 ```
 
 Executes a single task from an existing spec.
@@ -46,14 +46,14 @@ Executes a single task from an existing spec.
 **resume**
 
 ```
-/dark-factory:run resume
+/factory:run resume
 ```
 
 Continues an interrupted run from the last checkpoint.
 
 ### Execution Flow
 
-1. Check `DARK_FACTORY_AUTONOMOUS_MODE` environment variable. If unset, materialize `$CLAUDE_PLUGIN_DATA/merged-settings.json` from the bundled template and instruct the user to relaunch with `claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json`. Setting the env var bypasses this check but does **not** load hooks or permissions.
+1. Check `FACTORY_AUTONOMOUS_MODE` environment variable. If unset, materialize `$CLAUDE_PLUGIN_DATA/merged-settings.json` from the bundled template and instruct the user to relaunch with `claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json`. Setting the env var bypasses this check but does **not** load hooks or permissions.
 2. Run `pipeline-validate --no-clean-check` to verify preconditions
 3. Parse mode and validate arguments
 4. Initialize run state via `pipeline-init`
@@ -65,7 +65,7 @@ The command spawns the orchestrator agent and returns when the agent completes. 
 
 ---
 
-## /dark-factory:configure
+## /factory:configure
 
 Interactive settings editor.
 

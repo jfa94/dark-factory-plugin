@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks through installing the dark-factory plugin, configuring it for your project, and running your first autonomous coding pipeline.
+This guide walks through installing the factory plugin, configuring it for your project, and running your first autonomous coding pipeline.
 
 ## Prerequisites
 
@@ -23,15 +23,26 @@ git remote get-url origin
 
 ## Step 1: Install the Plugin
 
-Clone the plugin into your Claude Code plugins directory:
+### Marketplace install (recommended)
 
-```bash
-git clone https://github.com/jfa94/dark-factory-plugin.git ~/.claude/plugins/dark-factory
+Inside Claude Code, run:
+
+```
+/plugin marketplace add jfa94/factory
+/plugin install factory@jfa94
 ```
 
-Claude Code discovers the plugin via `~/.claude/plugins/dark-factory/.claude-plugin/plugin.json`.
+Claude Code handles cloning, discovery, and future updates automatically. Verify with `/help` — you should see `/factory:run`, `/factory:configure`, and other `/factory:*` commands listed.
 
-To verify the plugin is registered, open Claude Code and run `/help` — you should see `/dark-factory:run`, `/dark-factory:configure`, and other `/dark-factory:*` commands listed.
+### Manual install (fallback)
+
+For older Claude Code versions or air-gapped environments:
+
+```bash
+git clone https://github.com/jfa94/factory.git ~/.claude/plugins/factory
+```
+
+Claude Code discovers the plugin via `~/.claude/plugins/factory/.claude-plugin/plugin.json`.
 
 ## Step 2: Configure Rate Limit Detection
 
@@ -43,7 +54,7 @@ The pipeline requires real-time rate limit data to make pause/continue decisions
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/plugins/dark-factory/bin/statusline-wrapper.sh"
+    "command": "~/.claude/plugins/factory/bin/statusline-wrapper.sh"
   }
 }
 ```
@@ -53,46 +64,54 @@ If you already have a custom statusline, chain to it:
 ```json
 {
   "env": {
-    "DARK_FACTORY_ORIGINAL_STATUSLINE": "~/.claude/your-statusline.sh"
+    "FACTORY_ORIGINAL_STATUSLINE": "~/.claude/your-statusline.sh"
   },
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/plugins/dark-factory/bin/statusline-wrapper.sh"
+    "command": "~/.claude/plugins/factory/bin/statusline-wrapper.sh"
   }
 }
 ```
 
-The wrapper writes rate limit data to `~/.claude/plugin-data/dark-factory/usage-cache.json` on every statusline update. Without this, `pipeline-quota-check` will fail.
+The wrapper writes rate limit data to `~/.claude/plugin-data/factory/usage-cache.json` on every statusline update. Without this, `pipeline-quota-check` will fail.
 
 ## Step 3: Configure Your Project
 
 Run the configuration command to review and adjust settings:
 
 ```
-/dark-factory:configure
+/factory:configure
 ```
 
-This opens an interactive settings editor. It reads your current config from `${CLAUDE_PLUGIN_DATA}/config.json` (created on first write) and falls back to plugin defaults for any unset value. On macOS, `CLAUDE_PLUGIN_DATA` is typically `~/.claude/plugin-data/dark-factory`.
+This opens an interactive settings editor. It reads your current config from `${CLAUDE_PLUGIN_DATA}/config.json` (created on first write) and falls back to plugin defaults for any unset value. On macOS, `CLAUDE_PLUGIN_DATA` is typically `~/.claude/plugin-data/factory`.
 
 Key settings to review on first setup:
 
 | Setting                  | Default | Description                                 |
 | ------------------------ | ------- | ------------------------------------------- |
-| `humanReviewLevel`       | 1       | Human oversight level (0–4)                 |
+| `humanReviewLevel`       | 0       | Human oversight level (0–4)                 |
 | `maxConsecutiveFailures` | 5       | Consecutive failures before pipeline aborts |
 | `maxParallelTasks`       | 3       | Concurrent task executors                   |
 
 **`humanReviewLevel` values:**
 
-| Level | Name              | What happens                                                     |
-| ----- | ----------------- | ---------------------------------------------------------------- |
-| 0     | Full Autonomy     | Pipeline creates PR and enables auto-merge; no human touchpoints |
-| 1     | PR Approval       | Pipeline creates PR; you review and merge manually (default)     |
-| 2     | Review Checkpoint | You sign off on completed work before the PR is created          |
-| 3     | Spec Approval     | You approve the generated spec before task execution begins      |
-| 4     | Full Supervision  | You approve at every stage: spec, each task, review, and PR      |
+| Level | Name              | What happens                                                               |
+| ----- | ----------------- | -------------------------------------------------------------------------- |
+| 0     | Full Autonomy     | Pipeline creates PR and enables auto-merge; no human touchpoints (default) |
+| 1     | PR Approval       | Pipeline creates PR; you review and merge manually                         |
+| 2     | Review Checkpoint | You sign off on completed work before the PR is created                    |
+| 3     | Spec Approval     | You approve the generated spec before task execution begins                |
+| 4     | Full Supervision  | You approve at every stage: spec, each task, review, and PR                |
 
-For your first run, set `humanReviewLevel` to 3 so you can review the generated specification before any code is written. Resume after approval with `/dark-factory:run resume`.
+> **Level 0 (default) assumes:**
+>
+> - Branch protection on your default branch requires a passing CI check before merge.
+> - GitHub auto-merge is enabled on the repo (Settings → General → Pull Requests → "Allow auto-merge").
+> - Your CI covers the tests, linters, and type checks the plugin generates (`npm test`, `npm run lint`, etc.).
+>
+> If any of these are missing, set `humanReviewLevel` to 1 so you approve each PR manually. CI acts as the merge gate; the plugin will not bypass a failing check.
+
+On your first run, you may want to temporarily set `humanReviewLevel=3` to review the generated specification before any code is written. Resume after approval with `/factory:run resume`.
 
 See [Configuration](./guides/configuration.md) for the full settings reference.
 
@@ -105,7 +124,7 @@ The pipeline requires a specific Claude Code session with safety hooks, permissi
 Start Claude Code normally and run the pipeline command:
 
 ```
-/dark-factory:run prd --issue 42
+/factory:run prd --issue 42
 ```
 
 Because autonomous mode is not yet active, the command will:
@@ -131,7 +150,7 @@ Autonomous mode enables:
 - **Stop hook**: vitest gate before Claude exits
 - **Permission allowlist/denylist**: scoped to safe pipeline operations
 
-> **For CI or advanced use only:** Setting `DARK_FACTORY_AUTONOMOUS_MODE=1` in your environment bypasses the acknowledgment check but does **not** load the hooks or permission lists. Always use the settings file for real runs.
+> **For CI or advanced use only:** Setting `FACTORY_AUTONOMOUS_MODE=1` in your environment bypasses the acknowledgment check but does **not** load the hooks or permission lists. Always use the settings file for real runs.
 
 ## Step 5: Create a PRD Issue
 
@@ -163,14 +182,14 @@ Users cannot reset their password from the login page.
 - Do not add SMS-based reset
 ```
 
-> The `prd` label is used by `/dark-factory:run discover` to find issues automatically. When using `prd` mode with `--issue`, the label is not required unless you pass `--strict`.
+> The `prd` label is used by `/factory:run discover` to find issues automatically. When using `prd` mode with `--issue`, the label is not required unless you pass `--strict`.
 
 ## Step 6: Run the Pipeline
 
 Execute the pipeline targeting your PRD issue (from Session B):
 
 ```
-/dark-factory:run prd --issue 42
+/factory:run prd --issue 42
 ```
 
 The pipeline will:
@@ -194,7 +213,7 @@ The pipeline logs progress to stderr. Key checkpoints:
 To check the state of a run (macOS example path):
 
 ```bash
-# $CLAUDE_PLUGIN_DATA is typically ~/.claude/plugin-data/dark-factory
+# $CLAUDE_PLUGIN_DATA is typically ~/.claude/plugin-data/factory
 cat "${CLAUDE_PLUGIN_DATA}/runs/current/state.json" | jq '.tasks | to_entries | map({task: .key, status: .value.status})'
 ```
 
@@ -203,7 +222,7 @@ cat "${CLAUDE_PLUGIN_DATA}/runs/current/state.json" | jq '.tasks | to_entries | 
 If the pipeline stops mid-run (network issue, rate limit, manual stop):
 
 ```
-/dark-factory:run resume
+/factory:run resume
 ```
 
 The orchestrator reads the persisted state in `runs/current/` and continues from the first incomplete task.

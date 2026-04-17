@@ -17,7 +17,7 @@ Twelve discrete tasks in three layers:
 | --------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Safety                      | 01, 02, 03, 04, 05 | Write protection, secret-commit guard, destructive-path helper, lock ownership, injection                       |
 | Config alignment            | 06, 07, 08, 09, 10 | Coverage-tolerance naming, PR timeout wiring, LiteLLM strip, model-by-tier wiring, humanReviewLevel enforcement |
-| Observability + scaffolding | 11, 12             | Minimal metrics logging, `/dark-factory:scaffold` command + orchestrator precheck                               |
+| Observability + scaffolding | 11, 12             | Minimal metrics logging, `/factory:scaffold` command + orchestrator precheck                                    |
 
 ## Tasks
 
@@ -34,7 +34,7 @@ Twelve discrete tasks in three layers:
 | task_16_09 | Wire model-by-tier + maxTurns config                 | `.claude-plugin/plugin.json`, `bin/pipeline-classify-task`, `commands/configure.md`, `bin/test-phase3.sh`, `bin/test-phase9.sh`                                                                              |
 | task_16_10 | `pipeline-human-gate` + humanReviewLevel enforcement | `bin/pipeline-human-gate`, `bin/pipeline-gh-comment`, `agents/pipeline-orchestrator.md`, `bin/test-phase1.sh`, `bin/test-phase2.sh`                                                                          |
 | task_16_11 | Minimal observability                                | `bin/pipeline-lib.sh`, `hooks/run-tracker.sh`, `bin/pipeline-classify-task`, `bin/pipeline-coverage-gate`, `bin/pipeline-quality-gate`, `bin/pipeline-summary`, `bin/pipeline-cleanup`, `bin/test-phase6.sh` |
-| task_16_12 | `/dark-factory:scaffold` command                     | `commands/scaffold.md`, `bin/pipeline-scaffold`, `agents/pipeline-orchestrator.md`, `bin/test-phase9.sh`                                                                                                     |
+| task_16_12 | `/factory:scaffold` command                          | `commands/scaffold.md`, `bin/pipeline-scaffold`, `agents/pipeline-orchestrator.md`, `bin/test-phase9.sh`                                                                                                     |
 
 ## Detailed task specs
 

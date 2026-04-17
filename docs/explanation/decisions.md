@@ -206,9 +206,9 @@ Task B waits for Task A's PR to merge into `staging` before starting. Sequential
 
 ## Decision 13: Bundled Autonomous Settings
 
-**Choice:** The plugin ships `templates/settings.autonomous.json`. The `/dark-factory:run` command detects whether the session was launched with these settings.
+**Choice:** The plugin ships `templates/settings.autonomous.json`. The `/factory:run` command detects whether the session was launched with these settings.
 
-**Detection:** The settings file sets `DARK_FACTORY_AUTONOMOUS_MODE=1`. The command checks for this env var.
+**Detection:** The settings file sets `FACTORY_AUTONOMOUS_MODE=1`. The command checks for this env var.
 
 **Why not hook-based swap?**
 

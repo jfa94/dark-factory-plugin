@@ -19,7 +19,7 @@
 source "$(dirname "$0")/pipeline-lib.sh"
 require_command jq
 
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugin-data/dark-factory}"
+PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugin-data/factory}"
 cache_file="${PLUGIN_DATA}/usage-cache.json"
 
 # --- Validate cache file ---
@@ -28,7 +28,7 @@ if [[ ! -f "$cache_file" ]]; then
   log_error "usage-cache.json not found: $cache_file"
   log_error "setup required: set statusLine.command in ~/.claude/settings.json to:"
   log_error "  $(cd "$(dirname "$0")/.." && pwd)/bin/statusline-wrapper.sh"
-  log_error "If you already have a statusline, set DARK_FACTORY_ORIGINAL_STATUSLINE"
+  log_error "If you already have a statusline, set FACTORY_ORIGINAL_STATUSLINE"
   log_error "in settings.json 'env' field to chain to it."
   exit 1
 fi

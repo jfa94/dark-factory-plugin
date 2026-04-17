@@ -1,6 +1,6 @@
 {
-  "name": "dark-factory",
-  "version": "0.2.0",
+  "name": "factory",
+  "version": "0.3.0",
   "description": "Autonomous coding pipeline: converts GitHub PRD issues into merged pull requests with quality-first review gates",
   "userConfig": {
     "maxRuntimeMinutes": {
@@ -19,10 +19,10 @@
     },
     "humanReviewLevel": {
       "type": "number",
-      "default": 1,
+      "default": 0,
       "min": 0,
       "max": 4,
-      "description": "Autonomy level: 0=full auto, 1=PR approval (default), 2=review checkpoint, 3=spec approval, 4=full supervision"
+      "description": "Autonomy level: 0=full auto (default, assumes CI + auto-merge), 1=PR approval, 2=review checkpoint, 3=spec approval, 4=full supervision"
     },
     "maxParallelTasks": {
       "type": "number",

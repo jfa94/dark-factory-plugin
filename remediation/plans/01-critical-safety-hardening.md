@@ -129,7 +129,7 @@ fi
 
 ### task_01_05 — pipeline-lock --pid
 
-Cleanest fix is to remove the flag entirely and require callers to run as the process they want to represent. If the flag is needed for tests, replace it with an env var `DARK_FACTORY_LOCK_TEST_PID` that's documented as test-only. Alternatively: verify the passed PID is in the caller's process tree via `ps -o ppid= -p $LOCK_PID` walking up to `$$`.
+Cleanest fix is to remove the flag entirely and require callers to run as the process they want to represent. If the flag is needed for tests, replace it with an env var `FACTORY_LOCK_TEST_PID` that's documented as test-only. Alternatively: verify the passed PID is in the caller's process tree via `ps -o ppid= -p $LOCK_PID` walking up to `$$`.
 
 ## Completion checklist
 

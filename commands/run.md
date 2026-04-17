@@ -22,7 +22,7 @@ arguments:
     required: false
 ---
 
-# /dark-factory:run
+# /factory:run
 
 You are the entry point for the dark-factory autonomous coding pipeline. Parse the user's arguments and orchestrate the pipeline launch.
 
@@ -31,10 +31,10 @@ You are the entry point for the dark-factory autonomous coding pipeline. Parse t
 Check if this session has the required safety settings:
 
 ```bash
-echo "${DARK_FACTORY_AUTONOMOUS_MODE:-}"
+echo "${FACTORY_AUTONOMOUS_MODE:-}"
 ```
 
-If `DARK_FACTORY_AUTONOMOUS_MODE` is not `1`, materialize a relaunchable settings file and tell the user how to relaunch:
+If `FACTORY_AUTONOMOUS_MODE` is not `1`, materialize a relaunchable settings file and tell the user how to relaunch:
 
 ```bash
 # Resolve plugin root from the installed pipeline-state binary
@@ -71,7 +71,7 @@ Then stop and show the user:
 > claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json
 > ```
 >
-> Or set `DARK_FACTORY_AUTONOMOUS_MODE=1` in your environment to acknowledge autonomous operation.
+> Or set `FACTORY_AUTONOMOUS_MODE=1` in your environment to acknowledge autonomous operation.
 
 Do not proceed without this confirmation.
 

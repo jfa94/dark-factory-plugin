@@ -10,9 +10,9 @@ shift
 
 LOCK_FILE="${CLAUDE_PLUGIN_DATA}/pipeline.lock"
 TIMEOUT=30
-# PID defaults to the current shell. DARK_FACTORY_LOCK_TEST_PID is a test-only
+# PID defaults to the current shell. FACTORY_LOCK_TEST_PID is a test-only
 # escape hatch — production code must never set it.
-LOCK_PID="${DARK_FACTORY_LOCK_TEST_PID:-$$}"
+LOCK_PID="${FACTORY_LOCK_TEST_PID:-$$}"
 
 # Parse flags — --pid is intentionally not accepted to prevent caller spoofing
 while [[ $# -gt 0 ]]; do

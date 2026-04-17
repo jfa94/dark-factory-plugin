@@ -114,7 +114,7 @@ default_failures=$(jq -r '.userConfig["maxConsecutiveFailures"].default' "$PLUGI
 assert_eq "maxConsecutiveFailures default = 5" "5" "$default_failures"
 
 plugin_version=$(jq -r '.version' "$PLUGIN_JSON")
-assert_eq "plugin version = 0.2.0" "0.2.0" "$plugin_version"
+assert_eq "plugin version = 0.3.0" "0.3.0" "$plugin_version"
 
 # Each entry must declare a default value (even arrays/booleans/strings).
 missing_default=$(jq -r '[.userConfig | to_entries[] | select(has("value") | not) | .key] as $_ | [.userConfig | to_entries[] | select(.value | has("default") | not) | .key] | join(",")' "$PLUGIN_JSON")
@@ -324,8 +324,8 @@ assert_file_exists "template exists" "$TEMPLATE"
 assert_valid_json "template is valid JSON" "$TEMPLATE"
 
 # env var is set
-env_val=$(jq -r '.env.DARK_FACTORY_AUTONOMOUS_MODE' "$TEMPLATE")
-assert_eq "DARK_FACTORY_AUTONOMOUS_MODE = 1" "1" "$env_val"
+env_val=$(jq -r '.env.FACTORY_AUTONOMOUS_MODE' "$TEMPLATE")
+assert_eq "FACTORY_AUTONOMOUS_MODE = 1" "1" "$env_val"
 
 # pipeline permission
 has_pipeline=$(jq -r '.permissions.allow | index("Bash(pipeline-*)") | if . != null then "yes" else "no" end' "$TEMPLATE")
@@ -520,7 +520,7 @@ trap '[[ -n "${MATERIALIZE_DIR:-}" && "$MATERIALIZE_DIR" == "${TMPDIR:-/tmp}"/* 
 FIXTURE="$MATERIALIZE_DIR/fixture.json"
 cat > "$FIXTURE" <<'EOF'
 {
-  "env": {"DARK_FACTORY_AUTONOMOUS_MODE": "1"},
+  "env": {"FACTORY_AUTONOMOUS_MODE": "1"},
   "hooks": {
     "PreToolUse": [
       {
@@ -739,80 +739,36 @@ _scaffold_with_lockfile() {
   "$SCAFFOLD" "$SCAFFOLD_DIR/$fixture" >/dev/null
 }
 
-# --- pnpm ---
-_scaffold_with_lockfile pnpm-proj pnpm-lock.yaml
-PNPM_YML="$SCAFFOLD_DIR/pnpm-proj/.github/workflows/quality-gate.yml"
-assert_file_exists "pnpm scaffold generated quality-gate.yml" "$PNPM_YML"
-assert_contains "pnpm workflow uses pnpm/action-setup" "pnpm/action-setup" "$PNPM_YML"
-assert_contains "pnpm workflow caches pnpm" "cache: pnpm" "$PNPM_YML"
-assert_contains "pnpm workflow uses pnpm install --frozen-lockfile" "pnpm install --frozen-lockfile" "$PNPM_YML"
-if grep -qE '^\s*- run: (yarn|bun|npm) ' "$PNPM_YML"; then
-  echo "  FAIL: pnpm workflow leaks non-pnpm run commands"
-  fail=$((fail + 1))
-else
-  echo "  PASS: pnpm workflow has no non-pnpm run commands"
-  pass=$((pass + 1))
-fi
-assert_contains "pnpm workflow has typegen step" "Generate types" "$PNPM_YML"
-assert_contains "pnpm workflow typegen uses pnpm" "pnpm run typegen" "$PNPM_YML"
+# --- quality-gate.yml is copied byte-identical from templates/ regardless of lockfile ---
+# Scaffold no longer detects package manager; it copies the canonical pnpm-based
+# workflow from templates/.github/workflows/quality-gate.yml. Target projects
+# using a different package manager must adapt the workflow manually.
+QG_TEMPLATE="$PLUGIN_ROOT/templates/.github/workflows/quality-gate.yml"
+assert_file_exists "templates/.github/workflows/quality-gate.yml exists" "$QG_TEMPLATE"
 
-# --- yarn ---
-_scaffold_with_lockfile yarn-proj yarn.lock
-YARN_YML="$SCAFFOLD_DIR/yarn-proj/.github/workflows/quality-gate.yml"
-assert_file_exists "yarn scaffold generated quality-gate.yml" "$YARN_YML"
-assert_contains "yarn workflow caches yarn" "cache: yarn" "$YARN_YML"
-assert_contains "yarn workflow uses yarn install --immutable" "yarn install --immutable" "$YARN_YML"
-if grep -q 'pnpm/action-setup' "$YARN_YML"; then
-  echo "  FAIL: yarn workflow still references pnpm/action-setup"
-  fail=$((fail + 1))
-else
-  echo "  PASS: yarn workflow has no pnpm/action-setup"
-  pass=$((pass + 1))
-fi
-assert_contains "yarn workflow has typegen step" "Generate types" "$YARN_YML"
-assert_contains "yarn workflow typegen uses yarn" "yarn run typegen" "$YARN_YML"
+for fixture in pnpm-lock.yaml yarn.lock bun.lockb bun.lock package-lock.json ""; do
+  name="${fixture:-bare}-proj"
+  _scaffold_with_lockfile "$name" "$fixture"
+  dest="$SCAFFOLD_DIR/$name/.github/workflows/quality-gate.yml"
+  assert_file_exists "$name scaffold generated quality-gate.yml" "$dest"
+  if cmp -s "$QG_TEMPLATE" "$dest"; then
+    echo "  PASS: $name workflow is byte-identical to template"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $name workflow differs from template"
+    fail=$((fail + 1))
+  fi
+done
 
-# --- bun ---
-_scaffold_with_lockfile bun-proj bun.lockb
-BUN_YML="$SCAFFOLD_DIR/bun-proj/.github/workflows/quality-gate.yml"
-assert_file_exists "bun scaffold generated quality-gate.yml" "$BUN_YML"
-assert_contains "bun workflow uses oven-sh/setup-bun" "oven-sh/setup-bun" "$BUN_YML"
-assert_contains "bun workflow uses bun install --frozen-lockfile" "bun install --frozen-lockfile" "$BUN_YML"
-if grep -q 'pnpm/action-setup' "$BUN_YML"; then
-  echo "  FAIL: bun workflow still references pnpm/action-setup"
-  fail=$((fail + 1))
-else
-  echo "  PASS: bun workflow has no pnpm/action-setup"
-  pass=$((pass + 1))
-fi
-assert_contains "bun workflow has typegen step" "Generate types" "$BUN_YML"
-assert_contains "bun workflow typegen uses bun" "bun run typegen" "$BUN_YML"
-
-# Also accept the newer text-format bun.lock
-_scaffold_with_lockfile bun-text-proj bun.lock
-BUN_TEXT_YML="$SCAFFOLD_DIR/bun-text-proj/.github/workflows/quality-gate.yml"
-assert_contains "bun.lock (text) also selects bun workflow" "oven-sh/setup-bun" "$BUN_TEXT_YML"
-
-# --- npm ---
-_scaffold_with_lockfile npm-proj package-lock.json
-NPM_YML="$SCAFFOLD_DIR/npm-proj/.github/workflows/quality-gate.yml"
-assert_file_exists "npm scaffold generated quality-gate.yml" "$NPM_YML"
-assert_contains "npm workflow caches npm" "cache: npm" "$NPM_YML"
-assert_contains "npm workflow uses npm ci" "npm ci" "$NPM_YML"
-if grep -q 'pnpm/action-setup' "$NPM_YML"; then
-  echo "  FAIL: npm workflow still references pnpm/action-setup"
-  fail=$((fail + 1))
-else
-  echo "  PASS: npm workflow has no pnpm/action-setup"
-  pass=$((pass + 1))
-fi
-assert_contains "npm workflow has typegen step" "Generate types" "$NPM_YML"
-assert_contains "npm workflow typegen uses npm" "npm run typegen" "$NPM_YML"
-
-# --- no-lockfile fallback ---
-_scaffold_with_lockfile bare-proj ""
-BARE_YML="$SCAFFOLD_DIR/bare-proj/.github/workflows/quality-gate.yml"
-assert_contains "no-lockfile fallback uses npm ci" "npm ci" "$BARE_YML"
+# Canonical workflow must have the four jobs (quality, security, mutation, auto-merge)
+# and the incremental-vs-full mutation branching.
+assert_contains "quality-gate template has quality job" "name: Quality" "$QG_TEMPLATE"
+assert_contains "quality-gate template has security job" "name: Security Scan" "$QG_TEMPLATE"
+assert_contains "quality-gate template has mutation job" "name: Mutation Testing" "$QG_TEMPLATE"
+assert_contains "quality-gate template has auto-merge job" "name: Auto Merge" "$QG_TEMPLATE"
+assert_contains "quality-gate template auto-merges via gh pr merge --auto" "gh pr merge" "$QG_TEMPLATE"
+assert_contains "quality-gate template differentiates incremental vs full mutation" "Full-codebase mutation run" "$QG_TEMPLATE"
+assert_contains "quality-gate template uses git since-ref for incremental mutation" 'origin/$BASE_REF' "$QG_TEMPLATE"
 
 # ============================================================
 echo ""

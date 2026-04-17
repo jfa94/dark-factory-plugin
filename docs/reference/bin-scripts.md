@@ -756,7 +756,7 @@ Configure as `statusLine.command` in `~/.claude/settings.json`:
 
 1. Reads Claude Code statusline JSON from stdin
 2. Extracts `.rate_limits` and writes to `${CLAUDE_PLUGIN_DATA}/usage-cache.json` with `captured_at` timestamp
-3. Chains to original statusline if `DARK_FACTORY_ORIGINAL_STATUSLINE` env var is set
+3. Chains to original statusline if `FACTORY_ORIGINAL_STATUSLINE` env var is set
 4. Otherwise, outputs default statusline: `<model> in <dir> | <remaining%> left for <time>`
 
 **Chaining to existing statusline:**
@@ -764,7 +764,7 @@ Configure as `statusLine.command` in `~/.claude/settings.json`:
 ```json
 {
   "env": {
-    "DARK_FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"
+    "FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"
   },
   "statusLine": {
     "type": "command",
@@ -792,7 +792,7 @@ Configure as `statusLine.command` in `~/.claude/settings.json`:
 **Notes:**
 
 - Fails silently on cache write errors to never break statusline output
-- `CLAUDE_PLUGIN_DATA` defaults to `~/.claude/plugin-data/dark-factory` when not set
+- `CLAUDE_PLUGIN_DATA` defaults to `~/.claude/plugin-data/factory` when not set
 - Required for `pipeline-quota-check` to function
 
 ---

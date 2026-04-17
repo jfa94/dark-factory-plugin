@@ -2,7 +2,7 @@
   "$schema": "https://code.claude.com/schemas/settings.json",
   "_comment": "Pipeline-specific autonomous-mode settings merged with user's existing settings at runtime. User settings take precedence. Paths that reference ~/.claude/hooks/* are user-env hooks inherited from the host environment; inline shell is executed under the user's shell and Bash(*) gating.",
   "env": {
-    "DARK_FACTORY_AUTONOMOUS_MODE": "1"
+    "FACTORY_AUTONOMOUS_MODE": "1"
   },
   "permissions": {
     "allow": [

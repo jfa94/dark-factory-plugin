@@ -31,7 +31,7 @@ Stage H: Completion
 
 ### Stage A: Input & Discovery
 
-- Parse operating mode from `/dark-factory:run` arguments
+- Parse operating mode from `/factory:run` arguments
 - Validate preconditions (git remote, required agents, skills)
 - Fetch PRD body from GitHub issue via `pipeline-fetch-prd`
 
@@ -101,7 +101,7 @@ For each task in execution order:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        /dark-factory:run                        │
+│                        /factory:run                        │
 │                     (Command Entry Point)                       │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
@@ -150,7 +150,7 @@ For each task in execution order:
 ### Run Initialization
 
 ```
-/dark-factory:run prd --issue 42
+/factory:run prd --issue 42
         │
         ▼
 pipeline-validate

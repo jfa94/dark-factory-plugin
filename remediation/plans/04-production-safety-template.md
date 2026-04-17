@@ -56,8 +56,8 @@ Structure to replicate:
 ```json
 {
   "env": {
-    "DARK_FACTORY_AUTONOMOUS_MODE": "1",
-    "DARK_FACTORY_HOOK_LOG": "${CLAUDE_PLUGIN_DATA}/hooks.log"
+    "FACTORY_AUTONOMOUS_MODE": "1",
+    "FACTORY_HOOK_LOG": "${CLAUDE_PLUGIN_DATA}/hooks.log"
   },
   "permissions": {
     "allow": [

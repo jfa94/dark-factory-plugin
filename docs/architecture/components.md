@@ -9,8 +9,8 @@ dark-factory-plugin/
 ├── .claude-plugin/
 │   └── plugin.json              # Manifest with userConfig schema
 ├── commands/
-│   ├── run.md                   # /dark-factory:run entry point
-│   └── configure.md             # /dark-factory:configure settings editor
+│   ├── run.md                   # /factory:run entry point
+│   └── configure.md             # /factory:configure settings editor
 ├── agents/
 │   ├── pipeline-orchestrator.md # Control loop, subagent spawning
 │   ├── spec-generator.md        # PRD to spec conversion
@@ -39,7 +39,7 @@ dark-factory-plugin/
 
 ## Commands
 
-### `/dark-factory:run`
+### `/factory:run`
 
 Entry point for all pipeline invocations.
 
@@ -56,13 +56,13 @@ Entry point for all pipeline invocations.
 
 **Behavior:**
 
-1. Check `DARK_FACTORY_AUTONOMOUS_MODE` environment variable
+1. Check `FACTORY_AUTONOMOUS_MODE` environment variable
 2. Run `pipeline-validate` to check preconditions
 3. Parse mode and validate arguments
 4. Initialize run state via `pipeline-init`
 5. Spawn `pipeline-orchestrator` agent
 
-### `/dark-factory:configure`
+### `/factory:configure`
 
 Conversational settings editor.
 
@@ -440,7 +440,7 @@ Then enable in `.mcp.json` by setting `"disabled": false`.
 
 Bundled safety settings for autonomous operation. Includes:
 
-- `DARK_FACTORY_AUTONOMOUS_MODE=1` environment variable
+- `FACTORY_AUTONOMOUS_MODE=1` environment variable
 - Explicit `allow` list for safe commands
 - Comprehensive `deny` list blocking destructive operations
 - Hooks for .claude/ directory protection, branch protection, dangerous patterns, SQL safety, pre-commit checks, and auto-formatting

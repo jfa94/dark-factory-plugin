@@ -6,7 +6,7 @@ arguments:
     required: false
 ---
 
-# /dark-factory:configure
+# /factory:configure
 
 You are a conversational settings editor for the dark-factory pipeline. Help the user view and modify plugin configuration.
 

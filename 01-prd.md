@@ -29,12 +29,12 @@ The [dark-factory](https://github.com/jfa94/dark-factory) autonomous coding pipe
 
    **One-time setup (per project):**
    - Install the plugin from the marketplace
-   - Run `/dark-factory:configure` to set project-specific thresholds (quota.pause_threshold, parallel.max_concurrent, review.spec_threshold)
+   - Run `/factory:configure` to set project-specific thresholds (quota.pause_threshold, parallel.max_concurrent, review.spec_threshold)
    - Create a GitHub label `prd` for PRD issues (or use file-based PRDs)
 
    **Per run:**
    - Create a GitHub issue labeled `prd` describing the work
-   - Run `/dark-factory:run <issue_number>` (or omit the number to use the most-recently-updated prd-labeled issue)
+   - Run `/factory:run <issue_number>` (or omit the number to use the most-recently-updated prd-labeled issue)
 
    **During the run (intervention points):**
    - Tasks escalated to `needs_human_review` require human approval — these happen when:
@@ -125,7 +125,7 @@ The deterministic-first ratio is 3.5:1 (21 bin scripts + 4 hooks vs 6 agents), e
 
 | Feature                 | Existing Behavior (Bash)                              | Plugin Primitive                                                | Enhancements                                                 |
 | ----------------------- | ----------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| **Issue number intake** | CLI accepts issue numbers as arguments                | `/dark-factory:run` command parses arguments                    | Same behavior, native slash command UX                       |
+| **Issue number intake** | CLI accepts issue numbers as arguments                | `/factory:run` command parses arguments                         | Same behavior, native slash command UX                       |
 | **PRD tag detection**   | Searches for `[PRD]`-tagged open issues               | `pipeline-orchestrator` agent queries GitHub API via `gh`       | Same behavior                                                |
 | **Multi-PRD batching**  | `multi-prd.sh` processes multiple issues sequentially | Orchestrator iterates issues, can parallelize independent specs | Parallel spec generation for independent PRDs                |
 | **Issue body fetching** | `spec-gen.sh` calls `gh issue view`                   | `bin/pipeline-fetch-prd` script                                 | Deterministic, testable, same `gh` interface                 |
@@ -243,16 +243,16 @@ The deterministic-first ratio is 3.5:1 (21 bin scripts + 4 hooks vs 6 agents), e
 
 ### Stage K: Configuration
 
-| Feature                         | Existing Behavior (Bash)    | Plugin Primitive                                | Enhancements                                                                                                                                                                                                                                                                        |
-| ------------------------------- | --------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pipeline settings**           | `settings.sh` + config file | `plugin.json` userConfig schema                 | Native Claude Code configuration                                                                                                                                                                                                                                                    |
-| **Permission defaults**         | Manual setup                | `settings.json` in plugin                       | Automatic permission grants for plugin tools                                                                                                                                                                                                                                        |
-| **Plugin manifest**             | `config-deployer.sh`        | `.claude-plugin/plugin.json`                    | Native plugin metadata                                                                                                                                                                                                                                                              |
-| **Interactive settings editor** | Not in Bash pipeline        | `/dark-factory:configure` command (agent-based) | NEW: review + update all userConfig settings conversationally                                                                                                                                                                                                                       |
-| **Autonomous settings**         | Not in Bash pipeline        | `templates/settings.autonomous.json` (bundled)  | NEW: `Bash(*)` + safety hooks + deny-list; ported from dark-factory project file (stripped `enabledPlugins`/`effortLevel` for safe merge with user settings); detected via `DARK_FACTORY_AUTONOMOUS_MODE` env var; `/dark-factory:run` prompts relaunch with `--settings` if absent |
-| **Config deployment**           | `config-deployer.sh`        | `bin/pipeline-init --deploy-config`             | Deploys `.github/workflows/quality-gate.yml`, `.gitignore` entries, `package.json` scripts; idempotent                                                                                                                                                                              |
-| **Project scaffolding**         | `project-init.sh`           | `bin/pipeline-init --scaffold`                  | Creates `claude-progress.json`, `feature-status.json`, `init.sh`; only on first run when files absent                                                                                                                                                                               |
-| **GitIgnore management**        | Manual                      | `bin/pipeline-init --gitignore`                 | Ensures plugin state dirs (`${PLUGIN_DATA}/*`) and lock files are in `.gitignore`                                                                                                                                                                                                   |
+| Feature                         | Existing Behavior (Bash)    | Plugin Primitive                               | Enhancements                                                                                                                                                                                                                                                              |
+| ------------------------------- | --------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pipeline settings**           | `settings.sh` + config file | `plugin.json` userConfig schema                | Native Claude Code configuration                                                                                                                                                                                                                                          |
+| **Permission defaults**         | Manual setup                | `settings.json` in plugin                      | Automatic permission grants for plugin tools                                                                                                                                                                                                                              |
+| **Plugin manifest**             | `config-deployer.sh`        | `.claude-plugin/plugin.json`                   | Native plugin metadata                                                                                                                                                                                                                                                    |
+| **Interactive settings editor** | Not in Bash pipeline        | `/factory:configure` command (agent-based)     | NEW: review + update all userConfig settings conversationally                                                                                                                                                                                                             |
+| **Autonomous settings**         | Not in Bash pipeline        | `templates/settings.autonomous.json` (bundled) | NEW: `Bash(*)` + safety hooks + deny-list; ported from dark-factory project file (stripped `enabledPlugins`/`effortLevel` for safe merge with user settings); detected via `FACTORY_AUTONOMOUS_MODE` env var; `/factory:run` prompts relaunch with `--settings` if absent |
+| **Config deployment**           | `config-deployer.sh`        | `bin/pipeline-init --deploy-config`            | Deploys `.github/workflows/quality-gate.yml`, `.gitignore` entries, `package.json` scripts; idempotent                                                                                                                                                                    |
+| **Project scaffolding**         | `project-init.sh`           | `bin/pipeline-init --scaffold`                 | Creates `claude-progress.json`, `feature-status.json`, `init.sh`; only on first run when files absent                                                                                                                                                                     |
+| **GitIgnore management**        | Manual                      | `bin/pipeline-init --gitignore`                | Ensures plugin state dirs (`${PLUGIN_DATA}/*`) and lock files are in `.gitignore`                                                                                                                                                                                         |
 
 ---
 
@@ -288,14 +288,14 @@ Pipeline creates PR, enables auto-merge. Human reviews merged code post-hoc.
 ### Single-Task Mode
 
 Execute one task from an existing spec. Useful for retrying a failed task or running a specific task manually.
-**Invocation:** `/dark-factory:run --task <task_id> --spec <spec-dir>`
+**Invocation:** `/factory:run --task <task_id> --spec <spec-dir>`
 
 ### Spec-to-PR Mode
 
 Generate spec from PRD → execute all tasks → create single PR. No issue discovery or multi-PRD batching.
-**Invocation:** `/dark-factory:run --prd <issue-number>`
+**Invocation:** `/factory:run --prd <issue-number>`
 
 ### Full Dark Factory Mode
 
 Discover `[PRD]`-tagged issues → generate specs → execute → review → merge → close issues. The original autonomous pipeline.
-**Invocation:** `/dark-factory:run --discover`
+**Invocation:** `/factory:run --discover`

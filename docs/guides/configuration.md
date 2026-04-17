@@ -1,13 +1,13 @@
 # Configuring Settings
 
-This guide covers how to adjust pipeline behavior via `/dark-factory:configure` and when to change each setting.
+This guide covers how to adjust pipeline behavior via `/factory:configure` and when to change each setting.
 
 ## Accessing Configuration
 
 Run the interactive configuration command:
 
 ```
-/dark-factory:configure
+/factory:configure
 ```
 
 The command:
@@ -47,22 +47,22 @@ Consecutive task failures before the pipeline aborts.
 
 ### humanReviewLevel
 
-**Default:** 1 | **Range:** 0-4
+**Default:** 0 | **Range:** 0-4
 
-Controls human oversight checkpoints:
+Controls human oversight checkpoints. Default (0) assumes CI branch protection and GitHub auto-merge are enabled — the pipeline creates a PR and enables auto-merge; CI acts as the merge gate.
 
-| Level | Name              | Behavior                                   |
-| ----- | ----------------- | ------------------------------------------ |
-| 0     | Full Autonomy     | Pipeline creates PR and enables auto-merge |
-| 1     | PR Approval       | Pipeline creates PR, human merges          |
-| 2     | Review Checkpoint | Human signs off before PR creation         |
-| 3     | Spec Approval     | Human approves spec before execution       |
-| 4     | Full Supervision  | Human approves at every stage              |
+| Level | Name              | Behavior                                             |
+| ----- | ----------------- | ---------------------------------------------------- |
+| 0     | Full Autonomy     | Pipeline creates PR and enables auto-merge (default) |
+| 1     | PR Approval       | Pipeline creates PR, human merges                    |
+| 2     | Review Checkpoint | Human signs off before PR creation                   |
+| 3     | Spec Approval     | Human approves spec before execution                 |
+| 4     | Full Supervision  | Human approves at every stage                        |
 
 **When to change:**
 
-- Use 0 for trusted, well-tested codebases with strong CI
-- Use 1 (default) for standard autonomous workflow
+- Use 0 (default) for repos with CI branch protection and auto-merge enabled
+- Use 1 if CI or auto-merge is not configured
 - Use 3-4 for first runs or security-sensitive work
 
 ### maxParallelTasks

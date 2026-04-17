@@ -111,13 +111,13 @@ Set `statusLine.command` in `~/.claude/settings.json`:
 }
 ```
 
-If you already have a statusline configured, set `DARK_FACTORY_ORIGINAL_STATUSLINE`
+If you already have a statusline configured, set `FACTORY_ORIGINAL_STATUSLINE`
 in the `env` field so the wrapper chains to it:
 
 ```json
 {
   "env": {
-    "DARK_FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"
+    "FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"
   },
   "statusLine": {
     "type": "command",
@@ -150,7 +150,7 @@ Independent of API rate limits, the pipeline can enforce a wall-clock cap via `m
 Set a positive `maxRuntimeMinutes` as an emergency brake on unattended cost exposure:
 
 ```
-/dark-factory:configure
+/factory:configure
 > Set maxRuntimeMinutes to 480
 ```
 
@@ -159,7 +159,7 @@ Pause time (rate-limit waits) is excluded from the runtime counter, so a pipelin
 **Resuming after a runtime trip:**
 
 ```
-/dark-factory:run resume
+/factory:run resume
 ```
 
 The orchestrator reads persisted state and continues from the first incomplete task.
@@ -191,7 +191,7 @@ When 7d limits are exceeded:
 The user can resume later:
 
 ```
-/dark-factory:run resume
+/factory:run resume
 ```
 
 ---

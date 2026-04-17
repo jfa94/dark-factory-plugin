@@ -47,7 +47,7 @@ File: `bin/test-integration.sh` (NEW)
 Each test scenario should:
 
 1. Create a temp repo with a known initial state
-2. Set `DARK_FACTORY_STATE_DIR` to a temp path
+2. Set `FACTORY_STATE_DIR` to a temp path
 3. Mock external commands (`gh`, `claude`, `ollama`, `git push`) with controllable fixtures
 4. Run the real plugin scripts against the temp repo
 5. Assert on the final state (state.json contents, branch state, files created)
@@ -64,8 +64,8 @@ TEST_DIR="$(mktemp -d "/tmp/dark-factory-integration.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 export PATH="$REPO_ROOT/bin:$TEST_DIR/mocks:$PATH"
-export DARK_FACTORY_STATE_DIR="$TEST_DIR/state"
-mkdir -p "$DARK_FACTORY_STATE_DIR" "$TEST_DIR/mocks"
+export FACTORY_STATE_DIR="$TEST_DIR/state"
+mkdir -p "$FACTORY_STATE_DIR" "$TEST_DIR/mocks"
 
 passed=0
 failed=0

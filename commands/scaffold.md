@@ -2,9 +2,9 @@
 description: "Scaffold a project for the dark-factory pipeline (run once per project)"
 ---
 
-# /dark-factory:scaffold
+# /factory:scaffold
 
-You are preparing a project to be run by the dark-factory pipeline for the first time. The pipeline refuses to start against an unscaffolded project, so this command must run before any `/dark-factory:run` in a new repo.
+You are preparing a project to be run by the dark-factory pipeline for the first time. The pipeline refuses to start against an unscaffolded project, so this command must run before any `/factory:run` in a new repo.
 
 ## Step 1: Detect project root
 
@@ -14,7 +14,7 @@ Confirm the current working directory is a git repo:
 git rev-parse --show-toplevel
 ```
 
-Use that path as `$PROJECT_ROOT`. If the command fails, tell the user they must run `/dark-factory:scaffold` from inside a git checkout and stop.
+Use that path as `$PROJECT_ROOT`. If the command fails, tell the user they must run `/factory:scaffold` from inside a git checkout and stop.
 
 ## Step 2: Run the scaffolder
 
@@ -50,7 +50,7 @@ If missing, ask the user:
 Install recipe (macOS): `brew install trufflesecurity/trufflehog/trufflehog`
 Install recipe (Linux): `curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin`
 
-If the user accepts and install succeeds, enable the hook via `/dark-factory:configure safety.useTruffleHog` (set to `true`).
+If the user accepts and install succeeds, enable the hook via `/factory:configure safety.useTruffleHog` (set to `true`).
 
 ### 3b. GitHub CLI (`gh`) — hard dependency
 
@@ -81,7 +81,7 @@ Inspect the project for common sensitive-path patterns:
 - `prisma/migrations/**` if a `prisma/` dir exists
 - `terraform/**/*.tfstate` if a `.terraform/` dir exists
 
-For each detected, ask the user if they want to add the glob to `safety.writeBlockedPaths`. If yes, run `/dark-factory:configure safety.writeBlockedPaths` with the resulting array (the configure command handles the jq merge).
+For each detected, ask the user if they want to add the glob to `safety.writeBlockedPaths`. If yes, run `/factory:configure safety.writeBlockedPaths` with the resulting array (the configure command handles the jq merge).
 
 Never add defaults without explicit confirmation — the blocklist is permissive by design so the autonomous pipeline can make as many changes as possible.
 
@@ -97,5 +97,5 @@ Print a compact report:
 
 Remind the user:
 
-- Run `/dark-factory:configure` to inspect or change any setting.
-- Run `/dark-factory:run prd --issue <N>` to kick off a pipeline.
+- Run `/factory:configure` to inspect or change any setting.
+- Run `/factory:run prd --issue <N>` to kick off a pipeline.

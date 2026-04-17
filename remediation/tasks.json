@@ -351,7 +351,7 @@
       "Post-tool hooks: prettier auto-format, related test runner, audit log",
       "Stop hook: full vitest suite",
       "Full deny-list from the old file",
-      "DARK_FACTORY_AUTONOMOUS_MODE=1 env var remains",
+      "FACTORY_AUTONOMOUS_MODE=1 env var remains",
       "Paths that reference user hooks (~/.claude/hooks/*) are preserved as-is since the plugin inherits the user environment"
     ],
     "tests_to_write": [
@@ -1761,8 +1761,8 @@
   {
     "task_id": "task_16_12",
     "plan_id": "16-runnable-posture",
-    "title": "/dark-factory:scaffold command + orchestrator precheck",
-    "description": "New commands/scaffold.md (markdown slash command) that runs pipeline-scaffold, checks optional deps (trufflehog, gdate), and offers to populate safety.writeBlockedPaths. Add pipeline-scaffold --check mode (exit 0/1). Orchestrator fails at startup if --check fails, pointing user to /dark-factory:scaffold.",
+    "title": "/factory:scaffold command + orchestrator precheck",
+    "description": "New commands/scaffold.md (markdown slash command) that runs pipeline-scaffold, checks optional deps (trufflehog, gdate), and offers to populate safety.writeBlockedPaths. Add pipeline-scaffold --check mode (exit 0/1). Orchestrator fails at startup if --check fails, pointing user to /factory:scaffold.",
     "priority": "P2",
     "findings": ["GAP-3"],
     "status": "done",

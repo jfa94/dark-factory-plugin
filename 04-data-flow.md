@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        /dark-factory:run                                │
+│                        /factory:run                                │
 │  Parse mode → pipeline-validate → pipeline-init → spawn orchestrator   │
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │
@@ -618,7 +618,7 @@ All state writes are atomic: write to temp file, then `mv` to target. This preve
 
 ### How Resume Works
 
-1. User invokes `/dark-factory:run resume`
+1. User invokes `/factory:run resume`
 2. Command calls `pipeline-state interrupted <run-id>` to find interrupted run
 3. If found, calls `pipeline-state resume-point <run-id>` → returns first incomplete task
 4. Spawns orchestrator with `--resume <run-id>` context
@@ -657,13 +657,13 @@ All state writes are atomic: write to temp file, then `mv` to target. This preve
 
 Based on `humanReviewLevel` (0-4), the pipeline pauses at different points:
 
-| Level                 | Pauses At                                                                                     | How Pipeline Pauses                                    | How It Resumes                                       |
-| --------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| 4 (full supervision)  | After spec, after each task decomposition, after each task execution, after each review round | Writes `awaiting_human` status, prints context to user | User runs `/dark-factory:run resume` after reviewing |
-| 3 (spec approval)     | After spec generation + review                                                                | Same                                                   | Same                                                 |
-| 2 (review checkpoint) | After adversarial review, before PR creation                                                  | Same                                                   | Same                                                 |
-| 1 (PR approval)       | Never — creates PR and waits for human merge                                                  | `pipeline-wait-pr` polls until merged                  | Automatic on merge                                   |
-| 0 (full autonomy)     | Never — enables auto-merge                                                                    | No pause                                               | Fully automatic                                      |
+| Level                 | Pauses At                                                                                     | How Pipeline Pauses                                    | How It Resumes                                  |
+| --------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------- |
+| 4 (full supervision)  | After spec, after each task decomposition, after each task execution, after each review round | Writes `awaiting_human` status, prints context to user | User runs `/factory:run resume` after reviewing |
+| 3 (spec approval)     | After spec generation + review                                                                | Same                                                   | Same                                            |
+| 2 (review checkpoint) | After adversarial review, before PR creation                                                  | Same                                                   | Same                                            |
+| 1 (PR approval)       | Never — creates PR and waits for human merge                                                  | `pipeline-wait-pr` polls until merged                  | Automatic on merge                              |
+| 0 (full autonomy)     | Never — enables auto-merge                                                                    | No pause                                               | Fully automatic                                 |
 
 At each pause point:
 
@@ -671,4 +671,4 @@ At each pause point:
 2. Orchestrator outputs context: what was done, what's next, what needs review
 3. Pipeline session ends (stop-gate hook marks state)
 4. User reviews at their leisure
-5. User runs `/dark-factory:run resume` to continue
+5. User runs `/factory:run resume` to continue

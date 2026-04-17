@@ -68,8 +68,8 @@ The autonomous pipeline was unable to generate a valid spec from this PRD after 
 
 ### Next Steps
 1. Review the PRD for clarity and completeness
-2. Run the pipeline again with \`/dark-factory:run prd --issue ${issue}\`
-3. Or create the spec manually and run \`/dark-factory:run task --spec-dir <path>\`
+2. Run the pipeline again with \`/factory:run prd --issue ${issue}\`
+3. Or create the spec manually and run \`/factory:run task --spec-dir <path>\`
 
 ---
 *Posted by dark-factory pipeline*"
@@ -92,8 +92,8 @@ The pipeline reached a checkpoint that requires your approval because \`humanRev
 
 ### Next Steps
 1. Inspect the run state under \`runs/${gate_run_id}/\` and the latest changes
-2. Approve by resuming: \`/dark-factory:run resume\`
-3. Or lower \`humanReviewLevel\` via \`/dark-factory:configure\` to let the pipeline proceed automatically in the future
+2. Approve by resuming: \`/factory:run resume\`
+3. Or lower \`humanReviewLevel\` via \`/factory:configure\` to let the pipeline proceed automatically in the future
 
 ---
 *Posted by dark-factory pipeline*"
@@ -147,7 +147,7 @@ ${log_excerpt}
 ### Next Steps
 1. Check the CI logs for the full error
 2. Fix the issue locally and push
-3. Resume the pipeline with \`/dark-factory:run resume\`
+3. Resume the pipeline with \`/factory:run resume\`
 
 ---
 *Posted by dark-factory pipeline*"
@@ -175,7 +175,7 @@ The adversarial reviewer could not be satisfied after the configured number of f
 ### Next Steps
 1. Inspect the full review transcripts under \`runs/${run_id}/reviews/${task_id}/\`
 2. Either hand-edit the task branch \`task/${task_id}\` and push a resolution, or re-scope the task in the PRD
-3. Resume the pipeline with \`/dark-factory:run resume\`
+3. Resume the pipeline with \`/factory:run resume\`
 
 ---
 *Posted by dark-factory pipeline*"
@@ -200,7 +200,7 @@ The pipeline attempted to rebase but encountered conflicts that could not be aut
 1. Check out the branch: \`git checkout ${branch}\`
 2. Rebase onto staging: \`git rebase staging\`
 3. Resolve conflicts and push
-4. Resume the pipeline with \`/dark-factory:run resume\`
+4. Resume the pipeline with \`/factory:run resume\`
 
 ---
 *Posted by dark-factory pipeline*"

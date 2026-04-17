@@ -12,7 +12,7 @@ The plugin's documentation overstates what the current implementation actually d
    - Manually pre-install `spec-reviewer` and `code-reviewer` agents (plan 01 addendum fixes this but the PRD doc hasn't been updated)
    - Resolve PRs that escalate to `needs_human_review`
    - Create PRD issues with specific labels (plan 11 fixes discovery; the PRD still implies "any issue works")
-   - Run `/dark-factory:configure` once per project
+   - Run `/factory:configure` once per project
 
    The doc should acknowledge these human touchpoints explicitly rather than promising "zero intervention".
 
@@ -57,14 +57,14 @@ require a human:
 **One-time setup (per project):**
 
 - Install the plugin from the marketplace
-- Run `/dark-factory:configure` to set project-specific thresholds
+- Run `/factory:configure` to set project-specific thresholds
   (quota.pause_threshold, parallel.max_concurrent, review.spec_threshold)
 - Create a GitHub label `prd` for PRD issues (or use file-based PRDs)
 
 **Per run:**
 
 - Create a GitHub issue labeled `prd` describing the work
-- Run `/dark-factory:run <issue_number>` (or omit the number to use the
+- Run `/factory:run <issue_number>` (or omit the number to use the
   most-recently-updated prd-labeled issue)
 
 **During the run (intervention points):**

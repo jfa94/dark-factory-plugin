@@ -9,7 +9,7 @@
 Three places define the plugin's configuration schema and they disagree:
 
 1. **`plugin.json`** declares the configurable keys under `"configuration"`.
-2. **`commands/configure.md`** writes keys to `~/.claude/plugins/dark-factory/config.json` using one set of names.
+2. **`commands/configure.md`** writes keys to `~/.claude/plugins/factory/config.json` using one set of names.
 3. **The `bin/pipeline-*` scripts** read the config via `pipeline-config get <key>` using a third set of names.
 
 Examples of drift found during review:
@@ -269,4 +269,4 @@ fi
 5. Grep `bin/` for all legacy names from step 1 — zero matches
 6. `bin/test-phase9.sh` — config tests pass (assertions on canonical keys and setpath usage)
 7. `jq '.configuration | keys' plugin.json` — output is exactly the canonical key set
-8. Manual round-trip: run `/dark-factory:configure`, set `parallel.max_concurrent=8`, read it back via `pipeline-config get parallel.max_concurrent` → returns `8`
+8. Manual round-trip: run `/factory:configure`, set `parallel.max_concurrent=8`, read it back via `pipeline-config get parallel.max_concurrent` → returns `8`

@@ -46,7 +46,7 @@ See `remediation/tasks.json` for `acceptance_criteria` and `tests_to_write`.
 
 Spec-generator currently writes files and returns success — the orchestrator never sees the worktree path, and no commit was made. The files vanish with the worktree.
 
-The fix is: spec-generator must either (a) commit its changes on a branch that the orchestrator can fetch, or (b) write via a tool that bypasses the worktree (`pipeline-state write` writes to `$DARK_FACTORY_STATE_DIR` which is absolute). Option (a) is the more robust approach because it also makes the spec available to downstream task-executors (which also run in isolated worktrees).
+The fix is: spec-generator must either (a) commit its changes on a branch that the orchestrator can fetch, or (b) write via a tool that bypasses the worktree (`pipeline-state write` writes to `$FACTORY_STATE_DIR` which is absolute). Option (a) is the more robust approach because it also makes the spec available to downstream task-executors (which also run in isolated worktrees).
 
 ## Execution Guidance
 
@@ -58,7 +58,7 @@ Find the `staging-init` action. Before `git checkout -b "staging/$run_id"`, inse
 
 ```bash
 # Reconcile staging base with develop to prevent drift during long runs
-base_branch="${DARK_FACTORY_BASE_BRANCH:-develop}"
+base_branch="${FACTORY_BASE_BRANCH:-develop}"
 if git rev-parse --verify "origin/$base_branch" >/dev/null 2>&1; then
   git fetch origin "$base_branch" --quiet || true
   behind=$(git rev-list --count "HEAD..origin/$base_branch" 2>/dev/null || echo 0)
@@ -75,7 +75,7 @@ fi
 Notes:
 
 - Use `--ff-only` only — do **not** rebase automatically. Rebasing a shared staging branch rewrites history for anyone else looking at it. If `HEAD` is not a fast-forward ancestor of `origin/$base_branch`, fail loudly so a human can resolve.
-- `DARK_FACTORY_BASE_BRANCH` lets integration tests override the base to avoid needing a real `develop` branch.
+- `FACTORY_BASE_BRANCH` lets integration tests override the base to avoid needing a real `develop` branch.
 - Emit structured JSON on failure so the orchestrator can surface it to `pipeline-gh-comment`.
 
 Regression tests in `bin/test-phase4.sh`:
@@ -131,7 +131,7 @@ Notes:
 
 - The agent must use `git -c user.email=... -c user.name=...` inline because the ephemeral worktree may not inherit global git config.
 - The `2>/dev/null || true` on push is intentional: in test environments or repos without a remote, we fall back to local ref reading. The orchestrator handles both.
-- `pipeline-state write` is the only reliable cross-worktree channel because it writes to `$DARK_FACTORY_STATE_DIR` (absolute path) rather than the worktree's CWD.
+- `pipeline-state write` is the only reliable cross-worktree channel because it writes to `$FACTORY_STATE_DIR` (absolute path) rather than the worktree's CWD.
 
 ### task_03_03 — Orchestrator commit-spec fallback (S3b)
 

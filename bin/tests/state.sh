@@ -304,7 +304,7 @@ pipeline-lock release 2>/dev/null
 # Timeout: write a lock file with the current shell's PID (guaranteed alive),
 # then try to acquire with a different caller PID and a 2s timeout
 echo "{\"pid\":$$,\"timestamp\":\"2026-01-01T00:00:00Z\"}" > "$CLAUDE_PLUGIN_DATA/pipeline.lock"
-output=$(DARK_FACTORY_LOCK_TEST_PID=99998 pipeline-lock acquire --timeout 2 2>/dev/null) || true
+output=$(FACTORY_LOCK_TEST_PID=99998 pipeline-lock acquire --timeout 2 2>/dev/null) || true
 action=$(echo "$output" | jq -r '.action')
 assert_eq "lock times out on live PID" "timeout" "$action"
 
@@ -368,7 +368,7 @@ peer_pid=$!
 printf '{"pid":%d,"timestamp":"2026-01-01T00:00:00Z"}' "$peer_pid" > "$CLAUDE_PLUGIN_DATA/pipeline.lock"
 
 set +e
-output=$(DARK_FACTORY_LOCK_TEST_PID=99991 pipeline-lock release 2>/dev/null)
+output=$(FACTORY_LOCK_TEST_PID=99991 pipeline-lock release 2>/dev/null)
 ec=$?
 set -e
 assert_eq "release from non-owner-alive-peer exits non-zero" "1" "$ec"
@@ -380,7 +380,7 @@ assert_eq "lockfile intact after refused release" "true" \
   "$([[ -f "$CLAUDE_PLUGIN_DATA/pipeline.lock" ]] && echo true || echo false)"
 
 # --- Case 2: release from the owner PID succeeds ---
-output=$(DARK_FACTORY_LOCK_TEST_PID=$peer_pid pipeline-lock release 2>/dev/null)
+output=$(FACTORY_LOCK_TEST_PID=$peer_pid pipeline-lock release 2>/dev/null)
 action=$(printf '%s' "$output" | jq -r '.action')
 assert_eq "release from owner PID succeeds" "released" "$action"
 assert_eq "lockfile removed after owner release" "false" \
@@ -401,7 +401,7 @@ assert_eq "release with no lockfile reports noop" "noop" "$action"
 
 # --- Case 4: lockfile PID is dead → any caller may release (orphan cleanup) ---
 echo '{"pid":77777,"timestamp":"2026-01-01T00:00:00Z"}' > "$CLAUDE_PLUGIN_DATA/pipeline.lock"
-output=$(DARK_FACTORY_LOCK_TEST_PID=88888 pipeline-lock release 2>/dev/null)
+output=$(FACTORY_LOCK_TEST_PID=88888 pipeline-lock release 2>/dev/null)
 action=$(printf '%s' "$output" | jq -r '.action')
 assert_eq "dead-holder lock is released by any caller" "released" "$action"
 
@@ -644,7 +644,7 @@ pipeline-lock release >/dev/null 2>&1
 # survive (last writer wins via atomic rename — but the file is never missing).
 echo '{"pid":77778,"timestamp":"2026-01-01T00:00:00Z"}' > "$CLAUDE_PLUGIN_DATA/pipeline.lock"
 for i in 1 2 3 4 5; do
-  DARK_FACTORY_LOCK_TEST_PID=$((80000 + i)) pipeline-lock recover >/dev/null 2>&1 &
+  FACTORY_LOCK_TEST_PID=$((80000 + i)) pipeline-lock recover >/dev/null 2>&1 &
 done
 wait
 # After all recoverers finish, the lock file must still exist, parse, and

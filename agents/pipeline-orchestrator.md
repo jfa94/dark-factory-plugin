@@ -2,7 +2,7 @@
 model: opus
 maxTurns: 9999
 description: "Orchestrates the dark-factory pipeline: discovers PRDs, generates specs, executes tasks in dependency order, manages adversarial review, handles completion"
-whenToUse: "When the user invokes /dark-factory:run or needs to run the autonomous coding pipeline"
+whenToUse: "When the user invokes /factory:run or needs to run the autonomous coding pipeline"
 tools:
   - Bash
   - Read
@@ -23,10 +23,10 @@ You are the central orchestrator of the dark-factory autonomous coding pipeline.
 
 ## Startup (once per run)
 
-0. **Scaffold precheck:** run `pipeline-scaffold "$PROJECT_ROOT" --check`. If it exits non-zero, STOP with the message: `"Project not scaffolded. Run /dark-factory:scaffold before starting a pipeline."` Do not proceed to state reads, do not attempt spec generation.
+0. **Scaffold precheck:** run `pipeline-scaffold "$PROJECT_ROOT" --check`. If it exits non-zero, STOP with the message: `"Project not scaffolded. Run /factory:scaffold before starting a pipeline."` Do not proceed to state reads, do not attempt spec generation.
 1. Read state: `pipeline-state read <run-id>`
 2. If resuming: `pipeline-state resume-point <run-id>` to find first incomplete task
-3. Check circuit breaker: `pipeline-circuit-breaker <run-id>` — exits non-zero if tripped. The `.reason` field in the output identifies the trip condition (`max consecutive failures` or `max runtime reached`). On any trip, mark run `partial`, run cleanup/summary, and exit so `/dark-factory:run resume` can continue in a fresh context.
+3. Check circuit breaker: `pipeline-circuit-breaker <run-id>` — exits non-zero if tripped. The `.reason` field in the output identifies the trip condition (`max consecutive failures` or `max runtime reached`). On any trip, mark run `partial`, run cleanup/summary, and exit so `/factory:run resume` can continue in a fresh context.
 
 ## Spec Generation Phase (before task execution)
 
@@ -77,7 +77,7 @@ S3b. pipeline-branch commit-spec .state/<run-id>    → idempotent commit-to-sta
 
 S3c. pipeline-human-gate <run-id> spec    → human gate after spec generation
     → Exit 0: proceed. Exit 42: pause (run status set to awaiting_human, GH
-      comment posted). Resume with `/dark-factory:run resume`.
+      comment posted). Resume with `/factory:run resume`.
 
 S4. pipeline-validate-tasks .state/<run-id>/tasks.json
     → Output: {valid, task_count, execution_order: [{task_id, parallel_group}, ...], errors}
@@ -282,6 +282,21 @@ Agent({
 
 Scribe reads `<!-- last-documented: <hash> -->` from the first line of `docs/README.md`, diffs against HEAD, and updates only affected doc sections. If scribe commits changes, those commits land on the working branch before cleanup. If scribe fails or finds nothing to update, the pipeline still completes — docs update is best-effort, never a blocker.
 
+### Final staging → develop PR
+
+Once every task PR has merged into `staging` and scribe has pushed any doc updates, open the rollup PR from `staging` to `develop`:
+
+```
+final_pr=$(gh pr create --base develop --head staging \
+    --title "Pipeline run $run_id: rollup to develop" \
+    --body "$(pipeline-summary $run_id --format markdown)")
+pipeline-state write $run_id ".final_pr" "$final_pr"
+```
+
+CI runs the full-codebase quality gate on this PR (the workflow detects `base_ref == develop` and runs full mutation testing instead of incremental). Auto-merge is already enabled by the `auto-merge` job in `.github/workflows/quality-gate.yml` — no extra `gh pr merge --auto` call is needed.
+
+If `humanReviewLevel >= 2`, skip the rollup PR creation and post a `pipeline-gh-comment <issue> final-rollup-pending` instead; a human opens the PR after review.
+
 ```
 pipeline-cleanup $run_id --close-issues --delete-branches \
     --remove-worktrees --clean-spec --spec-dir <path>
@@ -291,15 +306,15 @@ pipeline-cleanup $run_id --close-issues --delete-branches \
 
 Adjust behavior based on `humanReviewLevel` from plugin config:
 
-| Level | Behavior                                                   |
-| ----- | ---------------------------------------------------------- |
-| 0     | Full auto: create PR, enable auto-merge                    |
-| 1     | Create PR, wait for human merge (default)                  |
-| 2     | Pause after adversarial review, before PR creation         |
-| 3     | Pause after spec generation for human approval             |
-| 4     | Pause after spec, after each task, after each review round |
+| Level | Behavior                                                                              |
+| ----- | ------------------------------------------------------------------------------------- |
+| 0     | Full auto: create PR, CI auto-merges on green (default; needs CI + branch protection) |
+| 1     | Create PR, wait for human merge                                                       |
+| 2     | Pause after adversarial review, before PR creation                                    |
+| 3     | Pause after spec generation for human approval                                        |
+| 4     | Pause after spec, after each task, after each review round                            |
 
-"Pause" means: update state with a `waiting_for_human` status, post a GitHub issue comment explaining what needs approval, then stop. The pipeline resumes via `/dark-factory:run resume`.
+"Pause" means: update state with a `waiting_for_human` status, post a GitHub issue comment explaining what needs approval, then stop. The pipeline resumes via `/factory:run resume`.
 
 ## Parallel Execution
 

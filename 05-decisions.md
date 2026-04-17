@@ -134,7 +134,7 @@ Hooks are un-bypassable. Even if the orchestrator agent ignores its instructions
 - **No deadlocks:** Lock-based concurrency can deadlock if a process dies holding a lock. Worktrees don't have this problem.
 - **Native support:** Claude Code's `isolation: "worktree"` agent frontmatter creates and manages worktrees automatically.
 
-**Lock still exists because:** Two orchestrator instances running simultaneously would cause state corruption. The lock prevents this edge case (e.g., user accidentally runs `/dark-factory:run` twice).
+**Lock still exists because:** Two orchestrator instances running simultaneously would cause state corruption. The lock prevents this edge case (e.g., user accidentally runs `/factory:run` twice).
 
 ---
 
@@ -187,7 +187,7 @@ Response headers require a layer to capture and write `last-headers.json` after 
 
 ### Decision 11: Ollama Configuration, Remote Support & Auto-Pull
 
-**Choice:** Remote Ollama is supported via `localLlm.ollamaUrl` (existing key). Model validation and auto-pull are integrated into `pipeline-model-router`. Configuration uses a conversational `/dark-factory:configure` agent command covering all settings.
+**Choice:** Remote Ollama is supported via `localLlm.ollamaUrl` (existing key). Model validation and auto-pull are integrated into `pipeline-model-router`. Configuration uses a conversational `/factory:configure` agent command covering all settings.
 
 **Default model:** `qwen2.5-coder:14b` — 9GB disk, ~10-12GB VRAM at Q4_K_M quantization. **16GB minimum GPU** to allow headroom for KV cache and OS overhead. The "14B model needs 16GB" concern conflates unquantized weight size (~28GB at FP16) with the actual Q4_K_M size. Ollama uses Q4_K_M by default; the model fits comfortably on 16GB without a context cap.
 
@@ -252,15 +252,15 @@ Task B (depends on task A) waits for A's PR to merge into `staging` via `pipelin
 
 **Decided: 2026-04-08** (via Plan 04, task_04_01)
 
-**Choice:** The plugin ships `templates/settings.autonomous.json` ported from the existing `~/Projects/dark-factory/templates/settings.autonomous.json` with `enabledPlugins` and `effortLevel` stripped so the template merges safely with user settings. The `/dark-factory:run` command detects whether the session was launched with these settings, and if not, prompts the user to relaunch.
+**Choice:** The plugin ships `templates/settings.autonomous.json` ported from the existing `~/Projects/dark-factory/templates/settings.autonomous.json` with `enabledPlugins` and `effortLevel` stripped so the template merges safely with user settings. The `/factory:run` command detects whether the session was launched with these settings, and if not, prompts the user to relaunch.
 
-**Detection mechanism:** `settings.autonomous.json` sets an environment variable `DARK_FACTORY_AUTONOMOUS_MODE=1` in its `env` config. The `/dark-factory:run` command checks for this env var as its first step. If absent, it exits with a clear message:
+**Detection mechanism:** `settings.autonomous.json` sets an environment variable `FACTORY_AUTONOMOUS_MODE=1` in its `env` config. The `/factory:run` command checks for this env var as its first step. If absent, it exits with a clear message:
 
 > "Dark Factory requires autonomous settings. Relaunch with: `claude --settings <plugin-root>/templates/settings.autonomous.json`"
 
 **Why port nearly everything (not trim aggressively)?**
 
-The autonomous settings have been carefully considered in the existing dark-factory project — `Bash(*)` with an explicit deny-list, safety hooks (branch protection, SQL safety, dangerous patterns, audit logging, test runner), and full MCP tool permissions. Only `enabledPlugins` and `effortLevel` were stripped (they conflict with user-level settings); all safety-relevant entries are preserved. Users can customize via `/dark-factory:configure` after install; the bundled file is the safe default.
+The autonomous settings have been carefully considered in the existing dark-factory project — `Bash(*)` with an explicit deny-list, safety hooks (branch protection, SQL safety, dangerous patterns, audit logging, test runner), and full MCP tool permissions. Only `enabledPlugins` and `effortLevel` were stripped (they conflict with user-level settings); all safety-relevant entries are preserved. Users can customize via `/factory:configure` after install; the bundled file is the safe default.
 
 **Why not hook-based swap/restore?**
 
@@ -268,7 +268,7 @@ The session must start with the correct settings — subagents inherit the paren
 
 **Why not prompt per-run?**
 
-Repeatedly asking the user to re-launch adds friction. The environment variable check is a one-time detection on `/dark-factory:run`. Once the user has set up their launcher (alias, script, or shell config), subsequent runs are seamless.
+Repeatedly asking the user to re-launch adds friction. The environment variable check is a one-time detection on `/factory:run`. Once the user has set up their launcher (alias, script, or shell config), subsequent runs are seamless.
 
 ---
 

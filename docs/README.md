@@ -8,19 +8,13 @@ A Claude Code plugin that converts GitHub PRD (Product Requirements Document) is
 
 The plugin automates the end-to-end software development workflow: reading a requirements document, generating a specification, decomposing work into tasks, implementing code, writing tests, reviewing changes adversarially, and creating pull requests. Human touchpoints are explicit and configurable rather than required at every step.
 
-## Who It's For
-
-- **Solo developers** who want to convert PRDs into working code overnight with minimal supervision
-- **Team leads** who need configurable quality gates and audit trails for autonomous code generation
-- **Security-conscious developers** working on repositories with auth, payment, or PII handling who require multi-round adversarial review and tamper-evident logging
-
 ## Design Philosophy
 
 **Deterministic-first architecture.** The plugin maintains a 3.5:1 ratio of deterministic components (bin scripts, hooks) to non-deterministic (agents). Agent instructions are followed approximately 70% of the time; hooks and scripts enforce at 100%. This hybrid approach uses agents for judgment tasks (code generation, review) while delegating all validation, state management, classification, and parsing to shell scripts.
 
 **Quality over speed.** Every task output passes through a 5-layer quality gate stack (static analysis, tests, coverage regression, holdout validation, mutation testing) and multi-round adversarial code review before reaching a pull request.
 
-**Resumable execution.** All state is persisted to JSON files. Interrupted runs recover from the last checkpoint via `/dark-factory:run resume`.
+**Resumable execution.** All state is persisted to JSON files. Interrupted runs recover from the last checkpoint via `/factory:run resume`.
 
 ---
 
@@ -42,7 +36,7 @@ The plugin automates the end-to-end software development workflow: reading a req
 
 ### Reference
 
-- [Commands](./reference/commands.md) - `/dark-factory:run` and `/dark-factory:configure` specifications
+- [Commands](./reference/commands.md) - `/factory:run` and `/factory:configure` specifications
 - [Configuration Schema](./reference/configuration.md) - All userConfig options with types and defaults
 - [Bin Scripts](./reference/bin-scripts.md) - Deterministic pipeline utilities
 - [State Schema](./reference/state-schema.md) - Run state structure and task lifecycle

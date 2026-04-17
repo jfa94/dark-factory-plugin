@@ -54,13 +54,32 @@ assert_valid_json() {
 }
 
 # ============================================================
-echo "=== .claude-plugin/plugin.json userConfig schema ==="
+echo "=== .claude-plugin/plugin.json manifest ==="
 
 PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
 assert_file_exists "plugin.json exists" "$PLUGIN_JSON"
 assert_valid_json "plugin.json is valid JSON" "$PLUGIN_JSON"
 
-# Every userConfig key documented in docs/reference/configuration.md must be present.
+plugin_version=$(jq -r '.version' "$PLUGIN_JSON")
+assert_eq "plugin version = 0.3.0" "0.3.0" "$plugin_version"
+
+# userConfig was removed in 0.3.1: Claude Code's manifest validator rejects
+# dotted keys and requires fields (title) that conflict with the nested runtime
+# config layout read from ${CLAUDE_PLUGIN_DATA}/config.json. Runtime defaults
+# live inline at each read_config call; schema documentation lives in
+# docs/reference/configuration.md.
+has_user_config=$(jq -r 'has("userConfig") | tostring' "$PLUGIN_JSON")
+assert_eq "plugin.json has NO userConfig block" "false" "$has_user_config"
+
+# ============================================================
+echo "=== docs/reference/configuration.md key coverage ==="
+
+CONFIG_REF="$PLUGIN_ROOT/docs/reference/configuration.md"
+assert_file_exists "docs/reference/configuration.md exists" "$CONFIG_REF"
+
+# Canonical runtime config keys. Each must be documented as an `### key`
+# heading in docs/reference/configuration.md. Keep this list in sync with the
+# keys consumed by bin/pipeline-* via read_config.
 for key in \
   maxRuntimeMinutes \
   maxConsecutiveFailures \
@@ -91,75 +110,41 @@ for key in \
   safety.writeBlockedPaths \
   safety.useTruffleHog \
   safety.allowedSecretPatterns; do
-  has=$(jq --arg k "$key" -r '.userConfig | has($k) | tostring' "$PLUGIN_JSON")
-  assert_eq "userConfig has $key" "true" "$has"
+  if grep -qE "^### ${key//./\\.}\$" "$CONFIG_REF"; then
+    echo "  PASS: configuration.md documents $key"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: configuration.md missing $key"
+    fail=$((fail + 1))
+  fi
 done
 
-# Removed in 0.2.0: maxTasks and execution.maxOrchestratorTurns circuit breakers.
-# Long-running autonomous pipelines should only trip on consecutive failures or
-# an opt-in wall-clock runtime cap — task/turn count caps fight that purpose.
-for removed in 'maxTasks' 'execution.maxOrchestratorTurns'; do
-  has=$(jq --arg k "$removed" -r '.userConfig | has($k) | tostring' "$PLUGIN_JSON")
-  assert_eq "userConfig does NOT contain $removed" "false" "$has"
-done
-
-# 0.2.0 defaults: runtime unlimited (0 = no cap), failures raised to 5.
-default_runtime=$(jq -r '.userConfig["maxRuntimeMinutes"].default' "$PLUGIN_JSON")
-assert_eq "maxRuntimeMinutes default = 0 (unlimited)" "0" "$default_runtime"
-
-min_runtime=$(jq -r '.userConfig["maxRuntimeMinutes"].min' "$PLUGIN_JSON")
-assert_eq "maxRuntimeMinutes min = 0" "0" "$min_runtime"
-
-default_failures=$(jq -r '.userConfig["maxConsecutiveFailures"].default' "$PLUGIN_JSON")
-assert_eq "maxConsecutiveFailures default = 5" "5" "$default_failures"
-
-plugin_version=$(jq -r '.version' "$PLUGIN_JSON")
-assert_eq "plugin version = 0.3.0" "0.3.0" "$plugin_version"
-
-# Each entry must declare a default value (even arrays/booleans/strings).
-missing_default=$(jq -r '[.userConfig | to_entries[] | select(has("value") | not) | .key] as $_ | [.userConfig | to_entries[] | select(.value | has("default") | not) | .key] | join(",")' "$PLUGIN_JSON")
-assert_eq "every userConfig entry has a default" "" "$missing_default"
-
-# Defaults sourced from PRD must round-trip as the documented values.
-default_holdout_pass_rate=$(jq -r '.userConfig["quality.holdoutPassRate"].default' "$PLUGIN_JSON")
-assert_eq "quality.holdoutPassRate default = 80" "80" "$default_holdout_pass_rate"
-
-default_default_model=$(jq -r '.userConfig["execution.defaultModel"].default' "$PLUGIN_JSON")
-assert_eq "execution.defaultModel default = sonnet" "sonnet" "$default_default_model"
-
-default_pr_merge_timeout=$(jq -r '.userConfig["dependencies.prMergeTimeout"].default' "$PLUGIN_JSON")
-assert_eq "dependencies.prMergeTimeout default = 45" "45" "$default_pr_merge_timeout"
-
-default_audit_log=$(jq -r '.userConfig["observability.auditLog"].default' "$PLUGIN_JSON")
-assert_eq "observability.auditLog default = true" "true" "$default_audit_log"
-
-default_mutation_tiers=$(jq -rc '.userConfig["quality.mutationTestingTiers"].default' "$PLUGIN_JSON")
-assert_eq "quality.mutationTestingTiers default = [feature,security]" '["feature","security"]' "$default_mutation_tiers"
-
-# Local LLM removed: localLlm.*, review.ollama*, LiteLLM keys must all be absent
-# (Ollama routing is architecturally impossible with Agent() subagents — claude-code#38698)
-for stripped in \
-  localLlm.enabled localLlm.ollamaUrl localLlm.model \
-  localLlm.useLiteLlm localLlm.liteLlmUrl \
-  review.ollamaRoutineRounds review.ollamaFeatureRounds review.ollamaSecurityRounds; do
-  has=$(jq --arg k "$stripped" -r '.userConfig | has($k) | tostring' "$PLUGIN_JSON")
-  assert_eq "userConfig does NOT contain $stripped" "false" "$has"
+# Removed keys must NOT be documented: 0.2.0 dropped the task/turn circuit
+# breakers; 0.3.0 dropped Ollama/LiteLLM local-LLM routing (claude-code#38698).
+for removed in \
+  maxTasks \
+  execution.maxOrchestratorTurns \
+  localLlm.enabled \
+  localLlm.ollamaUrl \
+  localLlm.model \
+  localLlm.useLiteLlm \
+  localLlm.liteLlmUrl \
+  review.ollamaRoutineRounds \
+  review.ollamaFeatureRounds \
+  review.ollamaSecurityRounds; do
+  if grep -qE "^### ${removed//./\\.}\$" "$CONFIG_REF"; then
+    echo "  FAIL: configuration.md still documents removed key $removed"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: configuration.md does not document $removed"
+    pass=$((pass + 1))
+  fi
 done
 
 # task_16_01: write-protection hook registered for Edit/Write/MultiEdit
 HOOKS_JSON="$PLUGIN_ROOT/hooks/hooks.json"
 wp_registered=$(jq -r '[.hooks.PreToolUse[] | select(.matcher | test("Edit|Write|MultiEdit")) | .hooks[] | .command] | map(select(test("write-protection"))) | length' "$HOOKS_JSON")
 assert_eq "hooks.json registers write-protection.sh on Edit/Write/MultiEdit" "1" "$wp_registered"
-
-# task_16_01: default blocklist is an empty array
-default_blocked=$(jq -rc '.userConfig["safety.writeBlockedPaths"].default' "$PLUGIN_JSON")
-assert_eq "safety.writeBlockedPaths default is []" "[]" "$default_blocked"
-
-# task_16_02: default secret-guard config (useTruffleHog=false, allowedSecretPatterns=[])
-default_truffle=$(jq -r '.userConfig["safety.useTruffleHog"].default' "$PLUGIN_JSON")
-assert_eq "safety.useTruffleHog default = false" "false" "$default_truffle"
-default_allowed=$(jq -rc '.userConfig["safety.allowedSecretPatterns"].default' "$PLUGIN_JSON")
-assert_eq "safety.allowedSecretPatterns default = []" "[]" "$default_allowed"
 
 # task_16_12: scaffold slash command + --check mode
 assert_eq "commands/scaffold.md exists" "true" \
@@ -280,23 +265,6 @@ assert_contains "configure.md gives a string-valued example (execution.defaultMo
   'execution.defaultModel' "$CONFIGURE"
 assert_contains "configure.md gives a numeric example (review.routineRounds)" \
   'review.routineRounds' "$CONFIGURE"
-
-# task_08_04: plugin.json keys must match the canonical names documented in the
-# configuration reference. Every key in plugin.json must appear as an `### key`
-# heading in docs/reference/configuration.md (restricted to the schema section,
-# not prose mentions).
-CONFIG_REF="$PLUGIN_ROOT/docs/reference/configuration.md"
-assert_file_exists "docs/reference/configuration.md exists" "$CONFIG_REF"
-
-while IFS= read -r key; do
-  if grep -qE "^### ${key//./\\.}\$" "$CONFIG_REF"; then
-    echo "  PASS: configuration.md documents userConfig key $key"
-    pass=$((pass + 1))
-  else
-    echo "  FAIL: configuration.md missing userConfig key $key"
-    fail=$((fail + 1))
-  fi
-done < <(jq -r '.userConfig | keys[]' "$PLUGIN_JSON")
 
 # task_08_04: legacy key names must not appear in code or docs that the plugin
 # actually reads at runtime (excludes remediation/ history and the plan files

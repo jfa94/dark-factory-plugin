@@ -7,7 +7,7 @@ This document provides a detailed inventory of all plugin components: agents, ho
 ```
 dark-factory-plugin/
 ├── .claude-plugin/
-│   └── plugin.json              # Manifest with userConfig schema
+│   └── plugin.json              # Plugin manifest (name, version, description)
 ├── commands/
 │   ├── run.md                   # /factory:run entry point
 │   └── configure.md             # /factory:configure settings editor

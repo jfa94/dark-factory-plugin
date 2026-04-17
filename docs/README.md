@@ -37,7 +37,7 @@ The plugin automates the end-to-end software development workflow: reading a req
 ### Reference
 
 - [Commands](./reference/commands.md) - `/factory:run` and `/factory:configure` specifications
-- [Configuration Schema](./reference/configuration.md) - All userConfig options with types and defaults
+- [Configuration Schema](./reference/configuration.md) - All runtime config options with types and defaults
 - [Bin Scripts](./reference/bin-scripts.md) - Deterministic pipeline utilities
 - [State Schema](./reference/state-schema.md) - Run state structure and task lifecycle
 - [Exit Codes](./reference/exit-codes.md) - Script exit codes and their meanings

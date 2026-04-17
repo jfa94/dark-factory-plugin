@@ -4,10 +4,7 @@
   "plugins": [
     {
       "name": "factory",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/jfa94/factory.git"
-      },
+      "source": "./",
       "description": "Autonomous coding pipeline: converts GitHub PRD issues into merged pull requests with quality-first review gates",
       "version": "0.3.0"
     }

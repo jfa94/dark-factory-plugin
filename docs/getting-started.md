@@ -34,40 +34,22 @@ Inside Claude Code, run:
 
 Claude Code handles cloning, discovery, and future updates automatically. Verify with `/help` — you should see `/factory:run`, `/factory:configure`, and other `/factory:*` commands listed.
 
-> **Install fails with `git@github.com: Permission denied (publickey)`?** Claude Code's plugin installer currently forces SSH cloning for `github.com` hosts, which fails if you don't have an SSH key configured. Use the manual install below as a fallback.
+### Manual install (air-gapped or offline)
 
-### Manual install (fallback)
-
-For older Claude Code versions, air-gapped environments, or if the marketplace install hit the SSH error above:
+If you cannot reach GitHub from your Claude Code session:
 
 ```bash
 git clone https://github.com/jfa94/factory.git ~/code/factory-plugin
 ```
 
-Then load the plugin directly when starting Claude Code:
+Inside Claude Code, register the cloned directory as a local marketplace and install:
 
-```bash
-claude --plugin-dir ~/code/factory-plugin
+```
+/plugin marketplace add ~/code/factory-plugin
+/plugin install factory@jfa94
 ```
 
-Claude Code reads `.claude-plugin/plugin.json` from the given directory and activates all bundled commands, agents, skills, and hooks for that session.
-
-To persist the plugin across sessions without relying on the marketplace installer, register it in `~/.claude/settings.json`:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "jfa94-local": {
-      "source": { "source": "local", "path": "~/code/factory-plugin" }
-    }
-  },
-  "enabledPlugins": {
-    "factory@jfa94-local": true
-  }
-}
-```
-
-Restart Claude Code. The plugin is discovered from the local path and `/help` should list the `/factory:*` commands.
+Claude Code reads `.claude-plugin/marketplace.json` from the directory and installs the plugin into its local cache. `/help` should then list the `/factory:*` commands.
 
 ## Step 2: Configure Rate Limit Detection
 

@@ -1,6 +1,6 @@
 # Configuration Schema
 
-Complete reference for all `userConfig` options in `plugin.json`.
+Complete reference for every runtime config option read by the pipeline scripts from `${CLAUDE_PLUGIN_DATA}/config.json`. Write values with `/factory:configure`.
 
 ## Pipeline Behavior
 

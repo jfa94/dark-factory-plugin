@@ -22,7 +22,7 @@ SUITES=(
   hooks
   audit-hooks
   routing
-  orchestrator
+  run-command
   config
   integration
 )

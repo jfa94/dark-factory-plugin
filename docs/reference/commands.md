@@ -57,11 +57,11 @@ Continues an interrupted run from the last checkpoint.
 2. Run `pipeline-validate --no-clean-check` to verify preconditions
 3. Parse mode and validate arguments
 4. Initialize run state via `pipeline-init`
-5. Spawn `pipeline-orchestrator` agent
+5. Create a dedicated orchestrator worktree at `.claude/worktrees/orchestrator-<run_id>/` and run the full orchestration inline in the invoking session (spec generation, task execution, adversarial review, PR creation, cleanup). Sub-agents are spawned from this session via `Agent()` with `isolation: worktree`.
 
 ### Exit Behavior
 
-The command spawns the orchestrator agent and returns when the agent completes. Check run status in `${CLAUDE_PLUGIN_DATA}/runs/current/state.json`.
+The orchestration runs to completion inside the invoking session — there is no separate orchestrator sub-agent to wait on. Check run status in `${CLAUDE_PLUGIN_DATA}/runs/current/state.json`.
 
 ---
 

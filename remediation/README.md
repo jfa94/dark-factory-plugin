@@ -37,7 +37,7 @@ Several tasks in these plans harden code that calls `rm -rf`, `git push --force`
 
 Every fix shipped here had to include regression tests in `bin/tests/*.sh`. The same expectation applies to any future patch in these areas — pure structural tests are not enough; the test must fail against the buggy code and pass against the fix.
 
-Tests live in `bin/tests/*.sh`, organized by domain: `state.sh`, `spec-intake.sh`, `task-prep.sh`, `branching.sh`, `cleanup.sh`, `hooks.sh`, `routing.sh`, `orchestrator.sh`, `config.sh`, `audit-hooks.sh`. Integration tests live in `bin/tests/integration.sh`. The `bin/test` runner invokes the full suite.
+Tests live in `bin/tests/*.sh`, organized by domain: `state.sh`, `spec-intake.sh`, `task-prep.sh`, `branching.sh`, `cleanup.sh`, `hooks.sh`, `routing.sh`, `run-command.sh`, `config.sh`, `audit-hooks.sh`. Integration tests live in `bin/tests/integration.sh`. The `bin/test` runner invokes the full suite.
 
 ## Finding reference
 

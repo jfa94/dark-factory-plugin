@@ -44,6 +44,7 @@ ${CLAUDE_PLUGIN_DATA}/
 | `spec`            | object | Spec generation state                        |
 | `tasks`           | object | Task states keyed by task_id                 |
 | `execution_order` | array  | Validated task execution order               |
+| `orchestrator`    | object | Orchestrator worktree metadata               |
 | `circuit_breaker` | object | Circuit breaker counters                     |
 | `cost`            | object | Token/cost tracking                          |
 
@@ -119,6 +120,26 @@ ${CLAUDE_PLUGIN_DATA}/
 | `reviewing`  | spec-reviewer running       |
 | `approved`   | Passed review (score >= 54) |
 | `failed`     | Failed after max retries    |
+
+---
+
+## Orchestrator Object
+
+```json
+{
+  "orchestrator": {
+    "worktree": ".claude/worktrees/orchestrator-run-20260413-140000",
+    "project_root": "/Users/dev/my-project"
+  }
+}
+```
+
+| Field          | Type   | Description                                            |
+| -------------- | ------ | ------------------------------------------------------ |
+| `worktree`     | string | Path to orchestrator worktree (relative to repo root)  |
+| `project_root` | string | Absolute path to the user's original working directory |
+
+The orchestrator worktree is created at Step 6a of `commands/run.md` to isolate git operations from the user's primary checkout. `project_root` preserves the original cwd so sub-agents and scripts can reference user files outside the worktree when needed.
 
 ---
 

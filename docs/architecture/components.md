@@ -12,7 +12,6 @@ dark-factory-plugin/
 │   ├── run.md                   # /factory:run entry point
 │   └── configure.md             # /factory:configure settings editor
 ├── agents/
-│   ├── pipeline-orchestrator.md # Control loop, subagent spawning
 │   ├── spec-generator.md        # PRD to spec conversion
 │   ├── task-executor.md         # Code generation in worktree
 │   └── task-reviewer.md         # Adversarial code review
@@ -60,7 +59,7 @@ Entry point for all pipeline invocations.
 2. Run `pipeline-validate` to check preconditions
 3. Parse mode and validate arguments
 4. Initialize run state via `pipeline-init`
-5. Spawn `pipeline-orchestrator` agent
+5. Create a dedicated orchestrator worktree at `.claude/worktrees/orchestrator-<run_id>/` and run the full orchestration inline in the invoking session — spec generation, task execution, adversarial review, PR creation, and cleanup. The command itself is the control loop; sub-agents (`spec-generator`, `task-executor`, reviewers, `scribe`) are spawned via `Agent()` with `isolation: worktree` from the main session.
 
 ### `/factory:configure`
 
@@ -78,21 +77,19 @@ Conversational settings editor.
 
 ## Agents
 
-### pipeline-orchestrator
+### Orchestrator (main session via `commands/run.md`)
 
-Central control loop that iterates the task DAG, spawns subagents, and manages retries.
+The orchestrator is not a sub-agent — it is the main Claude Code session that invoked `/factory:run`. The command body at `commands/run.md` encodes the full control loop: DAG iteration, sub-agent spawning, retry logic, review rounds, and human escalation.
 
-| Property  | Value                                      |
-| --------- | ------------------------------------------ |
-| Model     | opus                                       |
-| Max Turns | 9999                                       |
-| Tools     | Bash, Read, Write, Edit, Grep, Glob, Agent |
+**Why main-session, not sub-agent?** Claude Code only exposes the `Agent` tool to the top-level session. A sub-agent cannot itself spawn further sub-agents, so an orchestrator-as-agent deadlocks the first time it needs to dispatch a `spec-generator` or `task-executor`.
+
+**Isolation.** Step 6a of `commands/run.md` creates a dedicated worktree at `.claude/worktrees/orchestrator-<run_id>/` and runs every orchestrator git operation inside it. The user's primary checkout is never touched. Sub-agents (`spec-generator`, `task-executor`, reviewers, `scribe`) continue to run with `isolation: worktree` as before.
 
 **Key behaviors:**
 
 - Delegates all deterministic work to `bin/pipeline-*` scripts
 - Makes judgment calls: retry vs skip, escalate vs continue
-- Spawns concurrent task-executors via multiple Agent calls in one message
+- Spawns concurrent task-executors via multiple `Agent()` calls in one assistant message
 - Manages review rounds and human escalation
 
 ### spec-generator

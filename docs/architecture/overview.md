@@ -101,16 +101,15 @@ For each task in execution order:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        /factory:run                        │
-│                     (Command Entry Point)                       │
-└─────────────────────────────────┬───────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    pipeline-orchestrator                        │
-│                    (Agent: Control Loop)                        │
+│                        /factory:run                             │
+│              (Command body = main-session orchestrator)         │
 │                                                                 │
-│  Delegates to bin/ scripts ────────┬──── Spawns subagents      │
+│  Runs in the invoking Claude Code session. Control loop,        │
+│  DAG iteration, retry logic, human escalation all happen here.  │
+│  Step 6a creates .claude/worktrees/orchestrator-<run_id>/       │
+│  and cd's in, so the user's primary checkout stays untouched.   │
+│                                                                 │
+│  Delegates to bin/ scripts ────────┬──── Spawns subagents       │
 └────────────────────────────────────┼────────────────────────────┘
                                      │
          ┌───────────────────────────┼───────────────────────────┐
@@ -131,7 +130,6 @@ For each task in execution order:
 └─────────────────┘      │ test-writer     │      └─────────────────┘
                          │ scribe          │
                          │ spec-reviewer   │
-                         │ code-reviewer   │
                          └─────────────────┘
 ```
 
@@ -178,7 +176,7 @@ spec-generator (isolated worktree)
             .spec.path
         │
         ▼
-orchestrator (main worktree)
+orchestrator (in .claude/worktrees/orchestrator-<run_id>/)
         │
         ├── Reads handoff metadata from state.json
         ├── Fetches spec-handoff/<run-id> branch

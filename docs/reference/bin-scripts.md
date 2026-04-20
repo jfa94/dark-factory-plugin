@@ -817,19 +817,19 @@ bin/test [suite...] [--list]
 
 **Available suites:**
 
-| Suite        | Coverage                                       |
-| ------------ | ---------------------------------------------- |
-| state        | pipeline-state, pipeline-init, circuit breaker |
-| spec-intake  | PRD fetch, spec validation, task validation    |
-| task-prep    | classify-task, classify-risk, build-prompt     |
-| branching    | pipeline-branch operations, worktree lifecycle |
-| cleanup      | pipeline-cleanup, archive operations           |
-| hooks        | branch-protection, run-tracker, stop-gate      |
-| audit-hooks  | Audit log integrity, tamper detection          |
-| routing      | quota-check, model-router decisions            |
-| orchestrator | Orchestrator-level integration                 |
-| config       | Config parsing, defaults, validation           |
-| integration  | End-to-end multi-script workflows              |
+| Suite       | Coverage                                       |
+| ----------- | ---------------------------------------------- |
+| state       | pipeline-state, pipeline-init, circuit breaker |
+| spec-intake | PRD fetch, spec validation, task validation    |
+| task-prep   | classify-task, classify-risk, build-prompt     |
+| branching   | pipeline-branch operations, worktree lifecycle |
+| cleanup     | pipeline-cleanup, archive operations           |
+| hooks       | branch-protection, run-tracker, stop-gate      |
+| audit-hooks | Audit log integrity, tamper detection          |
+| routing     | quota-check, model-router decisions            |
+| run-command | commands/run.md structural integrity           |
+| config      | Config parsing, defaults, validation           |
+| integration | End-to-end multi-script workflows              |
 
 **Examples:**
 

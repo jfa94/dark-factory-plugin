@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# orchestrator.sh — structural validation of agents/pipeline-orchestrator.md:
+# run-command.sh — structural validation of commands/run.md:
 # frontmatter, required sections, script/agent references, spec-handoff
-# contract, execution-loop shape.
+# contract, execution-loop shape, orchestrator-worktree bootstrap.
+#
+# commands/run.md is the main-session orchestrator: it runs inline in the
+# session that invoked /factory:run and spawns all sub-agents via Agent() +
+# isolation: worktree. There is no pipeline-orchestrator sub-agent anymore.
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-ORCH="$PLUGIN_ROOT/agents/pipeline-orchestrator.md"
+RUN_CMD="$PLUGIN_ROOT/commands/run.md"
 SPECGEN="$PLUGIN_ROOT/agents/spec-generator.md"
 
 pass=0
@@ -33,6 +37,17 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local label="$1" needle="$2" file="$3"
+  if grep -qF "$needle" "$file"; then
+    echo "  FAIL: $label (file unexpectedly contains '$needle')"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  fi
+}
+
 assert_file_exists() {
   local label="$1" file="$2"
   if [[ -f "$file" ]]; then
@@ -44,60 +59,89 @@ assert_file_exists() {
   fi
 }
 
-# ============================================================
-echo "=== pipeline-orchestrator.md — file exists ==="
+assert_file_absent() {
+  local label="$1" file="$2"
+  if [[ ! -e "$file" ]]; then
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $label ('$file' still exists)"
+    fail=$((fail + 1))
+  fi
+}
 
-assert_file_exists "orchestrator file exists" "$ORCH"
+# ============================================================
+echo "=== commands/run.md — file exists ==="
+
+assert_file_exists "run.md file exists" "$RUN_CMD"
+
+# The old pipeline-orchestrator sub-agent must be gone — its logic lives in
+# commands/run.md now.
+assert_file_absent "no pipeline-orchestrator.md sub-agent" \
+  "$PLUGIN_ROOT/agents/pipeline-orchestrator.md"
 
 # ============================================================
 echo ""
 echo "=== frontmatter validation ==="
 
-# Extract frontmatter (between first two --- lines)
-frontmatter=$(awk '/^---$/{c++; next} c==1{print}' "$ORCH")
-
-assert_contains "model: opus" "model: opus" "$ORCH"
-assert_contains "maxTurns: 9999" "maxTurns: 9999" "$ORCH"
+# commands/run.md frontmatter must declare the supported modes and flags.
+frontmatter=$(awk '/^---$/{c++; next} c==1{print}' "$RUN_CMD")
 
 desc=$(printf '%s' "$frontmatter" | grep -E '^description:' || echo "")
 assert_eq "description non-empty" "true" "$([[ -n "$desc" ]] && echo true || echo false)"
 
-when=$(printf '%s' "$frontmatter" | grep -E '^whenToUse:' || echo "")
-assert_eq "whenToUse non-empty" "true" "$([[ -n "$when" ]] && echo true || echo false)"
-
-# tools list
-for tool in Bash Read Write Edit Grep Glob Agent; do
-  if printf '%s' "$frontmatter" | grep -q "^\s*-\s*${tool}\s*$"; then
-    echo "  PASS: tools contains $tool"
+for arg in mode --issue --task-id --spec-dir --strict --dry-run; do
+  if printf '%s' "$frontmatter" | grep -qE "name:\s*\"?${arg}\"?"; then
+    echo "  PASS: arguments declares $arg"
     pass=$((pass + 1))
   else
-    echo "  FAIL: tools missing $tool"
+    echo "  FAIL: arguments missing $arg"
     fail=$((fail + 1))
   fi
 done
 
 # ============================================================
 echo ""
+echo "=== orchestrator-worktree bootstrap ==="
+
+# Step 6a must create the orchestrator worktree before any other git op.
+assert_contains "Step 6a heading present" "### Step 6a: Orchestrator worktree" "$RUN_CMD"
+assert_contains "uses pipeline-branch worktree-create" "pipeline-branch worktree-create" "$RUN_CMD"
+assert_contains "worktree path under .claude/worktrees" ".claude/worktrees/orchestrator-" "$RUN_CMD"
+assert_contains "cd into orchestrator worktree" 'cd "$orchestrator_wt"' "$RUN_CMD"
+assert_contains "records worktree path in state" ".orchestrator.worktree" "$RUN_CMD"
+assert_contains "records project_root in state" ".orchestrator.project_root" "$RUN_CMD"
+
+# Final cleanup must tear the orchestrator worktree down after task worktrees.
+assert_contains "removes orchestrator worktree on cleanup" 'pipeline-branch worktree-remove "$orchestrator_wt"' "$RUN_CMD"
+
+# There must be no residual delegation to a pipeline-orchestrator sub-agent.
+assert_not_contains "no orchestrator sub-agent spawn" 'subagent_type: "pipeline-orchestrator"' "$RUN_CMD"
+
+# ============================================================
+echo ""
 echo "=== required sections ==="
 
 sections=(
-  "## Core Principle"
-  "## Startup"
-  "## Spec Generation Phase"
-  "## Execution Sequence"
+  "## Step 1: Check Autonomous Mode"
+  "## Step 2: Validate Preconditions"
+  "## Step 3: Parse Mode and Arguments"
+  "## Step 4: Initialize Run"
+  "## Step 5: Handle Dry Run"
+  "## Step 6: Orchestrate"
+  "### Startup"
+  "### Spec Generation Phase"
+  "### Execution Sequence"
+  "### After all groups complete"
+  "### Final staging → develop PR"
   "## Human Review Levels"
-  "## Parallel Execution"
   "## Resume"
   "## Failure Handling"
-  "## Circuit Breaker"
   "## Rate Limit Recovery"
-  "## Security Tier Extra Review"
-  "## State Management"
-  "## Rules"
 )
 
 for section in "${sections[@]}"; do
-  if grep -qF "$section" "$ORCH"; then
+  if grep -qF "$section" "$RUN_CMD"; then
     echo "  PASS: section $section"
     pass=$((pass + 1))
   else
@@ -110,12 +154,12 @@ done
 echo ""
 echo "=== script reference integrity ==="
 
-# Every pipeline-* script mentioned in the orchestrator must exist in bin/
+# Every pipeline-* script mentioned in the command must exist in bin/
 scripts=(
   pipeline-state
   pipeline-circuit-breaker
   pipeline-fetch-prd
-  pipeline-validate-spec
+  pipeline-validate
   pipeline-validate-tasks
   pipeline-quota-check
   pipeline-classify-task
@@ -130,10 +174,15 @@ scripts=(
   pipeline-wait-pr
   pipeline-summary
   pipeline-cleanup
+  pipeline-branch
+  pipeline-human-gate
+  pipeline-holdout-validate
+  pipeline-init
+  pipeline-scaffold
 )
 
 for script in "${scripts[@]}"; do
-  if grep -q "\b${script}\b" "$ORCH"; then
+  if grep -q "\b${script}\b" "$RUN_CMD"; then
     if [[ -f "$PLUGIN_ROOT/bin/$script" ]]; then
       echo "  PASS: $script referenced and exists"
       pass=$((pass + 1))
@@ -142,7 +191,7 @@ for script in "${scripts[@]}"; do
       fail=$((fail + 1))
     fi
   else
-    echo "  FAIL: $script not referenced in orchestrator"
+    echo "  FAIL: $script not referenced in run.md"
     fail=$((fail + 1))
   fi
 done
@@ -151,14 +200,19 @@ done
 echo ""
 echo "=== agent references ==="
 
-# Must reference the bundled reviewer agents
-assert_contains "references task-executor" "task-executor" "$ORCH"
-assert_contains "references task-reviewer" "task-reviewer" "$ORCH"
-assert_contains "references spec-generator" "spec-generator" "$ORCH"
-assert_contains "references code-reviewer for security tier" "code-reviewer" "$ORCH"
+# Must reference the bundled agent types it spawns.
+assert_contains "references task-executor" "task-executor" "$RUN_CMD"
+assert_contains "references task-reviewer" "task-reviewer" "$RUN_CMD"
+assert_contains "references spec-generator" "spec-generator" "$RUN_CMD"
+assert_contains "references code-reviewer for security tier" "code-reviewer" "$RUN_CMD"
+assert_contains "references security-reviewer for security tier" "security-reviewer" "$RUN_CMD"
+assert_contains "references architecture-reviewer" "architecture-reviewer" "$RUN_CMD"
+assert_contains "references scribe for docs update" "scribe" "$RUN_CMD"
+assert_contains "references test-writer for mutation retries" "test-writer" "$RUN_CMD"
 
-# Each agent file must exist in the plugin
-for agent in task-executor task-reviewer spec-generator code-reviewer spec-reviewer; do
+# Each agent file must exist in the plugin.
+for agent in task-executor task-reviewer spec-generator code-reviewer \
+             security-reviewer architecture-reviewer scribe test-writer spec-reviewer; do
   assert_file_exists "agent file $agent.md exists" "$PLUGIN_ROOT/agents/$agent.md"
 done
 
@@ -166,11 +220,11 @@ done
 echo ""
 echo "=== parallel execution semantics ==="
 
-# The orchestrator must describe emitting multiple Agent calls in a single message
-assert_contains "documents parallel Agent spawn" "multiple Agent tool calls in a single" "$ORCH"
-assert_contains "references parallel_group" "parallel_group" "$ORCH"
-assert_contains "references execution_order" "execution_order" "$ORCH"
-assert_contains "references maxConcurrent" "maxConcurrent" "$ORCH"
+assert_contains "documents parallel Agent spawn" "multiple Agent tool calls in a single assistant message" "$RUN_CMD"
+assert_contains "concrete parallel-spawn example" "one assistant message with N Agent() tool calls" "$RUN_CMD"
+assert_contains "references parallel_group" "parallel_group" "$RUN_CMD"
+assert_contains "references execution_order" "execution_order" "$RUN_CMD"
+assert_contains "references maxConcurrent" "maxConcurrent" "$RUN_CMD"
 
 # ============================================================
 echo ""
@@ -186,52 +240,49 @@ assert_contains "spec-generator writes .spec.handoff_ref" ".spec.handoff_ref" "$
 assert_contains "spec-generator writes .spec.path" ".spec.path" "$SPECGEN"
 assert_contains "spec-generator mentions pipeline-state as cross-worktree channel" "pipeline-state" "$SPECGEN"
 
-# Orchestrator must reference the handoff mechanism explicitly (plan 03, task_03_02)
-assert_contains "orchestrator references spec-handoff branch" "spec-handoff/" "$ORCH"
-assert_contains "orchestrator reads .spec.handoff_branch" ".spec.handoff_branch" "$ORCH"
-assert_contains "orchestrator reads .spec.handoff_ref" ".spec.handoff_ref" "$ORCH"
-assert_contains "orchestrator references commit-spec" "commit-spec" "$ORCH"
-assert_contains "orchestrator references .spec.path from state" ".spec.path" "$ORCH"
+# run.md must reference the handoff mechanism explicitly (plan 03, task_03_02)
+assert_contains "run.md references spec-handoff branch" "spec-handoff/" "$RUN_CMD"
+assert_contains "run.md reads .spec.handoff_branch" ".spec.handoff_branch" "$RUN_CMD"
+assert_contains "run.md reads .spec.handoff_ref" ".spec.handoff_ref" "$RUN_CMD"
+assert_contains "run.md references commit-spec" "commit-spec" "$RUN_CMD"
+assert_contains "run.md references .spec.path from state" ".spec.path" "$RUN_CMD"
 
 # ============================================================
 echo ""
-echo "=== task_07_04: orchestrator execution loop structure ==="
+echo "=== task_07_04: execution loop structure ==="
 
 # Each numbered step heading must be present
 for hdr in "Pre-flight" "Execute" "Quality Gate" "Spawn Reviewers" "Parse Verdicts" "Create PR & Wait" "Finalize"; do
-  assert_contains "execution step '$hdr'" "$hdr" "$ORCH"
+  assert_contains "execution step '$hdr'" "$hdr" "$RUN_CMD"
 done
 
 # Quality-gate script must be referenced
-assert_contains "references pipeline-quality-gate" "pipeline-quality-gate" "$ORCH"
+assert_contains "references pipeline-quality-gate" "pipeline-quality-gate" "$RUN_CMD"
 
 # Escalation transitions to needs_human_review must be referenced
-assert_contains "references needs_human_review" "needs_human_review" "$ORCH"
-
-# Parallel spawn instruction must remain
-assert_contains "instructs parallel Agent spawn" "one assistant message with N Agent calls" "$ORCH"
+assert_contains "references needs_human_review" "needs_human_review" "$RUN_CMD"
 
 # Namespaced attempt counters
-assert_contains "quality_attempts counter" "quality_attempts" "$ORCH"
-assert_contains "review_attempts counter" "review_attempts" "$ORCH"
+assert_contains "quality_attempts counter" "quality_attempts" "$RUN_CMD"
+assert_contains "review_attempts counter" "review_attempts" "$RUN_CMD"
 
 # Prior-work handoff into resume context
-assert_contains "prior_work_dir handoff" "prior_work_dir" "$ORCH"
+assert_contains "prior_work_dir handoff" "prior_work_dir" "$RUN_CMD"
 
 # Layer 4 holdout validation orchestration must be wired
-assert_contains "Layer 4 holdout step labelled 3b"     "Holdout Validation"        "$ORCH"
-assert_contains "calls pipeline-holdout-validate prompt" "pipeline-holdout-validate prompt" "$ORCH"
-assert_contains "calls pipeline-holdout-validate check"  "pipeline-holdout-validate check"  "$ORCH"
-assert_contains "tracks holdout_attempts retry counter"  "holdout_attempts"          "$ORCH"
+assert_contains "Layer 4 holdout step labelled 3b"     "Holdout Validation"        "$RUN_CMD"
+assert_contains "calls pipeline-holdout-validate prompt" "pipeline-holdout-validate prompt" "$RUN_CMD"
+assert_contains "calls pipeline-holdout-validate check"  "pipeline-holdout-validate check"  "$RUN_CMD"
+assert_contains "tracks holdout_attempts retry counter"  "holdout_attempts"          "$RUN_CMD"
 
 # review_attempts must be read at the top of step 5 so first-pass
 # NEEDS_DISCUSSION can reference it without a shell-level unset error.
 assert_contains "review_attempts read before verdict branch" \
-  'review_attempts=$(pipeline-state read $run_id ".tasks.$t.review_attempts // 0")' "$ORCH"
+  'review_attempts=$(pipeline-state read $run_id ".tasks.$t.review_attempts // 0")' "$RUN_CMD"
 
 # Final-rollup PR step must capture an integer PR number, not the create URL.
 assert_contains "final_pr_number captured via gh pr view" \
-  'final_pr_number=$(gh pr view staging --json number -q .number)' "$ORCH"
+  'final_pr_number=$(gh pr view staging --json number -q .number)' "$RUN_CMD"
 
 # ============================================================
 echo ""

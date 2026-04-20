@@ -16,17 +16,25 @@ This document explains key architectural choices and their rationale.
 
 ---
 
-## Decision 2: Orchestrator-as-Agent with Script Delegation
+## Decision 2: Orchestrator Runs in Main Session
 
-**Choice:** The orchestrator is an agent (required to spawn subagents via Agent tool), but it delegates ALL deterministic work to bin scripts via Bash calls.
+**Choice:** The orchestrator logic lives in `commands/run.md` and runs in the invoking Claude Code session. It is not a sub-agent.
+
+**Why not orchestrator-as-sub-agent?**
+
+Claude Code only exposes the `Agent` tool to the top-level session. Sub-agents cannot themselves spawn further sub-agents. An orchestrator-as-agent therefore deadlocks the first time it needs to dispatch `spec-generator`, `task-executor`, or a reviewer.
 
 **Why not a pure script orchestrator?**
 
-Only agents can use the `Agent` tool to spawn subagents. A shell script cannot spawn `spec-generator`, `task-executor`, or `task-reviewer` agents.
+Only agent sessions can invoke the `Agent` tool. A shell script cannot spawn sub-agents.
 
 **Why not pure agent orchestration?**
 
 State management, circuit breakers, DAG traversal, and classification MUST be 100% reliable. Agent instructions for these would fail approximately 30% of the time.
+
+**Isolation:**
+
+The orchestrator creates a dedicated worktree at `.claude/worktrees/orchestrator-<run_id>/` (Step 6a of `commands/run.md`) and runs all git operations there. The user's primary checkout is never touched. Sub-agents (`spec-generator`, `task-executor`, reviewers, `scribe`) continue to run with `isolation: worktree`.
 
 **Mitigations:**
 
@@ -260,11 +268,11 @@ Cannot set per-agent permissions (e.g., read-only for reviewers). Reviewer agent
 
 ### No Process Manager Primitive
 
-Solved by orchestrator-as-agent pattern. The agent IS the control loop.
+Solved by running the orchestrator in the main session. The command body IS the control loop.
 
 ### Concurrent Agent Results
 
-The orchestrator emits multiple `Agent()` calls in one message. Claude Code invokes them in parallel natively. All results return in the same turn.
+The orchestrator (main session) emits multiple `Agent()` calls in one message. Claude Code invokes them in parallel natively. All results return in the same turn.
 
 ---
 

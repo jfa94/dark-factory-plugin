@@ -51,36 +51,23 @@ Inside Claude Code, register the cloned directory as a local marketplace and ins
 
 Claude Code reads `.claude-plugin/marketplace.json` from the directory and installs the plugin into its local cache. `/help` should then list the `/factory:*` commands.
 
-## Step 2: Configure Rate Limit Detection
+## Step 2: Rate Limit Detection (automatic)
 
-The pipeline requires real-time rate limit data to make pause/continue decisions. This is captured via a statusline wrapper script.
+The pipeline requires real-time rate limit data to make pause/continue decisions. This is captured via a statusline wrapper script that is **automatically configured** for all pipeline sessions — no setup required.
 
-**One-time setup:** Add to `~/.claude/settings.json`:
+When you first run `/factory:run`, `pipeline-ensure-autonomy` generates `merged-settings.json` with `statusLine.command` pointing at the wrapper. Every pipeline session launched with `--settings merged-settings.json` writes rate limit data to `usage-cache.json` automatically.
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/plugins/factory/bin/statusline-wrapper.sh"
-  }
-}
-```
+**If you have a custom statusline,** it is preserved: the plugin reads your existing `statusLine.command` from `~/.claude/settings.json` and chains to it via `FACTORY_ORIGINAL_STATUSLINE` — your non-pipeline sessions are unaffected.
 
-If you already have a custom statusline, chain to it:
+If auto-detection misses a complex chained statusline, set `FACTORY_ORIGINAL_STATUSLINE` manually in `~/.claude/settings.json`:
 
 ```json
 {
   "env": {
     "FACTORY_ORIGINAL_STATUSLINE": "~/.claude/your-statusline.sh"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "~/.claude/plugins/factory/bin/statusline-wrapper.sh"
   }
 }
 ```
-
-The wrapper writes rate limit data to `~/.claude/plugin-data/factory/usage-cache.json` on every statusline update. Without this, `pipeline-quota-check` will fail.
 
 ## Step 3: Configure Your Project
 

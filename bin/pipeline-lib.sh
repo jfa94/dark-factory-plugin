@@ -225,6 +225,49 @@ _realpath_m() {
   return 1
 }
 
+# --- Quota gate ---
+
+# Run a quota gate at a named pipeline boundary. Handles the wait loop
+# (max 3 consecutive waits) and logs each cycle. Writes pause_minutes to
+# state so the circuit breaker excludes wait time from runtime accounting.
+#
+# Usage: pipeline_quota_gate <run_id> <tier> <boundary_label>
+# Returns: 0=proceed, 2=end_gracefully (halt the pipeline)
+pipeline_quota_gate() {
+  local run_id="$1" tier="$2" boundary_label="$3"
+  local max_retries=3 retry=0 quota route action wait_min prior
+
+  while (( retry < max_retries )); do
+    quota=$(pipeline-quota-check)
+    route=$(pipeline-model-router --quota "$quota" --tier "$tier")
+    action=$(printf '%s' "$route" | jq -r '.action')
+
+    case "$action" in
+      proceed)
+        return 0
+        ;;
+      end_gracefully)
+        log_warn "quota gate [$boundary_label]: end_gracefully (trigger=$(printf '%s' "$route" | jq -r '.trigger // "unknown"'))"
+        return 2
+        ;;
+      wait)
+        wait_min=$(printf '%s' "$route" | jq -r '.wait_minutes // 60')
+        retry=$(( retry + 1 ))
+        log_info "quota gate [$boundary_label]: over threshold — waiting ${wait_min}m (attempt $retry/$max_retries)"
+        sleep $(( wait_min * 60 ))
+        # Record pause time so circuit breaker excludes it from runtime
+        if [[ -n "$run_id" ]]; then
+          prior=$(pipeline-state read "$run_id" '.circuit_breaker.pause_minutes // 0' 2>/dev/null || printf '0')
+          pipeline-state write "$run_id" '.circuit_breaker.pause_minutes' "$(( prior + wait_min ))" 2>/dev/null || true
+        fi
+        ;;
+    esac
+  done
+
+  log_warn "quota gate [$boundary_label]: $max_retries consecutive waits without relief — ending gracefully"
+  return 2
+}
+
 # --- Rate-limit window math ---
 
 # Parse an ISO 8601 UTC timestamp to epoch seconds. Portable across GNU

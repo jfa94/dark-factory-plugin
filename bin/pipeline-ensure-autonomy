@@ -40,15 +40,34 @@ _emit() {
 
 _regenerate() {
   mkdir -p "${CLAUDE_PLUGIN_DATA:-}"
-  local tmp
+  local tmp user_cmd expanded_cmd
   tmp=$(mktemp)
-  jq --arg root "$PLUGIN_ROOT" --arg ver "$current_version" '
-    walk(
-      if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
-      then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
-      else . end
-    ) | . + {_factoryVersion: $ver}
-  ' "$TEMPLATE" > "$tmp"
+
+  # Detect user's existing statusLine.command so the wrapper can chain to it.
+  # Read from ~/.claude/settings.json only (project-level statuslines are rare
+  # and pipeline runs in the project root with the merged file taking precedence).
+  user_cmd=$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
+  if [[ -n "$user_cmd" ]] && [[ "$user_cmd" != *"statusline-wrapper.sh" ]]; then
+    expanded_cmd="${user_cmd/#\~/$HOME}"
+    jq --arg root "$PLUGIN_ROOT" --arg ver "$current_version" \
+       --arg original_statusline "$expanded_cmd" '
+      walk(
+        if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+        then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+        else . end
+      ) | . + {_factoryVersion: $ver}
+        | .env.FACTORY_ORIGINAL_STATUSLINE = $original_statusline
+    ' "$TEMPLATE" > "$tmp"
+    log_info "detected user statusline; will chain via FACTORY_ORIGINAL_STATUSLINE=$expanded_cmd"
+  else
+    jq --arg root "$PLUGIN_ROOT" --arg ver "$current_version" '
+      walk(
+        if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+        then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+        else . end
+      ) | . + {_factoryVersion: $ver}
+    ' "$TEMPLATE" > "$tmp"
+  fi
   mv "$tmp" "$merged_settings"
   log_info "wrote $merged_settings (version $current_version)"
 }
@@ -82,5 +101,25 @@ if [[ "${FACTORY_AUTONOMOUS_MODE:-}" != "1" ]]; then
   exit 2
 fi
 
-_emit "ok" "autonomous mode active (version $current_version)"
+# Cache freshness check: warn if usage-cache.json is missing or stale.
+# This catches edge cases where the wrapper is wired but not firing
+# (e.g., session not relaunched with --settings, wrapper script broken).
+# Does not block execution — the fail-closed sentinel in pipeline-quota-check
+# enforces protection at every gate.
+now_epoch=$(date +%s)
+cache_file="${merged_settings%/*}/usage-cache.json"
+cache_warning=""
+if [[ ! -f "$cache_file" ]]; then
+  cache_warning="usage-cache.json absent; quota gates will block until statusline ticks"
+elif (( now_epoch - $(jq -r '.captured_at // 0' "$cache_file" 2>/dev/null) > 300 )); then
+  cache_warning="usage-cache.json is stale (>300s); statusline may not be ticking"
+fi
+
+if [[ -n "$cache_warning" ]]; then
+  log_warn "$cache_warning"
+  printf '{"status":"ok","message":"autonomous mode active (version %s)","settings_path":"%s","cache_warning":"%s"}\n' \
+    "$current_version" "$merged_settings" "$cache_warning"
+else
+  _emit "ok" "autonomous mode active (version $current_version)"
+fi
 exit 0

@@ -21,6 +21,24 @@ Both windows are tracked independently. Exceeding either triggers recovery behav
 
 ---
 
+## Quota Gates
+
+The pipeline enforces three quota gates, each using `pipeline_quota_gate` from `bin/pipeline-lib.sh`:
+
+| Gate          | When                         | Tier               |
+| ------------- | ---------------------------- | ------------------ |
+| **A — spec**  | Before spec generation (S0b) | `feature`          |
+| **B — batch** | Before each parallel batch   | max tier in batch  |
+| **C — task**  | Per-task pre-flight          | task's `risk_tier` |
+
+Each gate calls `pipeline-quota-check` → `pipeline-model-router` and handles the result:
+
+- `proceed` → continue
+- `wait` → sleep `wait_minutes`, re-check (max 3 cycles), record pause time in state
+- `end_gracefully` → drain in-flight tasks, mark run `partial`, run summary, cleanup
+
+If 3 consecutive wait cycles still return `over_threshold: true`, the gate treats it as `end_gracefully` to prevent infinite sleep loops.
+
 ## How the Pipeline Checks Limits
 
 Before each task spawn, the orchestrator runs:
@@ -93,41 +111,59 @@ in the quota output — accurate to the actual session window, not a fixed UTC b
 
 Stop spawning new tasks. Let in-flight tasks complete. Mark run as `partial`.
 
----
+**Case: quota data unavailable** (`detection_method == "unavailable"`)
 
-## Statusline Setup
-
-`usage-cache.json` is written by `bin/statusline-wrapper.sh`. This is a
-one-time user setup step:
-
-Set `statusLine.command` in `~/.claude/settings.json`:
+`pipeline-quota-check` emits this sentinel when `usage-cache.json` is missing, malformed,
+or has missing rate-limit fields. `pipeline-model-router` converts it to `end_gracefully`
+immediately — waiting cannot fix a broken wrapper:
 
 ```json
 {
-  "statusLine": {
-    "type": "command",
-    "command": "/path/to/dark-factory/bin/statusline-wrapper.sh"
-  }
+  "action": "end_gracefully",
+  "trigger": "quota_detection_failed",
+  "reason": "usage-cache-missing"
 }
 ```
 
-If you already have a statusline configured, set `FACTORY_ORIGINAL_STATUSLINE`
-in the `env` field so the wrapper chains to it:
+This is the fail-closed path: when the pipeline cannot verify quota it halts rather
+than proceeding blindly. The sentinel path is exercised on the first run before the
+statusline has ticked; subsequent runs (with the wrapper auto-installed via
+`merged-settings.json`) have a warm cache.
+
+---
+
+## Statusline Auto-Install
+
+`usage-cache.json` is written by `bin/statusline-wrapper.sh`. The wrapper is
+**auto-installed for all pipeline sessions** via `templates/settings.autonomous.json`,
+which declares `statusLine.command` pointing at the wrapper. `pipeline-ensure-autonomy`
+regenerates `merged-settings.json` on version bumps, resolving the
+`${CLAUDE_PLUGIN_ROOT}` path — no user setup required.
+
+**Coexistence with a user's existing statusline.** When `pipeline-ensure-autonomy`
+regenerates `merged-settings.json`, it reads `~/.claude/settings.json` for an
+existing `statusLine.command`. If found, it injects the path as
+`env.FACTORY_ORIGINAL_STATUSLINE` in the merged file so the wrapper chains to it
+during pipeline sessions. The user's `~/.claude/settings.json` is never modified.
+
+Outside pipeline sessions (any session not launched with `--settings merged-settings.json`),
+the user's own statusline is unchanged.
+
+If you want to preserve a custom statusline for pipeline sessions without relying on
+auto-detection (e.g., a complex chained command), set `FACTORY_ORIGINAL_STATUSLINE`
+manually in your environment or in `~/.claude/settings.json`'s `env` block:
 
 ```json
 {
   "env": {
-    "FACTORY_ORIGINAL_STATUSLINE": "~/.claude/statusline.sh"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "/path/to/dark-factory/bin/statusline-wrapper.sh"
+    "FACTORY_ORIGINAL_STATUSLINE": "~/.claude/my-statusline.sh"
   }
 }
 ```
 
 The wrapper is fail-silent on the cache write — a broken jq or missing directory
-never breaks statusline output.
+never breaks statusline output. The chain is also guarded: if `FACTORY_ORIGINAL_STATUSLINE`
+points to a missing file, the wrapper falls back to its default output instead of crashing.
 
 ---
 

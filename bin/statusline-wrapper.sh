@@ -35,18 +35,15 @@ if command -v jq >/dev/null 2>&1; then
   fi
 fi
 
-# Chain to original statusline or emit default output.
-if [[ -n "${FACTORY_ORIGINAL_STATUSLINE:-}" ]]; then
-  printf '%s' "$input" | eval "$FACTORY_ORIGINAL_STATUSLINE"
-else
-  # Default: model + dir + 5h usage
+_emit_default() {
+  local MODEL DIR RESETS
   MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "Claude"' 2>/dev/null \
     | sed 's/ [0-9][0-9.]*$//' || printf 'Claude')
   DIR=$(printf '%s' "$input" | jq -r '.workspace.current_dir // ""' 2>/dev/null \
     | sed 's|.*/||' || printf '')
   RESETS=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null || true)
-
   if [[ -n "$RESETS" ]]; then
+    local NOW REMAINING HOURS MINS USAGE REMAINING_PCT
     NOW=$(date +%s)
     REMAINING=$((RESETS - NOW))
     HOURS=$((REMAINING / 3600))
@@ -59,4 +56,23 @@ else
   else
     printf '%s in %s\n' "$MODEL" "$DIR"
   fi
+}
+
+# Chain to original statusline or emit default output.
+if [[ -n "${FACTORY_ORIGINAL_STATUSLINE:-}" ]]; then
+  # Expand ~ and extract the script path (first whitespace-delimited token)
+  _chain="${FACTORY_ORIGINAL_STATUSLINE/#\~/$HOME}"
+  _chain_path="${_chain%% *}"
+  if [[ -f "$_chain_path" ]]; then
+    # Disable -e around the eval so a broken chain falls back instead of crashing.
+    set +e
+    printf '%s' "$input" | eval "$_chain"
+    _chain_rc=$?
+    set -e
+    if (( _chain_rc != 0 )); then _emit_default; fi
+  else
+    _emit_default
+  fi
+else
+  _emit_default
 fi

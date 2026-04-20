@@ -6,36 +6,65 @@
 # contains real-time rate_limits data from the Claude Code process — no API
 # calls, no token cost.
 #
-# Setup: set statusLine.command in ~/.claude/settings.json (or project-level)
-# to bin/statusline-wrapper.sh. One-time user step; see docs/guides/setup.md.
+# The statusline wrapper is auto-installed for pipeline sessions via
+# templates/settings.autonomous.json — no user setup required.
 #
 # Freshness: if captured_at is >120s old, a warning is logged but the data is
 # still used — statusline can stall during long Agent() tool calls, but the
 # cached values are still the most recent available.
 #
-# Usage: pipeline-quota-check
-# Exit: 0=data retrieved (JSON on stdout), 1=detection failed
+# Fail-closed: on missing/malformed/stale cache, exits 0 with sentinel JSON:
+#   {"detection_method":"unavailable","reason":"...","five_hour":{"over_threshold":true},...}
+# Use --strict to preserve exit 1 behavior (for tests/CI).
+#
+# Usage: pipeline-quota-check [--strict]
+# Exit: 0=data retrieved (JSON on stdout), 1=detection failed (--strict only)
 
 source "$(dirname "$0")/pipeline-lib.sh"
 require_command jq
 
+strict=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strict) strict=true; shift ;;
+    *) log_error "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
 PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugin-data/factory}"
 cache_file="${PLUGIN_DATA}/usage-cache.json"
+
+_sentinel() {
+  local reason="$1"
+  jq -n --arg reason "$reason" '{
+    detection_method: "unavailable",
+    reason: $reason,
+    five_hour: {utilization: null, over_threshold: true, hourly_threshold: null},
+    seven_day: {utilization: null, over_threshold: true, daily_threshold: null}
+  }'
+}
 
 # --- Validate cache file ---
 
 if [[ ! -f "$cache_file" ]]; then
-  log_error "usage-cache.json not found: $cache_file"
-  log_error "setup required: set statusLine.command in ~/.claude/settings.json to:"
-  log_error "  $(cd "$(dirname "$0")/.." && pwd)/bin/statusline-wrapper.sh"
-  log_error "If you already have a statusline, set FACTORY_ORIGINAL_STATUSLINE"
-  log_error "in settings.json 'env' field to chain to it."
-  exit 1
+  if $strict; then
+    log_error "usage-cache.json not found: $cache_file"
+    log_error "statusLine.command in ~/.claude/settings.json must point to statusline-wrapper.sh"
+    exit 1
+  fi
+  log_warn "usage-cache.json not found; emitting unavailable sentinel (pipeline will halt)"
+  _sentinel "usage-cache-missing"
+  exit 0
 fi
 
 if ! jq -e . "$cache_file" >/dev/null 2>&1; then
-  log_error "usage-cache.json is not valid JSON: $cache_file"
-  exit 1
+  if $strict; then
+    log_error "usage-cache.json is not valid JSON: $cache_file"
+    exit 1
+  fi
+  log_warn "usage-cache.json is malformed; emitting unavailable sentinel"
+  _sentinel "usage-cache-malformed"
+  exit 0
 fi
 
 # --- Freshness check ---
@@ -54,9 +83,13 @@ five_hour_pct=$(jq -r '.five_hour.used_percentage // empty' "$cache_file" 2>/dev
 seven_day_pct=$(jq -r '.seven_day.used_percentage // empty' "$cache_file" 2>/dev/null)
 
 if [[ -z "$five_hour_pct" || -z "$seven_day_pct" ]]; then
-  log_error "usage-cache.json missing five_hour or seven_day data"
-  log_error "ensure statusline-wrapper.sh is configured and has run at least once"
-  exit 1
+  if $strict; then
+    log_error "usage-cache.json missing five_hour or seven_day data"
+    exit 1
+  fi
+  log_warn "usage-cache.json missing rate_limit fields; emitting unavailable sentinel"
+  _sentinel "usage-cache-malformed"
+  exit 0
 fi
 
 # Normalize to integer percent

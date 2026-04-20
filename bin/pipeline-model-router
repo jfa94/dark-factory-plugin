@@ -30,8 +30,22 @@ case "$tier" in
 esac
 
 # Parse quota data
+detection_method=$(printf '%s' "$quota" | jq -r '.detection_method // "statusline"')
 five_hour_over=$(printf '%s' "$quota" | jq -r '.five_hour.over_threshold')
 seven_day_over=$(printf '%s' "$quota" | jq -r '.seven_day.over_threshold')
+
+# Unavailable sentinel: quota data could not be read → halt the pipeline loudly
+if [[ "$detection_method" == "unavailable" ]]; then
+  reason=$(printf '%s' "$quota" | jq -r '.reason // "unknown"')
+  log_warn "quota detection unavailable ($reason) — ending gracefully"
+  jq -n \
+    --arg action "end_gracefully" \
+    --arg trigger "quota_detection_failed" \
+    --arg reason "$reason" \
+    --arg tier "$tier" \
+    '{provider: "anthropic", action: $action, trigger: $trigger, reason: $reason, tier: $tier}'
+  exit 0
+fi
 
 # Standard review caps (from config or defaults)
 routine_cap=$(read_config '.review.routineRounds' '2')

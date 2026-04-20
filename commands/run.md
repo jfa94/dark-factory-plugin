@@ -169,6 +169,13 @@ cd "$orchestrator_wt"
 This phase runs once at the beginning of a `prd` or `discover` mode run:
 
 ```
+S0b. Quota gate before spec generation (Gate A):
+     source pipeline-lib.sh
+     pipeline_quota_gate "$run_id" "feature" "spec"
+     → Exit 0: proceed to S1.
+     → Exit 2 (end_gracefully): mark run partial, run pipeline-summary, go to cleanup.
+       Do NOT start spec generation.
+
 S1. pipeline-fetch-prd <issue-number>             → PRD body + metadata
 S2. Spawn spec-generator agent with PRD body
     → spec-generator runs with isolation: worktree in an ephemeral worktree.
@@ -249,6 +256,8 @@ For each group G (in ascending order):
   tasks_in_group = [entry.task_id for entry in execution_order if entry.parallel_group == G]
   Chunk tasks_in_group into batches of size maxConcurrent
   For each batch:
+    Quota gate (Gate B): pipeline_quota_gate "$run_id" "<max tier in batch>" "batch-G$G"
+    → Exit 2 (end_gracefully): drain in-flight tasks, mark run partial, go to cleanup.
     Run "Pre-flight" for every task in the batch (sequential)
     Run "Execute" for the batch (one assistant message, parallel Agent calls)
     Run "Quality Gate" → "Spawn Reviewers" → "Parse Verdicts" → "Create PR & Wait" → "Finalize"
@@ -276,12 +285,11 @@ For each task `$t` in the current parallel group, walk these seven steps in orde
 1. **Pre-flight**
    - `pipeline-circuit-breaker $run_id` — if tripped, do not start new tasks; jump to cleanup.
    - `pipeline-state deps-satisfied $run_id $t` — if not satisfied, poll at the group boundary.
-   - `pipeline-quota-check` — capture usage data.
    - `pipeline-classify-task '<task-json>'` — `{tier, model, maxTurns}`.
    - `pipeline-classify-risk '<task-json>'` — record `risk_level` in `.tasks.$t.risk_tier`.
-   - `pipeline-model-router --quota '<Q>' --tier <risk_level>` — `{provider, model, action}`.
-     - If `action=wait`: sleep `wait_minutes`, retry from quota check.
-     - If `action=end_gracefully`: drain in-flight tasks, mark run `partial`, go to cleanup.
+   - Quota gate (Gate C): `pipeline_quota_gate "$run_id" "<risk_level>" "task-$t"`
+     (sources pipeline-lib.sh; handles wait loop ≤3 retries and pause_minutes accounting internally)
+     - If exit 2 (end_gracefully): drain in-flight tasks, mark run `partial`, go to cleanup.
    - `pipeline-build-prompt '<task-json>' --holdout 20%` — full executor prompt.
      - `pipeline-build-prompt` reads `.spec.path` and any prior-work fields
        (`.tasks.$t.prior_work_dir`, `.prior_branch`, `.prior_commit`) from state,
@@ -522,23 +530,14 @@ Max 4 total attempts per task. After exhausting retries: mark `failed`, continue
 
 ## Rate Limit Recovery
 
-When `pipeline-model-router` returns `action: wait`:
+Rate limit waits are handled inside `pipeline_quota_gate` (defined in `bin/pipeline-lib.sh`). The function:
 
-1. Log the wait time and reason
-2. Sleep for `wait_minutes`
-3. Re-check quota via `pipeline-quota-check` (statusline keeps writing
-   `usage-cache.json` even during sleep, so re-reads get fresh data)
-4. After the wait completes, add the elapsed minutes to
-   `.circuit_breaker.pause_minutes` so `pipeline-circuit-breaker` does not
-   count paused wall-clock time against `maxRuntimeMinutes`:
+1. Calls `pipeline-quota-check` → `pipeline-model-router` to get a routing decision.
+2. On `action=wait`: sleeps `wait_minutes`, updates `.circuit_breaker.pause_minutes` in state (so the circuit breaker excludes wait time from `maxRuntimeMinutes`), then re-checks. Max 3 consecutive wait cycles; on the 4th the function returns exit 2 (`end_gracefully`).
+3. On `action=end_gracefully` (7d over, or quota data unavailable): returns exit 2 immediately.
+4. On `action=proceed`: returns exit 0.
 
-   ```
-   prior=$(pipeline-state read <run-id> '.circuit_breaker.pause_minutes // 0')
-   pipeline-state write <run-id> '.circuit_breaker.pause_minutes' $((prior + wait_minutes))
-   ```
-
-5. If 3 consecutive wait cycles still return `over_threshold: true`, treat as
-   `end_gracefully` to prevent infinite sleep loops.
+Callers at all three gates (A=spec, B=batch, C=task) handle exit 2 the same way: drain in-flight tasks, mark run `partial`, run summary, go to cleanup.
 
 When `action: end_gracefully`:
 

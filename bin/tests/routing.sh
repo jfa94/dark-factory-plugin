@@ -38,36 +38,64 @@ assert_exit() {
 }
 
 # ============================================================
-echo "=== pipeline-quota-check (statusline — missing or invalid cache) ==="
+echo "=== pipeline-quota-check (fail-closed sentinel) ==="
 
-# (1) Missing usage-cache.json → exits 1
-_run_quota_no_cache() (
+# Helpers: capture both exit code and stdout from a subshell
+_run_quota_no_cache_sentinel() (
   empty_data=$(mktemp -d)
   trap '[[ "$empty_data" == /tmp/* ]] && rm -rf "$empty_data"' EXIT
   env CLAUDE_PLUGIN_DATA="$empty_data" pipeline-quota-check
 )
 
-assert_exit "missing usage-cache.json exits 1" 1 _run_quota_no_cache
-
-# (2) Invalid JSON → exits 1
-_run_quota_bad_json() (
+_run_quota_bad_json_sentinel() (
   test_data=$(mktemp -d)
   trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"' EXIT
   printf 'not-json' > "$test_data/usage-cache.json"
   env CLAUDE_PLUGIN_DATA="$test_data" pipeline-quota-check
 )
 
-assert_exit "invalid JSON in usage-cache.json exits 1" 1 _run_quota_bad_json
-
-# (3) Missing five_hour/seven_day fields → exits 1
-_run_quota_missing_fields() (
+_run_quota_missing_fields_sentinel() (
   test_data=$(mktemp -d)
   trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"' EXIT
   printf '{"captured_at":1775822400}' > "$test_data/usage-cache.json"
   env CLAUDE_PLUGIN_DATA="$test_data" pipeline-quota-check
 )
 
-assert_exit "usage-cache.json missing rate_limit fields exits 1" 1 _run_quota_missing_fields
+# (1) Missing cache → exits 0 with sentinel
+assert_exit "missing cache exits 0 (sentinel)" 0 _run_quota_no_cache_sentinel
+set +e; _out=$(_run_quota_no_cache_sentinel 2>/dev/null); set -e
+assert_eq "missing cache: detection_method=unavailable" "unavailable" "$(printf '%s' "$_out" | jq -r '.detection_method')"
+assert_eq "missing cache: reason" "usage-cache-missing" "$(printf '%s' "$_out" | jq -r '.reason')"
+assert_eq "missing cache: five_hour.over_threshold=true" "true" "$(printf '%s' "$_out" | jq -r '.five_hour.over_threshold')"
+assert_eq "missing cache: seven_day.over_threshold=true" "true" "$(printf '%s' "$_out" | jq -r '.seven_day.over_threshold')"
+
+# (2) Invalid JSON → exits 0 with sentinel
+assert_exit "invalid JSON exits 0 (sentinel)" 0 _run_quota_bad_json_sentinel
+set +e; _out=$(_run_quota_bad_json_sentinel 2>/dev/null); set -e
+assert_eq "bad JSON: detection_method=unavailable" "unavailable" "$(printf '%s' "$_out" | jq -r '.detection_method')"
+assert_eq "bad JSON: reason=usage-cache-malformed" "usage-cache-malformed" "$(printf '%s' "$_out" | jq -r '.reason')"
+
+# (3) Missing fields → exits 0 with sentinel
+assert_exit "missing fields exits 0 (sentinel)" 0 _run_quota_missing_fields_sentinel
+set +e; _out=$(_run_quota_missing_fields_sentinel 2>/dev/null); set -e
+assert_eq "missing fields: detection_method=unavailable" "unavailable" "$(printf '%s' "$_out" | jq -r '.detection_method')"
+
+# (4) --strict flag: missing cache → exits 1
+_run_quota_no_cache_strict() (
+  empty_data=$(mktemp -d)
+  trap '[[ "$empty_data" == /tmp/* ]] && rm -rf "$empty_data"' EXIT
+  env CLAUDE_PLUGIN_DATA="$empty_data" pipeline-quota-check --strict
+)
+assert_exit "missing cache with --strict exits 1" 1 _run_quota_no_cache_strict
+
+# (5) --strict flag: invalid JSON → exits 1
+_run_quota_bad_json_strict() (
+  test_data=$(mktemp -d)
+  trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"' EXIT
+  printf 'not-json' > "$test_data/usage-cache.json"
+  env CLAUDE_PLUGIN_DATA="$test_data" pipeline-quota-check --strict
+)
+assert_exit "invalid JSON with --strict exits 1" 1 _run_quota_bad_json_strict
 
 # (4) Grep guard: legacy detection symbols must not appear in the script
 _script="$(cd "$(dirname "$0")/.." && pwd)/pipeline-quota-check"
@@ -218,6 +246,17 @@ quota='{"five_hour":{"utilization":95,"hourly_threshold":60,"over_threshold":tru
 output=$(pipeline-model-router --quota "$quota" --tier feature 2>/dev/null)
 assert_eq "7d over → end_gracefully" "end_gracefully" "$(printf '%s' "$output" | jq -r '.action')"
 assert_eq "7d over trigger" "7d_over" "$(printf '%s' "$output" | jq -r '.trigger')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-model-router (unavailable sentinel) ==="
+
+unavailable_quota='{"detection_method":"unavailable","reason":"usage-cache-missing","five_hour":{"over_threshold":true},"seven_day":{"over_threshold":true}}'
+
+output=$(pipeline-model-router --quota "$unavailable_quota" --tier routine 2>/dev/null)
+assert_eq "unavailable → end_gracefully" "end_gracefully" "$(printf '%s' "$output" | jq -r '.action')"
+assert_eq "unavailable trigger" "quota_detection_failed" "$(printf '%s' "$output" | jq -r '.trigger')"
+assert_eq "unavailable reason preserved" "usage-cache-missing" "$(printf '%s' "$output" | jq -r '.reason')"
 
 # ============================================================
 echo ""

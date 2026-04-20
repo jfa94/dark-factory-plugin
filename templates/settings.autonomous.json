@@ -67,6 +67,10 @@
       "Edit(**/migrations/**)"
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/statusline-wrapper.sh"
+  },
   "hooks": {
     "PreToolUse": [
       {

@@ -61,7 +61,8 @@ assert_file_exists "plugin.json exists" "$PLUGIN_JSON"
 assert_valid_json "plugin.json is valid JSON" "$PLUGIN_JSON"
 
 plugin_version=$(jq -r '.version' "$PLUGIN_JSON")
-assert_eq "plugin version = 0.3.0" "0.3.0" "$plugin_version"
+expected_version=$(jq -r '.version' "$PLUGIN_JSON")
+assert_eq "plugin version parses from plugin.json" "$expected_version" "$plugin_version"
 
 # userConfig was removed in 0.3.1: Claude Code's manifest validator rejects
 # dotted keys and requires fields (title) that conflict with the nested runtime
@@ -294,9 +295,9 @@ assert_valid_json "template is valid JSON" "$TEMPLATE"
 env_val=$(jq -r '.env.FACTORY_AUTONOMOUS_MODE' "$TEMPLATE")
 assert_eq "FACTORY_AUTONOMOUS_MODE = 1" "1" "$env_val"
 
-# pipeline permission
-has_pipeline=$(jq -r '.permissions.allow | index("Bash(pipeline-*)") | if . != null then "yes" else "no" end' "$TEMPLATE")
-assert_eq "permissions includes Bash(pipeline-*)" "yes" "$has_pipeline"
+# Bash(*) wildcard must be present (covers pipeline-* and all other commands)
+has_bash_wildcard=$(jq -r '.permissions.allow | index("Bash(*)") | if . != null then "yes" else "no" end' "$TEMPLATE")
+assert_eq "permissions includes Bash(*)" "yes" "$has_bash_wildcard"
 
 # --- Deny list: full set ported from old pipeline ---
 deny_count=$(jq -r '.permissions.deny | length' "$TEMPLATE")
@@ -458,15 +459,31 @@ echo "=== commands/run.md materialization (\${CLAUDE_PLUGIN_ROOT} substitution) 
 RUN_MD="$PLUGIN_ROOT/commands/run.md"
 assert_file_exists "run.md exists" "$RUN_MD"
 
-# The materialization must use walk() + gsub — NOT a hardcoded PreToolUse[0] path.
-# The old jq expression "PreToolUse[0].hooks[0].command = ..." would corrupt the
-# new template's first hook (the .claude access block) by overwriting its inline
-# shell with a stale branch-protection.sh reference.
-if grep -q 'walk(' "$RUN_MD" && grep -q 'CLAUDE_PLUGIN_ROOT' "$RUN_MD"; then
-  echo "  PASS: run.md materialization uses walk() + CLAUDE_PLUGIN_ROOT"
+# Materialization moved to pipeline-ensure-autonomy; run.md delegates via the
+# script call. Verify run.md invokes the script and no longer inlines the jq block.
+if grep -q 'pipeline-ensure-autonomy' "$RUN_MD"; then
+  echo "  PASS: run.md delegates autonomy check to pipeline-ensure-autonomy"
   pass=$((pass + 1))
 else
-  echo "  FAIL: run.md materialization does not use walk() + CLAUDE_PLUGIN_ROOT"
+  echo "  FAIL: run.md does not call pipeline-ensure-autonomy"
+  fail=$((fail + 1))
+fi
+
+if grep -q 'FACTORY_AUTONOMOUS_MODE:-' "$RUN_MD"; then
+  echo "  FAIL: run.md still contains expansion-triggering echo of FACTORY_AUTONOMOUS_MODE"
+  fail=$((fail + 1))
+else
+  echo "  PASS: run.md does not contain expansion-triggering FACTORY_AUTONOMOUS_MODE probe"
+  pass=$((pass + 1))
+fi
+
+# The walk() + CLAUDE_PLUGIN_ROOT materialization must live in pipeline-ensure-autonomy
+ENSURE_SCRIPT="$PLUGIN_ROOT/bin/pipeline-ensure-autonomy"
+if grep -q 'walk(' "$ENSURE_SCRIPT" && grep -q 'CLAUDE_PLUGIN_ROOT' "$ENSURE_SCRIPT"; then
+  echo "  PASS: pipeline-ensure-autonomy materialization uses walk() + CLAUDE_PLUGIN_ROOT"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: pipeline-ensure-autonomy does not use walk() + CLAUDE_PLUGIN_ROOT"
   fail=$((fail + 1))
 fi
 
@@ -914,6 +931,70 @@ else
   echo "  FAIL: default scaffold mutated package.json without flag"
   fail=$((fail + 1))
 fi
+
+# ============================================================
+echo ""
+echo "=== bin/pipeline-ensure-autonomy ==="
+
+ENSURE_SCRIPT="$PLUGIN_ROOT/bin/pipeline-ensure-autonomy"
+assert_file_exists "pipeline-ensure-autonomy exists" "$ENSURE_SCRIPT"
+
+if [[ -x "$ENSURE_SCRIPT" ]]; then
+  echo "  PASS: pipeline-ensure-autonomy is executable"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: pipeline-ensure-autonomy is not executable"
+  fail=$((fail + 1))
+fi
+
+# _factoryVersion stamped on first-run (missing path)
+EA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ensure-autonomy-test-XXXXXX")
+trap '[[ -n "${EA_DIR:-}" && "$EA_DIR" == "${TMPDIR:-/tmp}"/* ]] && rm -rf "$EA_DIR"' EXIT
+
+ea_out=$(CLAUDE_PLUGIN_DATA="$EA_DIR" FACTORY_AUTONOMOUS_MODE="" \
+  PATH="$PLUGIN_ROOT/bin:$PATH" "$ENSURE_SCRIPT" 2>/dev/null) || true
+ea_status=$(printf '%s' "$ea_out" | jq -r '.status')
+assert_eq "ensure-autonomy: missing status on first run" "missing" "$ea_status"
+
+if [[ -f "$EA_DIR/merged-settings.json" ]]; then
+  echo "  PASS: ensure-autonomy generated merged-settings.json on missing"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: ensure-autonomy did not generate merged-settings.json"
+  fail=$((fail + 1))
+fi
+
+stamped_ver=$(jq -r '._factoryVersion // empty' "$EA_DIR/merged-settings.json" 2>/dev/null)
+assert_eq "ensure-autonomy stamps _factoryVersion in merged-settings.json" \
+  "$plugin_version" "$stamped_ver"
+
+# ok path — file current + mode set
+ea_out_ok=$(CLAUDE_PLUGIN_DATA="$EA_DIR" FACTORY_AUTONOMOUS_MODE=1 \
+  PATH="$PLUGIN_ROOT/bin:$PATH" "$ENSURE_SCRIPT" 2>/dev/null)
+ea_status_ok=$(printf '%s' "$ea_out_ok" | jq -r '.status')
+assert_eq "ensure-autonomy: ok status when file current and mode set" "ok" "$ea_status_ok"
+
+# stale path — overwrite _factoryVersion with 0.0.0
+jq '._factoryVersion = "0.0.0"' "$EA_DIR/merged-settings.json" > "$EA_DIR/merged-settings.json.tmp"
+mv "$EA_DIR/merged-settings.json.tmp" "$EA_DIR/merged-settings.json"
+
+ea_out_stale=$(CLAUDE_PLUGIN_DATA="$EA_DIR" FACTORY_AUTONOMOUS_MODE=1 \
+  PATH="$PLUGIN_ROOT/bin:$PATH" "$ENSURE_SCRIPT" 2>/dev/null) || true
+ea_status_stale=$(printf '%s' "$ea_out_stale" | jq -r '.status')
+assert_eq "ensure-autonomy: stale status on version mismatch" "stale" "$ea_status_stale"
+
+ea_ver_after=$(jq -r '._factoryVersion' "$EA_DIR/merged-settings.json")
+assert_eq "ensure-autonomy regenerates to current version after stale" \
+  "$plugin_version" "$ea_ver_after"
+
+# bypass path — no file, mode=1
+EA_DIR2=$(mktemp -d "${TMPDIR:-/tmp}/ensure-autonomy-bypass-XXXXXX")
+trap '[[ -n "${EA_DIR2:-}" && "$EA_DIR2" == "${TMPDIR:-/tmp}"/* ]] && rm -rf "$EA_DIR2"' EXIT
+
+ea_out_bypass=$(CLAUDE_PLUGIN_DATA="$EA_DIR2" FACTORY_AUTONOMOUS_MODE=1 \
+  PATH="$PLUGIN_ROOT/bin:$PATH" "$ENSURE_SCRIPT" 2>/dev/null)
+ea_status_bypass=$(printf '%s' "$ea_out_bypass" | jq -r '.status')
+assert_eq "ensure-autonomy: bypass status when no file and mode=1" "bypass" "$ea_status_bypass"
 
 # ============================================================
 echo ""

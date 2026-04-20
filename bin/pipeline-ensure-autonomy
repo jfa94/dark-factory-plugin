@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Verify that the current session has up-to-date autonomous-mode settings.
+# Usage: pipeline-ensure-autonomy
+#
+# Checks whether $CLAUDE_PLUGIN_DATA/merged-settings.json exists and was
+# generated from the current plugin version. Regenerates the file if it is
+# missing or stale, then emits a JSON result on stdout and exits:
+#
+#   ok      – file is current and FACTORY_AUTONOMOUS_MODE=1; proceed.
+#   bypass  – FACTORY_AUTONOMOUS_MODE=1 but no merged file (CI/env path).
+#   stale   – file existed but was regenerated; session must relaunch.
+#   missing – no file (first run); file was generated; session must relaunch.
+#
+# Exit codes:
+#   0 – ok or bypass (pipeline may continue)
+#   2 – stale or missing (pipeline must halt; caller should show relaunch msg)
+
+set -euo pipefail
+
+source "$(dirname "$0")/pipeline-lib.sh"
+
+PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PLUGIN_JSON="$PLUGIN_ROOT/.claude-plugin/plugin.json"
+TEMPLATE="$PLUGIN_ROOT/templates/settings.autonomous.json"
+
+# Current plugin version
+current_version=$(jq -r '.version // empty' "$PLUGIN_JSON" 2>/dev/null)
+if [[ -z "$current_version" ]]; then
+  log_error "cannot read version from $PLUGIN_JSON"
+  exit 1
+fi
+
+merged_settings="${CLAUDE_PLUGIN_DATA:-}/merged-settings.json"
+
+_emit() {
+  local status="$1" message="$2"
+  printf '{"status":"%s","message":"%s","settings_path":"%s"}\n' \
+    "$status" "$message" "$merged_settings"
+}
+
+_regenerate() {
+  mkdir -p "${CLAUDE_PLUGIN_DATA:-}"
+  local tmp
+  tmp=$(mktemp)
+  jq --arg root "$PLUGIN_ROOT" --arg ver "$current_version" '
+    walk(
+      if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
+      then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
+      else . end
+    ) | . + {_factoryVersion: $ver}
+  ' "$TEMPLATE" > "$tmp"
+  mv "$tmp" "$merged_settings"
+  log_info "wrote $merged_settings (version $current_version)"
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+if [[ ! -f "$merged_settings" ]]; then
+  if [[ "${FACTORY_AUTONOMOUS_MODE:-}" == "1" ]]; then
+    _emit "bypass" "no merged settings file; FACTORY_AUTONOMOUS_MODE bypass active"
+    exit 0
+  fi
+  _regenerate
+  _emit "missing" "generated merged-settings.json for the first time; relaunch required"
+  exit 2
+fi
+
+# File exists — check version
+file_version=$(jq -r '._factoryVersion // empty' "$merged_settings" 2>/dev/null || true)
+
+if [[ "$file_version" != "$current_version" ]]; then
+  _regenerate
+  _emit "stale" "merged-settings.json was version ${file_version:-unknown}; regenerated to $current_version; relaunch required"
+  exit 2
+fi
+
+# Version matches — must also have FACTORY_AUTONOMOUS_MODE set (loaded from settings)
+if [[ "${FACTORY_AUTONOMOUS_MODE:-}" != "1" ]]; then
+  # Settings file is current but session wasn't launched with --settings.
+  # Treat as missing (user needs to relaunch).
+  _emit "missing" "merged-settings.json is current but FACTORY_AUTONOMOUS_MODE not set; relaunch with --settings"
+  exit 2
+fi
+
+_emit "ok" "autonomous mode active (version $current_version)"
+exit 0

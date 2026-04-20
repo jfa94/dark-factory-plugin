@@ -40,50 +40,35 @@ You are the entry point — and the orchestrator — for the dark-factory autono
 
 ## Step 1: Check Autonomous Mode
 
-Check if this session has the required safety settings:
+Run the autonomy check:
 
 ```bash
-echo "${FACTORY_AUTONOMOUS_MODE:-}"
+pipeline-ensure-autonomy
 ```
 
-If `FACTORY_AUTONOMOUS_MODE` is not `1`, materialize a relaunchable settings file and tell the user how to relaunch:
+Parse the result:
 
 ```bash
-# Resolve plugin root from the installed pipeline-state binary
-plugin_root=$(dirname "$(dirname "$(which pipeline-state)")")
-mkdir -p "$CLAUDE_PLUGIN_DATA"
-
-# Materialize an absolute-path copy of the autonomous settings template.
-# The template may reference ${CLAUDE_PLUGIN_ROOT} anywhere (top-level hooks,
-# matcher groups, command strings, env values). walk() + gsub() substitutes
-# every occurrence regardless of nesting. User-env hooks (~/.claude/hooks/*)
-# and inline shell snippets are left untouched because they contain no
-# ${CLAUDE_PLUGIN_ROOT} token. Running this twice with the same $plugin_root
-# is idempotent.
-merged_settings="$CLAUDE_PLUGIN_DATA/merged-settings.json"
-jq --arg root "$plugin_root" '
-  walk(
-    if type == "string" and test("\\$\\{CLAUDE_PLUGIN_ROOT\\}")
-    then gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $root)
-    else . end
-  )
-' "$plugin_root/templates/settings.autonomous.json" \
-  > "$merged_settings"
-
-echo "Generated: $merged_settings"
+result=$(pipeline-ensure-autonomy)
+status=$(printf '%s' "$result" | jq -r '.status')
+settings_path=$(printf '%s' "$result" | jq -r '.settings_path')
 ```
 
-Then stop and show the user:
+If `status` is `ok` or `bypass`, continue to Step 2.
+
+If `status` is `stale` or `missing`, stop and show the user:
 
 > This pipeline requires autonomous-mode settings for safe operation.
+>
+> A settings file has been generated at `$settings_path`.
 >
 > **Recommended — relaunch with the generated settings file:**
 >
 > ```
-> claude --settings $CLAUDE_PLUGIN_DATA/merged-settings.json
+> claude --settings $settings_path
 > ```
 >
-> This loads the safety hooks (branch protection, protected-file guards, SQL-safety, vitest stop-gate) and the permission allow/deny lists that scope the pipeline to safe operations.
+> This loads the safety hooks (branch protection, protected-file guards, SQL-safety, vitest stop-gate) and the permission allow/deny lists that scope the pipeline to safe operations. The file is regenerated automatically whenever the plugin is upgraded.
 >
 > **Advanced / CI — bypass the acknowledgment check only:**
 >

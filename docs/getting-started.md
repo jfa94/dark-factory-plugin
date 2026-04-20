@@ -163,6 +163,8 @@ This loads:
 
 Setting `FACTORY_AUTONOMOUS_MODE=1` in your environment lets `/factory:run` proceed but does **not** load the hooks or permission lists. Use this only in CI environments where equivalent guardrails are already enforced at the host level (sandboxed runner, GitHub branch protection, no production credentials on disk). For interactive runs on your own machine, always use the settings file.
 
+> **Plugin upgrades:** `merged-settings.json` is regenerated automatically when you run `/factory:run` after a plugin upgrade — no manual action required. The new file is written to `$CLAUDE_PLUGIN_DATA/merged-settings.json`; relaunch Claude with `--settings` pointing at it to pick up the updated hooks and permissions.
+
 ## Step 5: Create a PRD Issue
 
 Create a GitHub issue with the `prd` label describing the work you want done. The issue body should contain:

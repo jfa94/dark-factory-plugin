@@ -227,45 +227,100 @@ _realpath_m() {
 
 # --- Quota gate ---
 
-# Run a quota gate at a named pipeline boundary. Handles the wait loop
-# (max 3 consecutive waits) and logs each cycle. Writes pause_minutes to
-# state so the circuit breaker excludes wait time from runtime accounting.
+# Run a quota gate at a named pipeline boundary.
+#
+# Constraint: Claude Code bash tool hard-caps at 10 min per invocation, so this
+# function does AT MOST one sleep chunk per call (default 540s / 9min). On wait
+# it sleeps once, re-checks, and either proceeds or yields (exit 3) back to the
+# orchestrator, which re-invokes the gate — preserving full autonomy across
+# arbitrarily long waits (e.g. a 5h window reset) without exceeding the tool cap.
+#
+# Stuck-cache protection: state key `.circuit_breaker.quota_wait_cycles` tracks
+# consecutive yields. After MAX_CYCLES (default 60, ≈9h) the gate returns
+# end_gracefully to avoid infinite loops when the statusline stops ticking.
+# The counter resets on `proceed`.
 #
 # Usage: pipeline_quota_gate <run_id> <tier> <boundary_label>
-# Returns: 0=proceed, 2=end_gracefully (halt the pipeline)
+# Returns: 0=proceed, 2=end_gracefully (halt), 3=wait_retry (orchestrator re-invoke)
 pipeline_quota_gate() {
   local run_id="$1" tier="$2" boundary_label="$3"
-  local max_retries=3 retry=0 quota route action wait_min prior
+  local quota route action wait_min prior trigger
+  local sleep_cap_sec="${FACTORY_QUOTA_GATE_SLEEP_CAP_SEC:-540}"
+  local max_cycles="${FACTORY_QUOTA_GATE_MAX_CYCLES:-60}"
 
-  while (( retry < max_retries )); do
-    quota=$(pipeline-quota-check)
-    route=$(pipeline-model-router --quota "$quota" --tier "$tier")
-    action=$(printf '%s' "$route" | jq -r '.action')
+  if [[ -z "$run_id" ]]; then
+    log_error "quota gate [$boundary_label]: run_id required"
+    return 2
+  fi
 
-    case "$action" in
-      proceed)
-        return 0
-        ;;
-      end_gracefully)
-        log_warn "quota gate [$boundary_label]: end_gracefully (trigger=$(printf '%s' "$route" | jq -r '.trigger // "unknown"'))"
+  # Stuck-cache guard: count consecutive wait yields across orchestrator re-invocations.
+  local cycles
+  cycles=$(pipeline-state read "$run_id" '.circuit_breaker.quota_wait_cycles // 0' 2>/dev/null || printf '0')
+  if (( cycles >= max_cycles )); then
+    log_warn "quota gate [$boundary_label]: ${cycles} consecutive wait cycles (cap=${max_cycles}) — ending gracefully"
+    return 2
+  fi
+
+  quota=$(pipeline-quota-check)
+  route=$(pipeline-model-router --quota "$quota" --tier "$tier")
+  action=$(printf '%s' "$route" | jq -r '.action')
+
+  case "$action" in
+    proceed)
+      # Reset the stuck-cache counter on any successful proceed.
+      pipeline-state write "$run_id" '.circuit_breaker.quota_wait_cycles' '0' 2>/dev/null \
+        || log_warn "quota gate [$boundary_label]: failed to reset quota_wait_cycles"
+      return 0
+      ;;
+    end_gracefully)
+      trigger=$(printf '%s' "$route" | jq -r '.trigger // "unknown"')
+      log_warn "quota gate [$boundary_label]: end_gracefully (trigger=$trigger)"
+      return 2
+      ;;
+    wait)
+      wait_min=$(printf '%s' "$route" | jq -r '.wait_minutes // empty')
+      if [[ -z "$wait_min" ]]; then
+        log_warn "quota gate [$boundary_label]: router returned wait with no wait_minutes — ending gracefully"
         return 2
-        ;;
-      wait)
-        wait_min=$(printf '%s' "$route" | jq -r '.wait_minutes // 60')
-        retry=$(( retry + 1 ))
-        log_info "quota gate [$boundary_label]: over threshold — waiting ${wait_min}m (attempt $retry/$max_retries)"
-        sleep $(( wait_min * 60 ))
-        # Record pause time so circuit breaker excludes it from runtime
-        if [[ -n "$run_id" ]]; then
-          prior=$(pipeline-state read "$run_id" '.circuit_breaker.pause_minutes // 0' 2>/dev/null || printf '0')
-          pipeline-state write "$run_id" '.circuit_breaker.pause_minutes' "$(( prior + wait_min ))" 2>/dev/null || true
-        fi
-        ;;
-    esac
-  done
+      fi
+      local want_sleep_sec=$(( wait_min * 60 ))
+      local do_sleep_sec=$(( want_sleep_sec < sleep_cap_sec ? want_sleep_sec : sleep_cap_sec ))
+      local slept_min=$(( (do_sleep_sec + 59) / 60 ))
+      log_info "quota gate [$boundary_label]: over threshold — sleeping ${slept_min}m of ${wait_min}m (cycle $((cycles + 1))/${max_cycles})"
+      sleep "$do_sleep_sec"
 
-  log_warn "quota gate [$boundary_label]: $max_retries consecutive waits without relief — ending gracefully"
-  return 2
+      # Record pause time so circuit breaker excludes it from runtime.
+      prior=$(pipeline-state read "$run_id" '.circuit_breaker.pause_minutes // 0' 2>/dev/null || printf '0')
+      if ! pipeline-state write "$run_id" '.circuit_breaker.pause_minutes' "$(( prior + slept_min ))" 2>/dev/null; then
+        log_warn "quota gate [$boundary_label]: failed to write pause_minutes for run_id=$run_id"
+      fi
+
+      # Re-check after the chunk. If clear, proceed; else yield to orchestrator.
+      quota=$(pipeline-quota-check)
+      route=$(pipeline-model-router --quota "$quota" --tier "$tier")
+      action=$(printf '%s' "$route" | jq -r '.action')
+      if [[ "$action" == "proceed" ]]; then
+        pipeline-state write "$run_id" '.circuit_breaker.quota_wait_cycles' '0' 2>/dev/null \
+          || log_warn "quota gate [$boundary_label]: failed to reset quota_wait_cycles"
+        return 0
+      fi
+      if [[ "$action" == "end_gracefully" ]]; then
+        trigger=$(printf '%s' "$route" | jq -r '.trigger // "unknown"')
+        log_warn "quota gate [$boundary_label]: end_gracefully after wait (trigger=$trigger)"
+        return 2
+      fi
+      # Still waiting — increment cycle counter and yield.
+      if ! pipeline-state write "$run_id" '.circuit_breaker.quota_wait_cycles' "$(( cycles + 1 ))" 2>/dev/null; then
+        log_warn "quota gate [$boundary_label]: failed to increment quota_wait_cycles"
+      fi
+      log_info "quota gate [$boundary_label]: yielding to orchestrator for re-invocation"
+      return 3
+      ;;
+    *)
+      log_warn "quota gate [$boundary_label]: unexpected action=$action — ending gracefully"
+      return 2
+      ;;
+  esac
 }
 
 # --- Rate-limit window math ---

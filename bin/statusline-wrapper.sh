@@ -63,12 +63,22 @@ if [[ -n "${FACTORY_ORIGINAL_STATUSLINE:-}" ]]; then
   # Expand ~ and extract the script path (first whitespace-delimited token)
   _chain="${FACTORY_ORIGINAL_STATUSLINE/#\~/$HOME}"
   _chain_path="${_chain%% *}"
+  # Path-with-spaces vs path-with-args disambiguation:
+  # If the whole string is a readable file, treat it as the path (no args).
+  # Otherwise assume the first token is the path and the rest are args.
+  if [[ -f "$_chain" ]]; then
+    _chain_path="$_chain"
+    _chain_cmd="$_chain"
+  else
+    _chain_cmd="$_chain"
+  fi
   if [[ -f "$_chain_path" ]]; then
-    # Disable -e around the eval so a broken chain falls back instead of crashing.
-    set +e
-    printf '%s' "$input" | eval "$_chain"
+    # Disable -e and -u around the eval so a broken chain falls back
+    # instead of crashing (unbound vars in user's statusline, non-zero exit).
+    set +eu
+    printf '%s' "$input" | eval "$_chain_cmd"
     _chain_rc=$?
-    set -e
+    set -eu
     if (( _chain_rc != 0 )); then _emit_default; fi
   else
     _emit_default

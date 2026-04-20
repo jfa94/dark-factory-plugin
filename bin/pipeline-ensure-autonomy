@@ -47,7 +47,18 @@ _regenerate() {
   # Read from ~/.claude/settings.json only (project-level statuslines are rare
   # and pipeline runs in the project root with the merged file taking precedence).
   user_cmd=$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
-  if [[ -n "$user_cmd" ]] && [[ "$user_cmd" != *"statusline-wrapper.sh" ]]; then
+  # Skip injection only when the user's command resolves to THIS install's wrapper
+  # (path compare, not basename — different plugin installs can share the name).
+  local user_cmd_path="" our_wrapper_real="" user_cmd_real=""
+  if [[ -n "$user_cmd" ]]; then
+    user_cmd_path="${user_cmd/#\~/$HOME}"
+    user_cmd_path="${user_cmd_path%% *}"  # strip args for path compare
+    our_wrapper_real=$(cd "$PLUGIN_ROOT/bin" 2>/dev/null && pwd)/statusline-wrapper.sh
+    if [[ -f "$user_cmd_path" ]]; then
+      user_cmd_real=$(cd "$(dirname "$user_cmd_path")" 2>/dev/null && pwd)/"$(basename "$user_cmd_path")"
+    fi
+  fi
+  if [[ -n "$user_cmd" ]] && [[ "$user_cmd_real" != "$our_wrapper_real" ]]; then
     expanded_cmd="${user_cmd/#\~/$HOME}"
     jq --arg root "$PLUGIN_ROOT" --arg ver "$current_version" \
        --arg original_statusline "$expanded_cmd" '
@@ -111,8 +122,12 @@ cache_file="${merged_settings%/*}/usage-cache.json"
 cache_warning=""
 if [[ ! -f "$cache_file" ]]; then
   cache_warning="usage-cache.json absent; quota gates will block until statusline ticks"
-elif (( now_epoch - $(jq -r '.captured_at // 0' "$cache_file" 2>/dev/null) > 300 )); then
-  cache_warning="usage-cache.json is stale (>300s); statusline may not be ticking"
+else
+  # Coerce to int; non-numeric or missing → 0 (triggers stale branch).
+  captured_at=$(jq -r '(.captured_at // 0) | tonumber? // 0' "$cache_file" 2>/dev/null || printf '0')
+  if (( now_epoch - captured_at > 300 )); then
+    cache_warning="usage-cache.json is stale (>300s); statusline may not be ticking"
+  fi
 fi
 
 if [[ -n "$cache_warning" ]]; then

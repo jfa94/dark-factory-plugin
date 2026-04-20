@@ -15,7 +15,11 @@
 #
 # Fail-closed: on missing/malformed/stale cache, exits 0 with sentinel JSON:
 #   {"detection_method":"unavailable","reason":"...","five_hour":{"over_threshold":true},...}
-# Use --strict to preserve exit 1 behavior (for tests/CI).
+# The sentinel's over_threshold=true routes through pipeline-model-router's
+# `detection_method==unavailable` branch to end_gracefully — production path.
+#
+# --strict flag is for tests only — it restores legacy exit 1 behavior for
+# assertions that depend on a non-zero exit. No production caller uses it.
 #
 # Usage: pipeline-quota-check [--strict]
 # Exit: 0=data retrieved (JSON on stdout), 1=detection failed (--strict only)
@@ -39,8 +43,21 @@ _sentinel() {
   jq -n --arg reason "$reason" '{
     detection_method: "unavailable",
     reason: $reason,
-    five_hour: {utilization: null, over_threshold: true, hourly_threshold: null},
-    seven_day: {utilization: null, over_threshold: true, daily_threshold: null}
+    five_hour: {
+      utilization: null,
+      over_threshold: true,
+      hourly_threshold: null,
+      window_hour: null,
+      resets_at_epoch: null
+    },
+    seven_day: {
+      utilization: null,
+      over_threshold: true,
+      daily_threshold: null,
+      window_day: null,
+      resets_at_epoch: null
+    },
+    captured_at: null
   }'
 }
 

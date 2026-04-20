@@ -97,7 +97,7 @@ _run_quota_bad_json_strict() (
 )
 assert_exit "invalid JSON with --strict exits 1" 1 _run_quota_bad_json_strict
 
-# (4) Grep guard: legacy detection symbols must not appear in the script
+# (6) Grep guard: legacy detection symbols must not appear in the script
 _script="$(cd "$(dirname "$0")/.." && pwd)/pipeline-quota-check"
 legacy_refs=$(grep -cE 'last-headers|_check_headers|_check_oauth|_check_cli|--method' "$_script" || true)
 assert_eq "legacy detection symbols fully removed" "0" "$legacy_refs"

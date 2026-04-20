@@ -171,10 +171,21 @@ This phase runs once at the beginning of a `prd` or `discover` mode run:
 ```
 S0b. Quota gate before spec generation (Gate A):
      source pipeline-lib.sh
-     pipeline_quota_gate "$run_id" "feature" "spec"
+     # Gate A tier: hardcoded "feature" today (spec generation is feature-sized).
+     # TODO: derive from config.tiers.spec once configurable.
+     while true; do
+       pipeline_quota_gate "$run_id" "feature" "spec"; rc=$?
+       case $rc in
+         0) break ;;                          # proceed
+         2) mark run partial; run pipeline-summary; go to cleanup ;;
+         3) continue ;;                       # wait_retry: re-invoke (orchestrator loop)
+       esac
+     done
      → Exit 0: proceed to S1.
      → Exit 2 (end_gracefully): mark run partial, run pipeline-summary, go to cleanup.
        Do NOT start spec generation.
+     → Exit 3 (wait_retry): gate slept one chunk and is still over threshold; re-invoke
+       in the same loop. No human intervention needed.
 
 S1. pipeline-fetch-prd <issue-number>             → PRD body + metadata
 S2. Spawn spec-generator agent with PRD body
@@ -256,8 +267,15 @@ For each group G (in ascending order):
   tasks_in_group = [entry.task_id for entry in execution_order if entry.parallel_group == G]
   Chunk tasks_in_group into batches of size maxConcurrent
   For each batch:
-    Quota gate (Gate B): pipeline_quota_gate "$run_id" "<max tier in batch>" "batch-G$G"
-    → Exit 2 (end_gracefully): drain in-flight tasks, mark run partial, go to cleanup.
+    Quota gate (Gate B):
+      while true; do
+        pipeline_quota_gate "$run_id" "<max tier in batch>" "batch-G$G"; rc=$?
+        case $rc in
+          0) break ;;                          # proceed
+          2) drain in-flight tasks; mark run partial; go to cleanup ;;
+          3) continue ;;                       # wait_retry: re-invoke
+        esac
+      done
     Run "Pre-flight" for every task in the batch (sequential)
     Run "Execute" for the batch (one assistant message, parallel Agent calls)
     Run "Quality Gate" → "Spawn Reviewers" → "Parse Verdicts" → "Create PR & Wait" → "Finalize"
@@ -287,9 +305,20 @@ For each task `$t` in the current parallel group, walk these seven steps in orde
    - `pipeline-state deps-satisfied $run_id $t` — if not satisfied, poll at the group boundary.
    - `pipeline-classify-task '<task-json>'` — `{tier, model, maxTurns}`.
    - `pipeline-classify-risk '<task-json>'` — record `risk_level` in `.tasks.$t.risk_tier`.
-   - Quota gate (Gate C): `pipeline_quota_gate "$run_id" "<risk_level>" "task-$t"`
-     (sources pipeline-lib.sh; handles wait loop ≤3 retries and pause_minutes accounting internally)
-     - If exit 2 (end_gracefully): drain in-flight tasks, mark run `partial`, go to cleanup.
+   - Quota gate (Gate C):
+     ```
+     while true; do
+       pipeline_quota_gate "$run_id" "<risk_level>" "task-$t"; rc=$?
+       case $rc in
+         0) break ;;                          # proceed
+         2) drain in-flight tasks; mark run partial; go to cleanup ;;
+         3) continue ;;                       # wait_retry: re-invoke
+       esac
+     done
+     ```
+     Sources `pipeline-lib.sh`. Does at most ONE sleep chunk (≤540s / 9min) per
+     invocation to stay under the 10-min bash tool cap. Records `pause_minutes`
+     and `quota_wait_cycles` in state for circuit breaker and stuck-cache detection.
    - `pipeline-build-prompt '<task-json>' --holdout 20%` — full executor prompt.
      - `pipeline-build-prompt` reads `.spec.path` and any prior-work fields
        (`.tasks.$t.prior_work_dir`, `.prior_branch`, `.prior_commit`) from state,
@@ -533,11 +562,12 @@ Max 4 total attempts per task. After exhausting retries: mark `failed`, continue
 Rate limit waits are handled inside `pipeline_quota_gate` (defined in `bin/pipeline-lib.sh`). The function:
 
 1. Calls `pipeline-quota-check` → `pipeline-model-router` to get a routing decision.
-2. On `action=wait`: sleeps `wait_minutes`, updates `.circuit_breaker.pause_minutes` in state (so the circuit breaker excludes wait time from `maxRuntimeMinutes`), then re-checks. Max 3 consecutive wait cycles; on the 4th the function returns exit 2 (`end_gracefully`).
+2. On `action=proceed`: resets `.circuit_breaker.quota_wait_cycles` to 0 and returns exit 0.
 3. On `action=end_gracefully` (7d over, or quota data unavailable): returns exit 2 immediately.
-4. On `action=proceed`: returns exit 0.
+4. On `action=wait`: sleeps ONE chunk (default 540s / 9min, below the Claude Code bash-tool 10min cap), updates `.circuit_breaker.pause_minutes` in state, re-checks once. If clear → exit 0. If still over → increments `.circuit_breaker.quota_wait_cycles` and returns exit 3 (`wait_retry`) for the orchestrator to re-invoke.
+5. Stuck-cache guard: when `quota_wait_cycles` reaches `FACTORY_QUOTA_GATE_MAX_CYCLES` (default 60, ≈9h of cumulative waits) the gate returns exit 2 instead of yielding, so a frozen statusline never loops forever.
 
-Callers at all three gates (A=spec, B=batch, C=task) handle exit 2 the same way: drain in-flight tasks, mark run `partial`, run summary, go to cleanup.
+Callers at all three gates (A=spec, B=batch, C=task) wrap the call in a `while` loop: exit 0 breaks, exit 2 cleans up and exits, exit 3 re-invokes. Long waits (e.g. 5h reset) are handled autonomously across many orchestrator re-invocations — no human intervention.
 
 When `action: end_gracefully`:
 

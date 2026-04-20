@@ -74,6 +74,8 @@ The pipeline's ISO 8601 parser falls back across `gdate`, `date -d`, and BSD `da
 
 ## Step 4: Offer to pre-populate `safety.writeBlockedPaths`
 
+`safety.writeBlockedPaths` is a glob blocklist enforced by the `write-protection.sh` PreToolUse hook on every `Edit`, `Write`, and `MultiEdit` call. When a path matches, the hook denies the tool call (exit 2, reason `write_blocked`) — blocking both the autonomous pipeline **and** interactive Claude sessions from modifying that file. Matching runs against the raw path, resolved absolute path, and basename.
+
 Inspect the project for common sensitive-path patterns:
 
 - `supabase/migrations/**` if a `supabase/` dir exists
@@ -81,7 +83,23 @@ Inspect the project for common sensitive-path patterns:
 - `prisma/migrations/**` if a `prisma/` dir exists
 - `terraform/**/*.tfstate` if a `.terraform/` dir exists
 
-For each detected, ask the user if they want to add the glob to `safety.writeBlockedPaths`. If yes, run `/factory:configure safety.writeBlockedPaths` with the resulting array (the configure command handles the jq merge).
+For each detected, show the user both outcomes before asking:
+
+```
+Detected `supabase/migrations/`. Add `supabase/migrations/**` to safety.writeBlockedPaths?
+  y → write-protection hook will deny any Edit/Write/MultiEdit to files matching this glob.
+      Blocks the pipeline from authoring migrations.
+  n → no protection added. Pipeline tasks can freely create/modify these files.
+Reversible: /factory:configure safety.writeBlockedPaths <array>  or edit ${CLAUDE_PLUGIN_DATA}/config.json directly.
+```
+
+Tailor the blocked-action description per pattern:
+
+- `supabase/migrations/**` / `prisma/migrations/**` → "Blocks the pipeline from authoring migrations."
+- `.env*` → "Blocks tasks from rewriting secrets."
+- `terraform/**/*.tfstate` → "Blocks tasks from mutating terraform state."
+
+If yes, run `/factory:configure safety.writeBlockedPaths` with the resulting array (the configure command handles the jq merge).
 
 Never add defaults without explicit confirmation — the blocklist is permissive by design so the autonomous pipeline can make as many changes as possible.
 

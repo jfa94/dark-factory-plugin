@@ -124,7 +124,44 @@ Use judgment. If a section grows long enough that navigation becomes painful, sp
 
 ---
 
-## Phase 4 — Report
+## Phase 4 — Version Bump
+
+After writing docs, check whether the project declares a version and bump it according to the significance of the changes you documented.
+
+### 1. Locate the version
+
+Check these files in order, stopping at the first match:
+
+1. `package.json` → `version` field
+2. `plugin.json` → `version` field
+3. `pyproject.toml` → `version = "..."` under `[project]` or `[tool.poetry]`
+4. `Cargo.toml` → `version = "..."` under `[package]`
+5. `VERSION` (plain text file)
+6. `.version` (plain text file)
+
+If none found, skip this phase entirely and note it in the report.
+
+### 2. Classify significance
+
+Based on the changes you explored in Phase 2 and documented in Phase 3:
+
+| Bump      | When                                                                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **major** | Breaking changes: removed or renamed public APIs, incompatible config schema changes, architectural overhauls requiring migration       |
+| **minor** | New features or capabilities added in a backward-compatible way: new commands, new config options, new pipeline stages, new agent types |
+| **patch** | Backward-compatible fixes, refactors, internal improvements, or documentation-only changes with no functional delta                     |
+
+When in doubt, err **patch**. Never bump major unless a clear breaking change is documented.
+
+### 3. Apply the bump
+
+Parse the current version as `MAJOR.MINOR.PATCH`. Apply the appropriate increment; reset lower components to 0 (e.g., minor bump: `1.2.3` → `1.3.0`). Write the new version string back to the same file using the same format you found it in.
+
+Do not add or remove any other fields. Do not reformat the file.
+
+---
+
+## Phase 5 — Report
 
 When done, print:
 

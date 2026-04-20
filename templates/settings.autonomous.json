@@ -5,26 +5,7 @@
     "FACTORY_AUTONOMOUS_MODE": "1"
   },
   "permissions": {
-    "allow": [
-      "Bash(pipeline-*)",
-      "Bash(git *)",
-      "Bash(gh *)",
-      "Bash(jq *)",
-      "Bash(node --check *)",
-      "Bash(npm run *)",
-      "Bash(npm test*)",
-      "Bash(npx *)",
-      "Bash(pnpm run *)",
-      "Bash(pnpm test*)",
-      "Bash(yarn *)",
-      "Bash(bun *)",
-      "Read",
-      "Write",
-      "Edit",
-      "Grep",
-      "Glob",
-      "Agent"
-    ],
+    "allow": ["Bash(*)", "Read", "Write", "Edit", "Grep", "Glob", "Agent"],
     "deny": [
       "Bash(rm -rf /)",
       "Bash(rm -rf /*)",

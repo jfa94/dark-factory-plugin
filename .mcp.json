@@ -3,12 +3,10 @@
   "mcpServers": {
     "pipeline-metrics": {
       "command": "node",
-      "args": ["servers/pipeline-metrics/index.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/pipeline-metrics/index.js"],
       "env": {
-        "METRICS_DB": "${CLAUDE_PLUGIN_DATA}/metrics.db"
-      },
-      "disabled": true,
-      "_comment": "Enable after running: cd servers/pipeline-metrics && npm install"
+        "METRICS_DB": "${CLAUDE_PLUGIN_DATA}/metrics.jsonl"
+      }
     }
   }
 }

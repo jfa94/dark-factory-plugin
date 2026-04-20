@@ -9,7 +9,7 @@ ${CLAUDE_PLUGIN_DATA}/
 ├── config.json                    # User configuration
 ├── usage-cache.json               # Rate limit data from statusline wrapper
 ├── pipeline.lock                  # Lock file (PID + timestamp)
-├── metrics.db                     # SQLite database (MCP server)
+├── metrics.jsonl                  # JSONL event log (MCP server)
 │
 ├── runs/
 │   ├── current -> run-YYYYMMDD-HHMMSS/   # Symlink to active run

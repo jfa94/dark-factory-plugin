@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * Pipeline Metrics MCP Server
+ * Pipeline Metrics MCP Server (zero-dependency)
  *
- * Provides tools for recording and querying pipeline execution metrics.
- * Uses SQLite for local storage.
+ * Hand-rolled MCP stdio JSON-RPC 2.0. JSONL storage.
  *
  * Tools:
  *   metrics_record  — Record a pipeline event
@@ -13,50 +12,20 @@
  *
  * Event types:
  *   task_start, task_end, review_round, quality_gate,
- *   model_switch, circuit_breaker, run_start, run_end
+ *   circuit_breaker, run_start, run_end
+ *
+ * Storage: appends one JSON object per line to METRICS_DB (default:
+ * ./metrics.jsonl). Append-only, O(n) query. Volume is expected to
+ * stay in the low thousands per run; acceptable.
+ *
+ * Runs with zero install: no node_modules required. Requires Node 18+.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import Database from "better-sqlite3";
-import { resolve, dirname } from "path";
-import { mkdirSync } from "fs";
+import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
-const DB_PATH = process.env.METRICS_DB || resolve("metrics.db");
-
-// Ensure parent directory exists
-mkdirSync(dirname(DB_PATH), { recursive: true });
-
-// Initialize database
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.prepare(
-  `
-  CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    run_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    task_id TEXT,
-    data TEXT DEFAULT '{}',
-    duration_ms INTEGER
-  )
-`,
-).run();
-db.prepare("CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id)").run();
-db.prepare(
-  "CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)",
-).run();
-
-const CURRENT_SCHEMA_VERSION = 1;
-const dbVersion = db.pragma("user_version", { simple: true });
-if (dbVersion < 1) {
-  db.pragma("user_version = 1");
-}
+const STORE = process.env.METRICS_DB || resolve("metrics.jsonl");
+mkdirSync(dirname(STORE), { recursive: true });
 
 const VALID_EVENT_TYPES = [
   "task_start",
@@ -68,9 +37,6 @@ const VALID_EVENT_TYPES = [
   "run_end",
 ];
 
-// Domain-specific exception so the dispatcher can distinguish caller-input
-// failures (returned as isError MCP responses) from genuine server crashes
-// (re-thrown so the transport surfaces them).
 class HandlerInputError extends Error {
   constructor(message) {
     super(message);
@@ -88,7 +54,56 @@ function _requireString(args, key) {
   return v;
 }
 
-// Tool definitions
+function _parseStoredData(raw) {
+  if (raw === null || raw === undefined || raw === "") {
+    return { data: {}, parse_error: null };
+  }
+  if (typeof raw === "object") {
+    return { data: raw, parse_error: null };
+  }
+  try {
+    return { data: JSON.parse(raw), parse_error: null };
+  } catch (err) {
+    return { data: {}, parse_error: err.message };
+  }
+}
+
+// Append-only log. `id` derived from line count at startup; each append
+// increments. Good enough for a single-process server.
+let nextId = 1;
+if (existsSync(STORE)) {
+  try {
+    const raw = readFileSync(STORE, "utf8");
+    const lines =
+      raw.length === 0 ? 0 : raw.split("\n").filter((l) => l.length > 0).length;
+    nextId = lines + 1;
+  } catch {
+    // Corrupt / unreadable: start fresh counter. Existing content stays.
+    nextId = 1;
+  }
+}
+
+function readAllEvents() {
+  if (!existsSync(STORE)) return [];
+  const raw = readFileSync(STORE, "utf8");
+  const out = [];
+  const lines = raw.split("\n");
+  for (const line of lines) {
+    if (line.length === 0) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // Skip malformed lines. _parseStoredData on event.data still flags
+      // corrupt nested payloads at summary time.
+    }
+  }
+  return out;
+}
+
+function appendEvent(row) {
+  appendFileSync(STORE, JSON.stringify(row) + "\n");
+}
+
 const TOOLS = [
   {
     name: "metrics_record",
@@ -102,14 +117,8 @@ const TOOLS = [
           enum: VALID_EVENT_TYPES,
           description: "Type of event",
         },
-        task_id: {
-          type: "string",
-          description: "Task ID (optional)",
-        },
-        data: {
-          type: "object",
-          description: "Additional event data",
-        },
+        task_id: { type: "string", description: "Task ID (optional)" },
+        data: { type: "object", description: "Additional event data" },
         duration_ms: {
           type: "number",
           description: "Duration in milliseconds (optional)",
@@ -164,23 +173,6 @@ const TOOLS = [
   },
 ];
 
-// Parse a stored event.data blob. Returns { data, parse_error }.
-// Stored data should always be valid JSON because handleRecord stringifies
-// it on the way in, but rows written by an older schema (or hand-edited
-// rows) could be corrupt — surface that via parse_error instead of swallowing
-// the failure with `{}`.
-function _parseStoredData(raw) {
-  if (raw === null || raw === undefined || raw === "") {
-    return { data: {}, parse_error: null };
-  }
-  try {
-    return { data: JSON.parse(raw), parse_error: null };
-  } catch (err) {
-    return { data: {}, parse_error: err.message };
-  }
-}
-
-// Handlers
 function handleRecord(args) {
   const run_id = _requireString(args, "run_id");
   const event_type = _requireString(args, "event_type");
@@ -214,17 +206,17 @@ function handleRecord(args) {
     );
   }
 
-  const stmt = db.prepare(
-    "INSERT INTO events (run_id, event_type, task_id, data, duration_ms) VALUES (?, ?, ?, ?, ?)",
-  );
-  const result = stmt.run(
+  const row = {
+    id: nextId++,
+    timestamp: new Date().toISOString(),
     run_id,
     event_type,
-    task_id || null,
-    JSON.stringify(data || {}),
-    duration_ms == null ? null : duration_ms,
-  );
-  return { id: result.lastInsertRowid, recorded: true };
+    task_id: task_id || null,
+    data: data || {},
+    duration_ms: duration_ms == null ? null : duration_ms,
+  };
+  appendEvent(row);
+  return { id: row.id, recorded: true };
 }
 
 function handleQuery(args) {
@@ -245,30 +237,19 @@ function handleQuery(args) {
     throw new HandlerInputError("offset must be a non-negative number");
   }
 
-  let sql = "SELECT * FROM events WHERE 1=1";
-  const params = [];
-  if (run_id) {
-    sql += " AND run_id = ?";
-    params.push(run_id);
-  }
-  if (event_type) {
-    sql += " AND event_type = ?";
-    params.push(event_type);
-  }
-  if (task_id) {
-    sql += " AND task_id = ?";
-    params.push(task_id);
-  }
-  sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?";
-  params.push(limit, offset);
-  return db.prepare(sql).all(...params);
+  let rows = readAllEvents();
+  if (run_id) rows = rows.filter((r) => r.run_id === run_id);
+  if (event_type) rows = rows.filter((r) => r.event_type === event_type);
+  if (task_id) rows = rows.filter((r) => r.task_id === task_id);
+  rows.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  return rows.slice(offset, offset + limit);
 }
 
 function handleSummary(args) {
   const run_id = _requireString(args, "run_id");
-  const events = db
-    .prepare("SELECT * FROM events WHERE run_id = ? ORDER BY timestamp")
-    .all(run_id);
+  const events = readAllEvents()
+    .filter((r) => r.run_id === run_id)
+    .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
 
   if (events.length === 0) {
     return { run_id, error: "No events found" };
@@ -327,9 +308,9 @@ function handleSummary(args) {
 
 function handleExport(args) {
   const run_id = _requireString(args, "run_id");
-  return db
-    .prepare("SELECT * FROM events WHERE run_id = ? ORDER BY timestamp")
-    .all(run_id)
+  return readAllEvents()
+    .filter((r) => r.run_id === run_id)
+    .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1))
     .map((row) => {
       const { data, parse_error } = _parseStoredData(row.data);
       const out = { ...row, data };
@@ -340,18 +321,7 @@ function handleExport(args) {
     });
 }
 
-// Server setup
-const server = new Server(
-  { name: "pipeline-metrics", version: "0.1.0" },
-  { capabilities: { tools: {} } },
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS,
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args = {} } = request.params;
+function dispatchTool(name, args) {
   let result;
   try {
     switch (name) {
@@ -389,8 +359,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         isError: true,
       };
     }
-    // Genuine server-side failure (DB error, etc.). Surface as isError but
-    // also re-log so the host process notices.
     process.stderr.write(
       `pipeline-metrics ${name} failed: ${err.stack || err.message}\n`,
     );
@@ -411,7 +379,100 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   return {
     content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
   };
+}
+
+// ---------- MCP JSON-RPC 2.0 stdio transport ----------
+// Messages are newline-delimited JSON objects (LSP-style framing is not
+// required by Claude Code's stdio MCP client, which uses NDJSON).
+
+const SERVER_INFO = { name: "pipeline-metrics", version: "0.2.0" };
+const PROTOCOL_VERSION = "2024-11-05";
+
+function write(msg) {
+  process.stdout.write(JSON.stringify(msg) + "\n");
+}
+
+function respond(id, result) {
+  write({ jsonrpc: "2.0", id, result });
+}
+
+function respondError(id, code, message) {
+  write({ jsonrpc: "2.0", id, error: { code, message } });
+}
+
+function handleMessage(msg) {
+  const { id, method, params } = msg;
+  // Notifications (no id) get no response.
+  const isNotification = id === undefined || id === null;
+
+  switch (method) {
+    case "initialize":
+      if (isNotification) return;
+      return respond(id, {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: SERVER_INFO,
+      });
+
+    case "notifications/initialized":
+    case "initialized":
+      // Ack-only notification; nothing to do.
+      return;
+
+    case "tools/list":
+      if (isNotification) return;
+      return respond(id, { tools: TOOLS });
+
+    case "tools/call": {
+      if (isNotification) return;
+      const name = params?.name;
+      const args = params?.arguments || {};
+      if (typeof name !== "string") {
+        return respondError(id, -32602, "Invalid params: missing tool name");
+      }
+      return respond(id, dispatchTool(name, args));
+    }
+
+    case "ping":
+      if (isNotification) return;
+      return respond(id, {});
+
+    default:
+      if (isNotification) return;
+      return respondError(id, -32601, `Method not found: ${method}`);
+  }
+}
+
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf("\n")) !== -1) {
+    const line = buffer.slice(0, idx).trim();
+    buffer = buffer.slice(idx + 1);
+    if (line.length === 0) continue;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch (err) {
+      write({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: `Parse error: ${err.message}` },
+      });
+      continue;
+    }
+    try {
+      handleMessage(msg);
+    } catch (err) {
+      const id = msg?.id ?? null;
+      process.stderr.write(
+        `pipeline-metrics dispatch failed: ${err.stack || err.message}\n`,
+      );
+      respondError(id, -32603, `Internal error: ${err.message}`);
+    }
+  }
 });
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+process.stdin.on("end", () => process.exit(0));

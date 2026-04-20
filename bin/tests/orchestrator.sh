@@ -258,8 +258,7 @@ assert_contains "input_validation kind surfaced"    "kind: \"input_validation\""
 assert_contains "internal_error kind surfaced"      "kind: \"internal_error\""   "$METRICS"
 assert_contains "isError propagated to MCP response" "isError: true,"            "$METRICS"
 
-# Node syntax check — catches a syntax regression without needing
-# better-sqlite3 installed (it isn't, in CI sandboxes).
+# Node syntax check — server is zero-dep, so --check is sufficient.
 if node --check "$METRICS" >/dev/null 2>&1; then
   echo "  PASS: metrics index.js parses (node --check)"
   pass=$((pass + 1))

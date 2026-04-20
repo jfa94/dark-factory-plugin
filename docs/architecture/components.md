@@ -411,7 +411,7 @@ Provides tools for recording and querying pipeline execution metrics.
 
 **Configuration:** `.mcp.json`
 
-**Storage:** SQLite at `${CLAUDE_PLUGIN_DATA}/metrics.db`
+**Storage:** JSONL append-only log at `${CLAUDE_PLUGIN_DATA}/metrics.jsonl`
 
 **Tools:**
 
@@ -422,15 +422,9 @@ Provides tools for recording and querying pipeline execution metrics.
 | `metrics_summary` | Summarize metrics for a run |
 | `metrics_export`  | Export all metrics as JSON  |
 
-**Event types:** `task_start`, `task_end`, `review_round`, `quality_gate`, `model_switch`, `circuit_breaker`, `run_start`, `run_end`
+**Event types:** `task_start`, `task_end`, `review_round`, `quality_gate`, `circuit_breaker`, `run_start`, `run_end`
 
-**Installation:**
-
-```bash
-cd servers/pipeline-metrics && npm install
-```
-
-Then enable in `.mcp.json` by setting `"disabled": false`.
+**Runtime:** zero-dependency. Requires Node 18+. No `npm install` step; server ships as a single self-contained file and is always available once the plugin is installed.
 
 ---
 

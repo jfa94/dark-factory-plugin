@@ -135,6 +135,35 @@ assert_eq "full_success false on interrupted fixture" "false" "$full"
 table=$(pipeline-score --run run-fix-001 --format table --no-gh)
 echo "$table" | grep -q 'RUN-LEVEL STEPS' && { echo "  PASS: table renders header"; pass=$((pass+1)); } || { echo "  FAIL: table missing header"; fail=$((fail+1)); }
 
+echo "=== scores.jsonl history append ==="
+
+# Add assert_file_exists helper if not already present (copy from state.sh pattern)
+type assert_file_exists >/dev/null 2>&1 || assert_file_exists() {
+  local label="$1" path="$2"
+  if [[ -e "$path" ]]; then
+    echo "  PASS: $label"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: $label (file not found: $path)"
+    fail=$((fail + 1))
+  fi
+}
+
+rm -f "$CLAUDE_PLUGIN_DATA/scores.jsonl"
+pipeline-score --run run-fix-001 --format json --no-gh >/dev/null
+
+assert_file_exists "scores.jsonl created" "$CLAUDE_PLUGIN_DATA/scores.jsonl"
+lines=$(wc -l < "$CLAUDE_PLUGIN_DATA/scores.jsonl" | tr -d ' ')
+assert_eq "one line per scoring" "1" "$lines"
+
+pipeline-score --run run-fix-001 --format json --no-gh >/dev/null
+lines=$(wc -l < "$CLAUDE_PLUGIN_DATA/scores.jsonl" | tr -d ' ')
+assert_eq "second scoring appends" "2" "$lines"
+
+pipeline-score --run run-fix-001 --format json --no-gh --no-log >/dev/null
+lines=$(wc -l < "$CLAUDE_PLUGIN_DATA/scores.jsonl" | tr -d ' ')
+assert_eq "--no-log suppresses append" "2" "$lines"
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

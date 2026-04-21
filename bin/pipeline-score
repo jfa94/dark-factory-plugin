@@ -151,6 +151,13 @@ result=$(jq -n \
     full_success: $full_success
   }')
 
+if [[ "$log_history" == "true" ]]; then
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  history_line=$(printf '%s' "$result" | jq -c --arg ts "$ts" '. + {ts: $ts}')
+  history_file="${CLAUDE_PLUGIN_DATA}/scores.jsonl"
+  printf '%s\n' "$history_line" >> "$history_file"
+fi
+
 case "$format" in
   json)  printf '%s\n' "$result" ;;
   table) printf '%s\n' "$result" | _render_table ;;

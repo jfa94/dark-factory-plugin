@@ -488,6 +488,14 @@ Agent({
 })
 ```
 
+Record that scribe finished so the post-run scorer can detect that step 7 (docs update) actually ran.
+
+```bash
+( source "$(dirname "$(which pipeline-state)")/pipeline-lib.sh"
+  log_metric "agent.scribe.end" "status=\"completed\""
+)
+```
+
 Scribe reads `<!-- last-documented: <hash> -->` from the first line of `docs/README.md`, diffs against HEAD, and updates only affected doc sections. If scribe commits changes, those commits land on the working branch before cleanup. If scribe fails or finds nothing to update, the pipeline still completes — docs update is best-effort, never a blocker.
 
 ### Final staging → develop PR
@@ -505,6 +513,17 @@ pipeline-state write $run_id ".final_pr_number" "$final_pr_number"
 CI runs the full-codebase quality gate on this PR (the workflow detects `base_ref == develop` and runs full mutation testing instead of incremental). Auto-merge is already enabled by the `auto-merge` job in `.github/workflows/quality-gate.yml` — no extra `gh pr merge --auto` call is needed.
 
 If `humanReviewLevel >= 2`, skip the rollup PR creation and post a `pipeline-gh-comment <issue> final-rollup-pending` instead; a human opens the PR after review.
+
+Emit run.ci so the post-run scorer can measure rollup CI outcome.
+
+```bash
+# Wait briefly for CI to report; run.ci metric lets the scorer detect rollup CI outcome without a live gh call.
+ci_state=$(gh pr view "$final_pr_number" --json statusCheckRollup -q '.statusCheckRollup | map(.conclusion) | if length == 0 then "timeout" elif all(. == "SUCCESS") then "green" else "red" end' 2>/dev/null || echo "timeout")
+ci_checks=$(gh pr view "$final_pr_number" --json statusCheckRollup -q '.statusCheckRollup' 2>/dev/null || echo '[]')
+( source "$(dirname "$(which pipeline-state)")/pipeline-lib.sh"
+  emit_ci_metric run "$final_pr_number" "$ci_state" "$ci_checks"
+)
+```
 
 ```
 pipeline-cleanup $run_id --close-issues --delete-branches \

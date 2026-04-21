@@ -164,6 +164,13 @@ pipeline-score --run run-fix-001 --format json --no-gh --no-log >/dev/null
 lines=$(wc -l < "$CLAUDE_PLUGIN_DATA/scores.jsonl" | tr -d ' ')
 assert_eq "--no-log suppresses append" "2" "$lines"
 
+echo "=== tools/score-run.sh wrapper ==="
+
+wrapper="$(cd "$(dirname "$0")/../../tools" && pwd)/score-run.sh"
+out=$("$wrapper" --run run-fix-001 --format json --no-gh --no-log)
+run_id=$(printf '%s' "$out" | jq -r '.run_id')
+assert_eq "wrapper passes --run" "run-fix-001" "$run_id"
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

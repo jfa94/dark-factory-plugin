@@ -45,3 +45,40 @@ eval_R4_tasks_decomposed() {
   count=$(printf '%s' "$state" | jq '.execution_order // [] | length')
   if [[ "$count" -ge 1 ]]; then echo "pass"; else echo "not_performed"; fi
 }
+
+eval_R5_no_circuit_trip() {
+  if [[ -f "$metrics_file" ]] && grep -q '"event":"circuit_breaker"' "$metrics_file" 2>/dev/null; then
+    echo "fail"
+  else
+    echo "pass"
+  fi
+}
+
+eval_R6_no_human_gate_pause() {
+  if [[ -f "$audit_file" ]] && grep -q '"status":"awaiting_human"' "$audit_file" 2>/dev/null; then
+    echo "fail"
+  else
+    echo "pass"
+  fi
+}
+
+_all_tasks_done() {
+  local cnt
+  cnt=$(printf '%s' "$state" | jq '[.tasks // {} | to_entries[] | select(.value.status != "done")] | length')
+  [[ "$cnt" -eq 0 ]]
+}
+
+eval_R7_scribe_ran() {
+  if ! _all_tasks_done; then echo "skipped_ok"; return; fi
+  if [[ -f "$metrics_file" ]] && grep -q '"event":"agent.scribe.end"' "$metrics_file" 2>/dev/null; then
+    echo "pass"
+  else
+    echo "not_performed"
+  fi
+}
+
+eval_R8_rollup_pr_opened() {
+  if ! _all_tasks_done; then echo "skipped_ok"; return; fi
+  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+  if [[ -n "$pr" ]]; then echo "pass"; else echo "not_performed"; fi
+}

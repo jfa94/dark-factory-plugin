@@ -59,7 +59,11 @@ run_steps=$(jq -n \
   --argjson R2 "$(_score_run_step R2_spec_generated       spec_generated       eval_R2_spec_generated)" \
   --argjson R3 "$(_score_run_step R3_spec_reviewer_approved spec_reviewer_approved eval_R3_spec_reviewer_approved)" \
   --argjson R4 "$(_score_run_step R4_tasks_decomposed     tasks_decomposed     eval_R4_tasks_decomposed)" \
-  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4}')
+  --argjson R5 "$(_score_run_step R5_no_circuit_trip      no_circuit_trip      eval_R5_no_circuit_trip)" \
+  --argjson R6 "$(_score_run_step R6_no_human_gate_pause  no_human_gate_pause  eval_R6_no_human_gate_pause)" \
+  --argjson R7 "$(_score_run_step R7_scribe_ran           scribe_ran           eval_R7_scribe_ran)" \
+  --argjson R8 "$(_score_run_step R8_rollup_pr_opened     rollup_pr_opened     eval_R8_rollup_pr_opened)" \
+  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4, R5_no_circuit_trip: $R5, R6_no_human_gate_pause: $R6, R7_scribe_ran: $R7, R8_rollup_pr_opened: $R8}')
 
 task_steps_aggregate='{}'
 anomalies=0

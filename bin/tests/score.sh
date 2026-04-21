@@ -68,6 +68,20 @@ assert_eq "R2 spec_generated"         "pass"           "$R2"
 assert_eq "R3 spec_reviewer_approved" "not_performed"  "$R3"
 assert_eq "R4 tasks_decomposed"       "pass"           "$R4"
 
+echo "=== run-level steps R5-R8 ==="
+
+out=$(pipeline-score --run run-fix-001 --format json --no-gh)
+R5=$(printf '%s' "$out" | jq -r '.run_steps.R5_no_circuit_trip.state')
+R6=$(printf '%s' "$out" | jq -r '.run_steps.R6_no_human_gate_pause.state')
+R7=$(printf '%s' "$out" | jq -r '.run_steps.R7_scribe_ran.state')
+R8=$(printf '%s' "$out" | jq -r '.run_steps.R8_rollup_pr_opened.state')
+
+assert_eq "R5 no_circuit_trip"      "pass"        "$R5"
+assert_eq "R6 no_human_gate_pause"  "pass"        "$R6"
+# Fixture: not all tasks done (interrupted) → scribe did not need to run.
+assert_eq "R7 scribe_ran"           "skipped_ok"  "$R7"
+assert_eq "R8 rollup_pr_opened"     "skipped_ok"  "$R8"
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

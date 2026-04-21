@@ -3,13 +3,15 @@
 # Usage: pipeline-state <action> <run-id> [key] [value]
 #
 # Actions:
-#   read <run-id> [key]                     Read full state or jq key
-#   write <run-id> <key> <value>            Atomic write to state key
-#   task-status <run-id> <task-id> <status>  Update task status
-#   deps-satisfied <run-id> <task-id>        Check if deps done (exit 0/1)
-#   interrupted <run-id>                     Check if run interrupted (exit 0/1)
-#   resume-point <run-id>                    Find first incomplete task
-#   list                                     List all runs
+#   read <run-id> [key]                         Read full state or jq key
+#   write <run-id> <key> <value>                Atomic write to state key
+#   task-write <run-id> <task-id> <field> <value>  Atomic per-task write (hyphen-safe)
+#   task-read <run-id> <task-id> [field]        Read a per-task field or whole record
+#   task-status <run-id> <task-id> <status>     Update task status
+#   deps-satisfied <run-id> <task-id>           Check if deps done (exit 0/1)
+#   interrupted <run-id>                        Check if run interrupted (exit 0/1)
+#   resume-point <run-id>                       Find first incomplete task
+#   list                                        List all runs
 
 source "$(dirname "$0")/pipeline-lib.sh"
 require_command jq
@@ -57,9 +59,10 @@ _state_unlock() {
 _parse_state_key() {
   local raw="$1"
   # Fast-fail: reject any character that isn't part of a valid path.
-  # Negated class [^].a-zA-Z0-9_[] means "any char NOT in {], ., alphanums, _, [}".
-  # Putting ] first inside [^...] is the POSIX-portable way to include literal ].
-  if [[ "$raw" =~ [^].a-zA-Z0-9_[] ]]; then
+  # Negated class [^].a-zA-Z0-9_[-] means "any char NOT in {], ., alphanums, _, [, -}".
+  # Putting ] first inside [^...] is the POSIX-portable way to include literal ];
+  # hyphen trails to avoid being read as a range operator.
+  if [[ "$raw" =~ [^].a-zA-Z0-9_[-] ]]; then
     log_error "invalid key (disallowed characters): $(printf '%s' "$raw" | cat -v)"
     return 1
   fi
@@ -83,7 +86,7 @@ _parse_state_key() {
       log_error "empty path segment in key: $raw"
       return 1
     fi
-    if [[ "$seg" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    if [[ "$seg" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
       [[ $first -eq 0 ]] && json_array+=','
       json_array+="\"$seg\""
       first=0
@@ -183,6 +186,96 @@ case "$action" in
     _state_unlock "$run_id"
     trap - EXIT
     log_info "state updated: $key"
+    ;;
+
+  task-write)
+    run_id="${1:?missing run-id}"
+    task_id="${2:?missing task-id}"
+    field="${3:?missing field}"
+    value="${4:?missing value}"
+    f=$(_state_file "$run_id")
+
+    # Field is a dot-separated path relative to .tasks[<task_id>]; task_id is
+    # injected via --arg so hyphenated ids are data-safe (no path-parser round
+    # trip). Field still validates against identifier[.identifier]* to prevent
+    # injection into the jq setpath expression.
+    if [[ "$field" =~ ^\. ]]; then
+      log_error "task-write field must not start with '.' (got: $field)"
+      exit 1
+    fi
+    if ! [[ "$field" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*$ ]]; then
+      log_error "invalid task-write field: $field"
+      exit 1
+    fi
+
+    # Build path array ["tasks", $tid, <field segments>] via jq.
+    jq_path=$(jq -n --arg tid "$task_id" --arg f "$field" \
+      '["tasks", $tid] + ($f | split("."))') || {
+        log_error "failed to build task path"
+        exit 1
+      }
+
+    _state_lock "$run_id"
+    trap '_state_unlock "$run_id"' EXIT
+    state=$(_read_state_file "$run_id")
+
+    if printf '%s' "$value" | jq empty 2>/dev/null; then
+      updated=$(printf '%s' "$state" | jq --argjson path "$jq_path" --argjson v "$value" 'setpath($path; $v)')
+    else
+      updated=$(printf '%s' "$state" | jq --argjson path "$jq_path" --arg v "$value" 'setpath($path; $v)')
+    fi
+    updated=$(printf '%s' "$updated" | jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.updated_at = $t')
+
+    atomic_write "$f" "$updated"
+    _state_unlock "$run_id"
+    trap - EXIT
+    log_info "state updated: tasks[$task_id].$field"
+    ;;
+
+  task-read)
+    run_id="${1:?missing run-id}"
+    task_id="${2:?missing task-id}"
+    field="${3:-}"
+    state=$(_read_state_file "$run_id")
+
+    if [[ -z "$field" ]]; then
+      # Entire task record
+      printf '%s' "$state" | jq --arg tid "$task_id" '.tasks[$tid] // null'
+    else
+      # Allow optional "// default" suffix, same rules as `read`.
+      raw_field="$field"
+      default_expr=""
+      if [[ "$raw_field" == *" // "* ]]; then
+        default_expr="${raw_field##* // }"
+        raw_field="${raw_field% // *}"
+        default_expr="$(printf '%s' "$default_expr" | awk '{$1=$1; print}')"
+      fi
+
+      if [[ "$raw_field" =~ ^\. ]]; then
+        log_error "task-read field must not start with '.' (got: $raw_field)"
+        exit 1
+      fi
+      if ! [[ "$raw_field" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*$ ]]; then
+        log_error "invalid task-read field: $raw_field"
+        exit 1
+      fi
+      if [[ -n "$default_expr" ]]; then
+        if ! [[ "$default_expr" =~ ^(null|true|false|-?[0-9]+(\.[0-9]+)?|\"[^\"\\]*\"|\[\]|\{\})$ ]]; then
+          log_error "unsafe default expression in task-read field: $default_expr"
+          exit 1
+        fi
+      fi
+
+      jq_path=$(jq -n --arg tid "$task_id" --arg f "$raw_field" \
+        '["tasks", $tid] + ($f | split("."))')
+
+      if [[ -n "$default_expr" ]]; then
+        printf '%s' "$state" | jq -r --argjson path "$jq_path" \
+          "getpath(\$path) // $default_expr"
+      else
+        printf '%s' "$state" | jq -r --argjson path "$jq_path" 'getpath($path)'
+      fi
+    fi
     ;;
 
   task-status)

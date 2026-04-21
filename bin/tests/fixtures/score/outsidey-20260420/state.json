@@ -28,14 +28,24 @@
       "risk_tier": "routine",
       "started_at": "2026-04-20T19:14:36Z",
       "ended_at": "2026-04-20T19:43:04Z",
-      "worktree": "/FIXTURE/outsidey/.worktrees/rbac-001",
+      "worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-a981d53d",
       "quality_gate": {
         "checks": [
-          {"command": "lint", "status": "passed"},
-          {"command": "typecheck", "status": "passed"},
-          {"command": "test", "status": "passed"}
+          {
+            "command": "lint",
+            "status": "passed"
+          },
+          {
+            "command": "typecheck",
+            "status": "passed"
+          },
+          {
+            "command": "test",
+            "status": "passed"
+          }
         ]
-      }
+      },
+      "holdout": "pass"
     },
     "rbac-002": {
       "status": "done",
@@ -69,7 +79,9 @@
       ],
       "risk_tier": "routine",
       "started_at": "2026-04-20T19:14:36Z",
-      "ended_at": "2026-04-20T19:39:50Z"
+      "ended_at": "2026-04-20T19:39:50Z",
+      "worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-aa89e6e7",
+      "holdout": "pass"
     },
     "proxy-002": {
       "status": "done",
@@ -151,7 +163,10 @@
       ],
       "risk_tier": "routine",
       "started_at": "2026-04-20T19:14:36Z",
-      "ended_at": "2026-04-20T19:43:04Z"
+      "ended_at": "2026-04-20T19:43:04Z",
+      "worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-a438c6b9",
+      "holdout_attempts": 1,
+      "holdout_revealed": true
     },
     "waitlist-004": {
       "status": "interrupted",
@@ -375,13 +390,6 @@
       "parallel_group": 5
     }
   ],
-  "tasks_rbac001_worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-a981d53d",
-  "tasks_proxy001_worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-aa89e6e7",
-  "tasks_waitlist003_worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-a438c6b9",
-  "tasks_rbac001_holdout": "pass",
-  "tasks_proxy001_holdout": "pass",
-  "tasks_waitlist003_holdout_attempts": 1,
-  "tasks_waitlist003_holdout_revealed": true,
   "resume_point": "shell-003",
   "version": "0.3.2"
 }

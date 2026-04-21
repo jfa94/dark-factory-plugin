@@ -216,6 +216,31 @@ log_metric() {
   jq -c "${jq_args[@]}" "$filter" >> "$metrics_file" 2>/dev/null || true
 }
 
+# Emit a structured pipeline.step.begin metric.
+# Usage: log_step_begin <step> [key=val ...]
+# Typical: log_step_begin "preflight" "task_id=\"$task_id\"" "stage=\"$stage\""
+# Pair with log_step_end once the step completes. Caller is responsible for
+# timing — pass duration_ms to log_step_end.
+log_step_begin() {
+  local step="$1"; shift || true
+  [[ -z "$step" ]] && return 0
+  log_metric "pipeline.step.begin" "step=\"$step\"" "$@"
+}
+
+# Emit a structured pipeline.step.end metric.
+# Usage: log_step_end <step> <status> <duration_ms> [key=val ...]
+# <status> is typically one of: ok|failed|skipped|spawn|wait_retry|end_gracefully.
+log_step_end() {
+  local step="$1" status="$2" duration_ms="$3"
+  shift 3 || true
+  [[ -z "$step" ]] && return 0
+  log_metric "pipeline.step.end" \
+    "step=\"$step\"" \
+    "status=\"$status\"" \
+    "duration_ms=$duration_ms" \
+    "$@"
+}
+
 # Emit a structured CI-outcome metric.
 # Usage: emit_ci_metric <kind: task|run> <pr_number> <status: green|red|timeout> [<checks_json>]
 emit_ci_metric() {

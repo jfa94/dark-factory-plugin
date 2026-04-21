@@ -35,6 +35,28 @@ if [[ "$run_status" != "running" ]]; then
   exit 0
 fi
 
+# Autonomous-mode block: refuse to finish while run is live. Orchestrator
+# must advance the stage machine (pipeline-run-task) or explicitly mark the
+# run terminal. Escape hatch: FACTORY_ALLOW_STOP=1 lets the session end even
+# with non-terminal tasks (for emergency recovery or debugging).
+if [[ "${FACTORY_AUTONOMOUS_MODE:-0}" == "1" && "${FACTORY_ALLOW_STOP:-0}" != "1" ]]; then
+  nonterm=$(printf '%s' "$state" | jq -r '
+    [.tasks[]? | select(.status != "done" and .status != "failed" and .status != "needs_human_review")]
+    | length
+  ')
+  if (( nonterm > 0 )); then
+    run_id=$(basename "$run_dir")
+    next_task=$(printf '%s' "$state" | jq -r '
+      [.tasks | to_entries[] |
+       select(.value.status != "done" and .value.status != "failed" and .value.status != "needs_human_review") |
+       .key] | first // "RUN"
+    ')
+    reason="run $run_id has $nonterm non-terminal task(s); call pipeline-run-task \"$run_id\" $next_task --stage <stage> to advance (or finalize-run if all tasks are terminal). Set FACTORY_ALLOW_STOP=1 to bypass."
+    jq -cn --arg reason "$reason" '{decision:"block", reason:$reason}'
+    exit 0
+  fi
+fi
+
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Classify every task. Status set (from pipeline-state task-status validation):

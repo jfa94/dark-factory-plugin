@@ -1,0 +1,581 @@
+#!/usr/bin/env bash
+# Stage-machine wrapper that drives a single task (or the run-level
+# finalize step) through the pipeline protocol. Every validation,
+# classification, state-write, quota-gate, quality-gate, coverage-gate,
+# holdout, review dispatch, PR-open, CI-wait, and cleanup step lives
+# inside this wrapper - the orchestrator LLM never names them.
+#
+# Usage:
+#   pipeline-run-task <run-id> <task-id> --stage <stage> [--worktree <path>]
+#                     [--review-file <path>]... [--ci-status <green|red|timeout>]
+#   pipeline-run-task <run-id> RUN       --stage finalize-run
+#
+# Exit codes (common across stages):
+#    0   stage complete -> advance to next
+#    2   end_gracefully (quota cap, circuit breaker, retries exhausted)
+#    3   wait_retry (quota chunk slept, still over) - re-invoke same stage
+#   10   spawn_required; stdout is a JSON spawn manifest
+#   20   human_gate_pause - orchestrator halts, /factory:run resume restarts
+#   30   task_terminal_failed / needs_human_review - skip task, continue loop
+#
+# Spawn manifest shape (exit 10):
+#   { "action":"spawn_agents",
+#     "stage_after":"<next-stage>",
+#     "agents":[ { "subagent_type":"...",
+#                  "isolation":"worktree",
+#                  "model":"...",
+#                  "maxTurns":N,
+#                  "prompt_file":".state/<run-id>/<task-id>.<role>-prompt.md" } ] }
+
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+run_id="${1:?missing run-id}"
+task_id="${2:?missing task-id}"
+shift 2
+
+stage=""
+worktree=""
+review_files=()
+ci_status=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --stage)       stage="$2"; shift 2 ;;
+    --worktree)    worktree="$2"; shift 2 ;;
+    --review-file) review_files+=("$2"); shift 2 ;;
+    --ci-status)   ci_status="$2"; shift 2 ;;
+    *) log_error "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+[[ -z "$stage" ]] && { log_error "--stage required"; exit 1; }
+
+run_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}"
+state_file="$run_dir/state.json"
+[[ -f "$state_file" ]] || { log_error "state file not found: $state_file"; exit 1; }
+
+_now_ms() {
+  if command -v gdate &>/dev/null; then gdate +%s%3N; return; fi
+  local v; v=$(date +%s%3N 2>/dev/null)
+  if [[ -n "$v" && "$v" != *N ]]; then printf '%s' "$v"
+  else printf '%s000' "$(date +%s)"
+  fi
+}
+
+_task_field() {
+  local v
+  v=$(pipeline-state task-read "$run_id" "$task_id" "$1" 2>/dev/null || printf '')
+  [[ "$v" == "null" ]] && printf '' || printf '%s' "$v"
+}
+
+_task_write() {
+  pipeline-state task-write "$run_id" "$task_id" "$1" "$2" >/dev/null
+}
+
+# Idempotent resume: every stage records its terminal marker in
+# .tasks.<id>.stage. If invoked after a successful stage run (crash,
+# resume, manual repeat), short-circuit so we don't double-spawn.
+_already_past() {
+  local want="$1"
+  local cur
+  cur=$(_task_field stage 2>/dev/null || printf '')
+  case "$cur" in null|"") return 1 ;; esac
+  local order=(preflight_done postexec_done postreview_done ship_done)
+  local cur_rank=-1 want_rank=-1 i
+  for i in "${!order[@]}"; do
+    [[ "${order[$i]}" == "$cur"  ]] && cur_rank=$i
+    [[ "${order[$i]}" == "$want" ]] && want_rank=$i
+  done
+  (( cur_rank >= want_rank && cur_rank >= 0 && want_rank >= 0 ))
+}
+
+_emit_manifest() {
+  jq -cn --arg after "$1" --argjson agents "$2" \
+    '{action:"spawn_agents", stage_after:$after, agents:$agents}'
+}
+
+_prompt_path() {
+  printf '%s/.state/%s/%s.%s-prompt.md' "$run_dir" "$run_id" "$task_id" "$1"
+}
+
+_ensure_prompt_dir() {
+  mkdir -p "$run_dir/.state/$run_id"
+}
+
+# --- preflight --------------------------------------------------------------
+_stage_preflight() {
+  local t0 t1 rc
+  t0=$(_now_ms)
+  log_step_begin "preflight" "task_id=\"$task_id\""
+
+  if _already_past preflight_done; then
+    t1=$(_now_ms)
+    log_step_end "preflight" "skipped" "$((t1-t0))" "task_id=\"$task_id\""
+    return 0
+  fi
+
+  if ! pipeline-circuit-breaker "$run_id" >/dev/null; then
+    t1=$(_now_ms)
+    log_step_end "preflight" "end_gracefully" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"circuit_breaker\""
+    return 2
+  fi
+
+  if ! pipeline-state deps-satisfied "$run_id" "$task_id"; then
+    t1=$(_now_ms)
+    log_step_end "preflight" "skipped" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"deps_unsatisfied\""
+    return 30
+  fi
+
+  local task_json
+  task_json=$(pipeline-state task-read "$run_id" "$task_id" 2>/dev/null)
+  if [[ -z "$task_json" || "$task_json" == "null" ]]; then
+    log_error "task $task_id not found in state"
+    t1=$(_now_ms)
+    log_step_end "preflight" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  local classify risk tier
+  classify=$(pipeline-classify-task "$task_json") || { log_error "classify-task failed"; return 30; }
+  risk=$(pipeline-classify-risk "$task_json") || { log_error "classify-risk failed"; return 30; }
+  tier=$(printf '%s' "$risk" | jq -r '.tier // "routine"')
+
+  _task_write classify  "$classify"
+  _task_write risk      "$risk"
+  _task_write risk_tier "\"$tier\""
+
+  pipeline_quota_gate "$run_id" "$tier" "task-$task_id" "$task_id"
+  rc=$?
+  case $rc in
+    0) : ;;
+    2) t1=$(_now_ms); log_step_end "preflight" "end_gracefully" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"quota\""; return 2 ;;
+    3) t1=$(_now_ms); log_step_end "preflight" "wait_retry"     "$((t1-t0))" "task_id=\"$task_id\""; return 3 ;;
+    *) t1=$(_now_ms); log_step_end "preflight" "failed"         "$((t1-t0))" "task_id=\"$task_id\""; return 30 ;;
+  esac
+
+  _ensure_prompt_dir
+  local spec_path prompt_file holdout_pct
+  spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
+  holdout_pct=$(read_config '.quality.holdoutPercent' '20')
+  prompt_file=$(_prompt_path executor)
+  local args=()
+  [[ -n "$spec_path" ]] && args+=(--spec-path "$spec_path")
+  args+=(--holdout "$holdout_pct")
+  if ! pipeline-build-prompt "$task_json" "${args[@]}" > "$prompt_file"; then
+    log_error "build-prompt failed"
+    t1=$(_now_ms)
+    log_step_end "preflight" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  _task_write stage '"preflight_done"'
+  pipeline-state task-status "$run_id" "$task_id" executing >/dev/null || true
+
+  local model max_turns agents_json
+  model=$(printf '%s' "$classify" | jq -r '.model // "sonnet"')
+  max_turns=$(printf '%s' "$classify" | jq -r '.max_turns // 60')
+  agents_json=$(jq -cn \
+    --arg role "task-executor" \
+    --arg pf   "$prompt_file" \
+    --arg m    "$model" \
+    --argjson mt "$max_turns" \
+    '[{subagent_type:$role, isolation:"worktree", model:$m, maxTurns:$mt, prompt_file:$pf}]')
+  _emit_manifest postexec "$agents_json"
+
+  t1=$(_now_ms)
+  log_step_end "preflight" "spawn" "$((t1-t0))" "task_id=\"$task_id\""
+  log_metric "task.executor_spawned" "task_id=\"$task_id\"" "model=\"$model\""
+  return 10
+}
+
+# --- postexec ---------------------------------------------------------------
+_stage_postexec() {
+  local t0 t1
+  t0=$(_now_ms)
+  log_step_begin "postexec" "task_id=\"$task_id\""
+
+  if _already_past postexec_done; then
+    t1=$(_now_ms)
+    log_step_end "postexec" "skipped" "$((t1-t0))" "task_id=\"$task_id\""
+    return 0
+  fi
+
+  local wt
+  wt=$(_task_field worktree)
+  wt=$(printf '%s' "$wt" | sed -e 's/^"//' -e 's/"$//')
+  [[ -z "$wt" ]] && wt="$worktree"
+  if [[ -z "$wt" ]]; then
+    log_error "worktree not set for task $task_id (SubagentStop hook missing?); pass --worktree"
+    t1=$(_now_ms)
+    log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+  _task_write worktree "\"$wt\""
+
+  if ! pipeline-quality-gate "$run_id" "$task_id" "$wt" >/dev/null; then
+    log_warn "quality gate failed for $task_id"
+    t1=$(_now_ms)
+    log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"quality\""
+    return 30
+  fi
+
+  local cov_before="$run_dir/.state/$run_id/$task_id.coverage-before.json"
+  local cov_after="$wt/coverage/coverage-summary.json"
+  if [[ -f "$cov_before" && -f "$cov_after" ]]; then
+    if ! pipeline-coverage-gate "$cov_before" "$cov_after" --task-id "$task_id" >/dev/null; then
+      log_warn "coverage gate failed for $task_id"
+      t1=$(_now_ms)
+      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"coverage\""
+      return 30
+    fi
+  fi
+
+  local holdout_file="$run_dir/.state/$run_id/$task_id.holdout.json"
+  if [[ -f "$holdout_file" ]]; then
+    local reviewer_output
+    reviewer_output=$(_task_field holdout_review_file)
+    reviewer_output=$(printf '%s' "$reviewer_output" | sed -e 's/^"//' -e 's/"$//')
+    if [[ -z "$reviewer_output" ]]; then
+      local pf
+      pf=$(_prompt_path holdout)
+      _ensure_prompt_dir
+      pipeline-holdout-validate prompt "$run_id" "$task_id" > "$pf" || true
+      local agents_json
+      agents_json=$(jq -cn --arg pf "$pf" \
+        '[{subagent_type:"task-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf, purpose:"holdout"}]')
+      _emit_manifest postexec "$agents_json"
+      t1=$(_now_ms)
+      log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "purpose=\"holdout\""
+      return 10
+    fi
+    if ! pipeline-holdout-validate check "$run_id" "$task_id" "$reviewer_output" >/dev/null; then
+      log_warn "holdout failed for $task_id"
+      t1=$(_now_ms)
+      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"holdout\""
+      return 30
+    fi
+  fi
+
+  local detect provider
+  detect=$(pipeline-detect-reviewer --base staging)
+  provider=$(printf '%s' "$detect" | jq -r '.reviewer')
+  log_metric "task.review.provider" "task_id=\"$task_id\"" "reviewer=\"$provider\""
+
+  if [[ "$provider" == "codex" ]]; then
+    local review_file="$run_dir/.state/$run_id/$task_id.review.codex.json"
+    _ensure_prompt_dir
+    local spec_path
+    spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
+    local cargs=(--base staging --task-id "$task_id")
+    [[ -n "$spec_path" ]] && cargs+=(--spec-dir "$spec_path")
+    if ! pipeline-codex-review "${cargs[@]}" > "$review_file"; then
+      log_warn "codex review failed for $task_id"
+      t1=$(_now_ms)
+      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"codex\""
+      return 30
+    fi
+    _task_write review_files "[\"$review_file\"]"
+    _task_write stage '"postexec_done"'
+    t1=$(_now_ms)
+    log_step_end "postexec" "ok" "$((t1-t0))" "task_id=\"$task_id\"" "reviewer=\"codex\""
+    return 0
+  fi
+
+  local tier
+  tier=$(_task_field risk_tier)
+  tier=$(printf '%s' "$tier" | sed -e 's/^"//' -e 's/"$//')
+  [[ -z "$tier" ]] && tier="routine"
+  local reviewers=("task-reviewer")
+  case "$tier" in
+    feature)  reviewers+=("architecture-reviewer") ;;
+    security) reviewers+=("code-reviewer" "security-reviewer" "architecture-reviewer") ;;
+  esac
+
+  _ensure_prompt_dir
+  local pf
+  pf=$(_prompt_path reviewer)
+  {
+    printf 'Review task %s in the worktree at %s.\n' "$task_id" "$wt"
+    printf 'End your response with exactly one of:\n'
+    printf '  STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT\n'
+  } > "$pf"
+
+  local agents_json='[]' r
+  for r in "${reviewers[@]}"; do
+    agents_json=$(printf '%s' "$agents_json" | jq -c \
+      --arg role "$r" --arg pf "$pf" \
+      '. + [{subagent_type:$role, isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
+  done
+  _emit_manifest postreview "$agents_json"
+
+  t1=$(_now_ms)
+  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=$(printf '%s' "${reviewers[*]}" | jq -R .)"
+  return 10
+}
+
+# --- postreview -------------------------------------------------------------
+_stage_postreview() {
+  local t0 t1
+  t0=$(_now_ms)
+  log_step_begin "postreview" "task_id=\"$task_id\""
+
+  if _already_past postreview_done; then
+    t1=$(_now_ms)
+    log_step_end "postreview" "skipped" "$((t1-t0))" "task_id=\"$task_id\""
+    return 0
+  fi
+
+  local -a files=()
+  if (( ${#review_files[@]} )); then
+    files=("${review_files[@]}")
+  else
+    local list
+    local raw
+    raw=$(_task_field review_files)
+    list=$(printf '%s' "$raw" | jq -r 'if type=="array" then .[] else empty end' 2>/dev/null || printf '')
+    while IFS= read -r f; do [[ -n "$f" ]] && files+=("$f"); done <<< "$list"
+  fi
+  if (( ${#files[@]} == 0 )); then
+    log_error "no review files provided"
+    t1=$(_now_ms)
+    log_step_end "postreview" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  local any_changes=false any_discuss=false f verdict decision
+  for f in "${files[@]}"; do
+    [[ ! -f "$f" ]] && { log_warn "review file missing: $f"; continue; }
+    verdict=$(pipeline-parse-review < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
+    decision=$(printf '%s' "$verdict" | jq -r '.decision // "UNKNOWN"')
+    case "$decision" in
+      APPROVE) : ;;
+      REQUEST_CHANGES) any_changes=true ;;
+      NEEDS_DISCUSSION) any_discuss=true ;;
+      *) any_changes=true ;;
+    esac
+  done
+
+  if $any_discuss; then
+    _task_write stage '"postreview_pending_human"'
+    pipeline-state task-status "$run_id" "$task_id" needs_human_review >/dev/null || true
+    t1=$(_now_ms)
+    log_step_end "postreview" "needs_human_review" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  if $any_changes; then
+    local attempts
+    attempts=$(_task_field review_attempts)
+    [[ -z "$attempts" ]] && attempts=0
+    attempts=$((attempts + 1))
+    _task_write review_attempts "$attempts"
+    if (( attempts > 3 )); then
+      _task_write stage '"postreview_exhausted"'
+      pipeline-state task-status "$run_id" "$task_id" failed >/dev/null || true
+      t1=$(_now_ms)
+      log_step_end "postreview" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"review_exhausted\""
+      return 30
+    fi
+    _ensure_prompt_dir
+    local pf
+    pf=$(_prompt_path executor-fix)
+    {
+      printf 'Fix reviewer-reported blockers for task %s.\n' "$task_id"
+      printf 'Review files:\n'
+      for f in "${files[@]}"; do printf '  - %s\n' "$f"; done
+      printf 'End with STATUS: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT.\n'
+    } > "$pf"
+    local agents_json
+    agents_json=$(jq -cn --arg pf "$pf" \
+      '[{subagent_type:"task-executor", isolation:"worktree", model:"sonnet", maxTurns:60, prompt_file:$pf}]')
+    _emit_manifest postexec "$agents_json"
+    t1=$(_now_ms)
+    log_step_end "postreview" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "attempt=$attempts"
+    return 10
+  fi
+
+  _task_write stage '"postreview_done"'
+  t1=$(_now_ms)
+  log_step_end "postreview" "ok" "$((t1-t0))" "task_id=\"$task_id\""
+  return 0
+}
+
+# --- ship -------------------------------------------------------------------
+_stage_ship() {
+  local t0 t1
+  t0=$(_now_ms)
+  log_step_begin "ship" "task_id=\"$task_id\""
+
+  if _already_past ship_done; then
+    t1=$(_now_ms)
+    log_step_end "ship" "skipped" "$((t1-t0))" "task_id=\"$task_id\""
+    return 0
+  fi
+
+  if [[ -n "$ci_status" ]]; then
+    _task_write ci_status "\"$ci_status\""
+    case "$ci_status" in
+      green)
+        pipeline-state task-status "$run_id" "$task_id" done >/dev/null || true
+        _task_write stage '"ship_done"'
+        t1=$(_now_ms)
+        log_step_end "ship" "ok" "$((t1-t0))" "task_id=\"$task_id\"" "ci=\"green\""
+        return 0 ;;
+      red)
+        local attempts
+        attempts=$(_task_field ci_fix_attempts)
+        [[ -z "$attempts" ]] && attempts=0
+        attempts=$((attempts + 1))
+        _task_write ci_fix_attempts "$attempts"
+        if (( attempts > 2 )); then
+          pipeline-state task-status "$run_id" "$task_id" failed >/dev/null || true
+          t1=$(_now_ms)
+          log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"ci_exhausted\""
+          return 30
+        fi
+        pipeline-state task-status "$run_id" "$task_id" ci_fixing >/dev/null || true
+        _ensure_prompt_dir
+        local pf; pf=$(_prompt_path executor-ci-fix)
+        printf 'Fix failing CI on PR for task %s.\nSTATUS: DONE|...\n' "$task_id" > "$pf"
+        local agents_json
+        agents_json=$(jq -cn --arg pf "$pf" \
+          '[{subagent_type:"task-executor", isolation:"worktree", model:"sonnet", maxTurns:60, prompt_file:$pf}]')
+        _emit_manifest ship "$agents_json"
+        t1=$(_now_ms)
+        log_step_end "ship" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "attempt=$attempts"
+        return 10 ;;
+      *)
+        log_warn "ci_status=$ci_status treated as timeout"
+        pipeline-state task-status "$run_id" "$task_id" needs_human_review >/dev/null || true
+        t1=$(_now_ms)
+        log_step_end "ship" "needs_human_review" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"ci_timeout\""
+        return 30 ;;
+    esac
+  fi
+
+  local gate_lvl
+  gate_lvl=$(read_config '.humanReviewLevel' '2')
+  if (( gate_lvl >= 3 )); then
+    if ! pipeline-human-gate "$run_id" "ship-$task_id"; then
+      t1=$(_now_ms)
+      log_step_end "ship" "human_gate_pause" "$((t1-t0))" "task_id=\"$task_id\""
+      return 20
+    fi
+  fi
+
+  local wt
+  wt=$(_task_field worktree)
+  wt=$(printf '%s' "$wt" | sed -e 's/^"//' -e 's/"$//')
+  if [[ -z "$wt" ]]; then
+    log_error "worktree missing at ship stage"
+    t1=$(_now_ms)
+    log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  if ! pipeline-branch task-commit "$run_id" "$task_id" "$wt" >/dev/null; then
+    log_error "task-commit failed"
+    t1=$(_now_ms)
+    log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  local pr_url pr_number
+  pr_url=$(cd "$wt" && gh pr create --fill --base staging 2>/dev/null || true)
+  pr_number=$(printf '%s' "$pr_url" | grep -oE '[0-9]+$' || printf '')
+  if [[ -z "$pr_number" ]]; then
+    log_error "gh pr create returned no PR number"
+    t1=$(_now_ms)
+    log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+  _task_write pr_number "$pr_number"
+  _task_write pr_url    "\"$pr_url\""
+  pipeline-state task-status "$run_id" "$task_id" reviewing >/dev/null || true
+  log_metric "task.pr_created" "task_id=\"$task_id\"" "pr_number=$pr_number"
+
+  if [[ "${FACTORY_ASYNC_CI:-auto}" == "off" ]]; then
+    _ensure_prompt_dir
+    if pipeline-wait-pr "$pr_number" > "$run_dir/.state/$run_id/$task_id.ci.json"; then
+      emit_ci_metric task "$pr_number" green
+      pipeline-state task-status "$run_id" "$task_id" done >/dev/null || true
+      _task_write stage '"ship_done"'
+      _task_write ci_status '"green"'
+      t1=$(_now_ms)
+      log_step_end "ship" "ok" "$((t1-t0))" "task_id=\"$task_id\"" "ci=\"green\""
+      return 0
+    fi
+    emit_ci_metric task "$pr_number" red
+    t1=$(_now_ms)
+    log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"ci_red\""
+    return 30
+  fi
+
+  t1=$(_now_ms)
+  log_step_end "ship" "wait_ci" "$((t1-t0))" "task_id=\"$task_id\"" "pr_number=$pr_number"
+  return 0
+}
+
+# --- finalize-run -----------------------------------------------------------
+_stage_finalize_run() {
+  local t0 t1
+  t0=$(_now_ms)
+  log_step_begin "finalize-run"
+
+  local pending
+  pending=$(jq -r '[.tasks[] | select(.status != "done" and .status != "failed" and .status != "needs_human_review")] | length' "$state_file")
+  if (( pending > 0 )); then
+    log_warn "finalize-run: $pending task(s) still non-terminal"
+    t1=$(_now_ms)
+    log_step_end "finalize-run" "wait_retry" "$((t1-t0))" "pending=$pending"
+    return 3
+  fi
+
+  local scribe_done
+  scribe_done=$(pipeline-state read "$run_id" '.scribe.status // ""' 2>/dev/null || printf '')
+  if [[ "$scribe_done" != "done" ]]; then
+    _ensure_prompt_dir
+    local pf="$run_dir/.state/$run_id/RUN.scribe-prompt.md"
+    printf 'Update /docs based on git diff for run %s.\nEnd with STATUS:.\n' "$run_id" > "$pf"
+    local agents_json
+    agents_json=$(jq -cn --arg pf "$pf" \
+      '[{subagent_type:"scribe", model:"sonnet", maxTurns:40, prompt_file:$pf}]')
+    pipeline-state write "$run_id" '.scribe.status' '"spawned"' >/dev/null || true
+    _emit_manifest finalize-run "$agents_json"
+    t1=$(_now_ms)
+    log_step_end "finalize-run" "spawn" "$((t1-t0))" "stage=\"scribe\""
+    return 10
+  fi
+
+  local rollup_url
+  rollup_url=$(pipeline-state read "$run_id" '.rollup.pr_url // ""' 2>/dev/null || printf '')
+  if [[ -z "$rollup_url" ]]; then
+    rollup_url=$(gh pr create --base develop --head staging --title "Rollup: $run_id" --body "Rollup PR for pipeline run $run_id" 2>/dev/null || true)
+    if [[ -n "$rollup_url" ]]; then
+      pipeline-state write "$run_id" '.rollup.pr_url' "\"$rollup_url\"" >/dev/null || true
+      local rollup_num
+      rollup_num=$(printf '%s' "$rollup_url" | grep -oE '[0-9]+$' || printf '')
+      [[ -n "$rollup_num" ]] && pipeline-state write "$run_id" '.rollup.pr_number' "$rollup_num" >/dev/null || true
+      log_metric "run.rollup_pr_created" "url=\"$rollup_url\""
+    else
+      log_warn "rollup PR create failed"
+    fi
+  fi
+
+  pipeline-cleanup "$run_id" >/dev/null 2>&1 || log_warn "cleanup failed"
+  pipeline-state write "$run_id" '.status' '"done"' >/dev/null || true
+  pipeline-state write "$run_id" '.ended_at' "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" >/dev/null || true
+
+  t1=$(_now_ms)
+  log_step_end "finalize-run" "ok" "$((t1-t0))"
+  return 0
+}
+
+case "$stage" in
+  preflight)     _stage_preflight ;;
+  postexec)      _stage_postexec ;;
+  postreview)    _stage_postreview ;;
+  ship)          _stage_ship ;;
+  finalize-run)  _stage_finalize_run ;;
+  *) log_error "unknown stage: $stage"; exit 1 ;;
+esac

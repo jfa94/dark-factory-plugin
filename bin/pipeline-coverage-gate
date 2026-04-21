@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Compare before/after coverage reports. Block if coverage decreased.
-# Usage: pipeline-coverage-gate <before-json> <after-json>
+# Usage: pipeline-coverage-gate <before-json> <after-json> [--tolerance <pct>] [--task-id <id>]
 # Input: vitest coverage-v8 JSON summary files
 # Exit: 0=passed (no decrease), 1=failed (coverage decreased)
+#
+# --task-id annotates the emitted `task.gate.coverage` metric so the scorer
+# can attribute the outcome to a specific task (required for T6 compliance).
 
 source "$(dirname "$0")/pipeline-lib.sh"
 require_command jq
@@ -12,9 +15,11 @@ after_file="${2:?missing after coverage JSON path}"
 shift 2
 
 tolerance=""
+task_id=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tolerance) tolerance="$2"; shift 2 ;;
+    --task-id)   task_id="$2";   shift 2 ;;
     *) log_error "unknown flag: $1"; exit 1 ;;
   esac
 done
@@ -81,8 +86,14 @@ decreased=$(jq -n --argjson d "$delta" --argjson t "$tolerance" '
 ')
 
 delta_lines=$(printf '%s' "$delta" | jq -r '.lines')
-log_metric "task.gate.coverage" "status=\"$([[ "$decreased" == "true" ]] && echo fail || echo pass)\"" \
-  "delta_lines=$delta_lines" "tolerance=$tolerance"
+metric_status=$([[ "$decreased" == "true" ]] && echo fail || echo pass)
+if [[ -n "$task_id" ]]; then
+  log_metric "task.gate.coverage" "task_id=\"$task_id\"" "status=\"$metric_status\"" \
+    "delta_lines=$delta_lines" "tolerance=$tolerance"
+else
+  log_metric "task.gate.coverage" "status=\"$metric_status\"" \
+    "delta_lines=$delta_lines" "tolerance=$tolerance"
+fi
 
 if [[ "$decreased" == "true" ]]; then
   decreased_metrics=$(jq -n --argjson d "$delta" --argjson t "$tolerance" '

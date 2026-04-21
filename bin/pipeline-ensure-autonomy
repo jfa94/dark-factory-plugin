@@ -80,6 +80,26 @@ _regenerate() {
     ' "$TEMPLATE" > "$tmp"
   fi
   mv "$tmp" "$merged_settings"
+
+  # asyncRewake compat probe. Feature requires Claude Code >= 2.1.116.
+  # On older installs, strip the hook entry so the PostToolUse ship watcher
+  # falls back to the wrapper's synchronous FACTORY_ASYNC_CI=off path.
+  local cc_ver cc_major cc_minor cc_patch
+  cc_ver=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || printf '')
+  if [[ -n "$cc_ver" ]]; then
+    IFS=. read -r cc_major cc_minor cc_patch <<< "$cc_ver"
+    if (( cc_major < 2 )) \
+       || (( cc_major == 2 && cc_minor < 1 )) \
+       || (( cc_major == 2 && cc_minor == 1 && cc_patch < 116 )); then
+      log_warn "Claude Code $cc_ver < 2.1.116; stripping asyncRewake hook from merged settings (falling back to FACTORY_ASYNC_CI=off)"
+      local tmp2; tmp2=$(mktemp)
+      jq '.hooks.PostToolUse |= map(.hooks |= map(select((.asyncRewake // false) != true)) | select(.hooks | length > 0))' \
+        "$merged_settings" > "$tmp2" && mv "$tmp2" "$merged_settings"
+    fi
+  else
+    log_warn "could not detect Claude Code version; leaving asyncRewake hook in place"
+  fi
+
   log_info "wrote $merged_settings (version $current_version)"
 }
 

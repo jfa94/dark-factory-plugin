@@ -450,6 +450,72 @@ val=$(pipeline-state read "run-test-001" '.spec.rounds[0]')
 assert_eq "setpath correctly updates array index" "r0" "$val"
 
 echo ""
+echo "=== pipeline-state hyphen support (run-task hyphenated ids) ==="
+
+# Hyphenated segments (task ids like proxy-001) must be accepted.
+assert_exit "write accepts hyphenated segment" 0 \
+  pipeline-state write "run-test-001" '.tasks.proxy-001.worktree' '"/tmp/wt"'
+
+val=$(pipeline-state read "run-test-001" '.tasks.proxy-001.worktree')
+assert_eq "hyphenated task write round-trips" "/tmp/wt" "$val"
+
+# Hyphen must not bypass the existing injection allowlist.
+assert_exit "write still rejects backtick with hyphen" 1 \
+  pipeline-state write "run-test-001" '.tasks.proxy-001.`env`' '"x"'
+
+# Leading hyphen on a segment is disallowed (segment must start with letter/underscore).
+assert_exit "write rejects leading hyphen in segment" 1 \
+  pipeline-state write "run-test-001" '.tasks.-bad' '"x"'
+
+echo ""
+echo "=== pipeline-state task-write / task-read ==="
+
+assert_exit "task-write simple field on hyphenated id" 0 \
+  pipeline-state task-write "run-test-001" "proxy-001" "status" '"executing"'
+
+val=$(pipeline-state task-read "run-test-001" "proxy-001" "status")
+assert_eq "task-read returns what task-write set" "executing" "$val"
+
+# Dotted field (nested path) under tasks.<id>.
+assert_exit "task-write nested quality_gate.ok" 0 \
+  pipeline-state task-write "run-test-001" "proxy-001" "quality_gate.ok" "true"
+
+val=$(pipeline-state task-read "run-test-001" "proxy-001" "quality_gate.ok")
+assert_eq "task-read nested field" "true" "$val"
+
+# Default fallback on task-read mirrors read's // literal-only allowance.
+val=$(pipeline-state task-read "run-test-001" "proxy-001" 'absent // 0')
+assert_eq "task-read allows // numeric default" "0" "$val"
+
+assert_exit "task-read rejects unsafe default" 1 \
+  pipeline-state task-read "run-test-001" "proxy-001" 'absent // env'
+
+# task_id with unusual but valid chars (dots inside an id would be ambiguous —
+# document that task_id values are opaque data and pass through unchanged).
+assert_exit "task-write id containing underscore" 0 \
+  pipeline-state task-write "run-test-001" "edge_case-1" "status" '"pending"'
+
+val=$(pipeline-state task-read "run-test-001" "edge_case-1" "status")
+assert_eq "task-read underscore+hyphen id" "pending" "$val"
+
+# Field validation: refuse leading dot, refuse shell metachars.
+assert_exit "task-write rejects leading-dot field" 1 \
+  pipeline-state task-write "run-test-001" "proxy-001" ".bad" '"x"'
+
+assert_exit "task-write rejects field with backtick" 1 \
+  pipeline-state task-write "run-test-001" "proxy-001" 'field`env`' '"x"'
+
+# Entire task record read (no field argument).
+record=$(pipeline-state task-read "run-test-001" "proxy-001")
+if printf '%s' "$record" | grep -q '"quality_gate"'; then
+  echo "  PASS: task-read full record includes quality_gate"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: task-read full record missing quality_gate; got: $record"
+  fail=$((fail + 1))
+fi
+
+echo ""
 echo "=== task_16_05: pipeline-state read key allowlist (OBS-1) ==="
 
 # Injection attempts on READ must be rejected (previously accepted any jq)

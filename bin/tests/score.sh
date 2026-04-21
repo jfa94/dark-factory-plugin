@@ -310,6 +310,36 @@ echo "=== T1_quota_checked is first field of task_steps_aggregate ==="
 first=$(printf '%s' "$out" | jq -r '.task_steps_aggregate | keys_unsorted | .[0]')
 assert_eq "T1 is first field" "T1_quota_checked" "$first"
 
+echo "=== compliant-smoke fixture: full_success ==="
+compliant="$(cd "$(dirname "$0")/fixtures/score/compliant-smoke" && pwd)"
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/run-compliant-smoke"
+cp -r "$compliant"/. "$CLAUDE_PLUGIN_DATA/runs/run-compliant-smoke/"
+smoke=$(pipeline-score --run run-compliant-smoke --format json --no-gh --no-log)
+assert_eq "compliant-smoke full_success"   "true" "$(printf '%s' "$smoke" | jq -r '.full_success')"
+for r in R1_autonomy_ok R2_spec_generated R3_spec_reviewer_approved R4_tasks_decomposed \
+         R5_no_circuit_trip R6_no_human_gate_pause R7_scribe_ran R8_rollup_pr_opened \
+         R9_rollup_pr_merged R10_rollup_ci_green R11_no_escalation_comments R12_terminal_status_done; do
+  v=$(printf '%s' "$smoke" | jq -r --arg k "$r" '.run_steps[$k].state')
+  assert_eq "compliant-smoke $r pass" "pass" "$v"
+done
+for t in T1_quota_checked T2_executor_spawned T3_lint_pass T4_typecheck_pass T5_tests_pass \
+         T6_coverage_non_regress T9_reviewer_approved_first_round T10_reviewer_approved_overall \
+         T11_pr_created T12_pr_ci_green T13_pr_merged T14_within_retry_budget; do
+  p=$(printf '%s' "$smoke" | jq -r --arg k "$t" '.task_steps_aggregate[$k].pass')
+  f=$(printf '%s' "$smoke" | jq -r --arg k "$t" '.task_steps_aggregate[$k].fail + .task_steps_aggregate[$k].not_performed + .task_steps_aggregate[$k].skipped_task_inactive')
+  assert_eq "compliant-smoke $t pass=3"    "3" "$p"
+  assert_eq "compliant-smoke $t clean"     "0" "$f"
+done
+# T7/T8 skipped_na only (no holdouts, routine tier)
+for t in T7_holdout_pass T8_mutation_pass; do
+  sna=$(printf '%s' "$smoke" | jq -r --arg k "$t" '.task_steps_aggregate[$k].skipped_na')
+  assert_eq "compliant-smoke $t skipped_na=3" "3" "$sna"
+done
+# Observability sanity
+assert_eq "compliant-smoke observability.quota.checks"           "3" "$(printf '%s' "$smoke" | jq -r '.observability.quota.checks')"
+assert_eq "compliant-smoke observability.reviewers.claude"       "2" "$(printf '%s' "$smoke" | jq -r '.observability.reviewers.claude')"
+assert_eq "compliant-smoke observability.reviewers.codex"        "1" "$(printf '%s' "$smoke" | jq -r '.observability.reviewers.codex')"
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

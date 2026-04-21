@@ -654,6 +654,255 @@ rm -f "$CLAUDE_PLUGIN_DATA/config.json"
 rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
 
 # ============================================================
+# Layer-2 autonomous-mode hooks
+# ============================================================
+
+# Helper: seed a run dir with state.json + current symlink.
+_seed_run() {
+  local run_id="$1" state_json="$2"
+  local dir="$CLAUDE_PLUGIN_DATA/runs/$run_id"
+  mkdir -p "$dir"
+  printf '%s' "$state_json" > "$dir/state.json"
+  ln -sfn "$dir" "$CLAUDE_PLUGIN_DATA/runs/current"
+}
+
+# ============================================================
+echo ""
+echo "=== stop-gate: autonomous mode blocks on non-terminal tasks ==="
+
+_seed_run "run-stop-block" '{"status":"running","tasks":{"alpha-001":{"status":"executing"}}}'
+set +e
+out=$(FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/stop-gate.sh" < /dev/null 2>/dev/null)
+rc=$?
+set -e
+assert_eq "stop-gate block exit 0"      "0" "$rc"
+assert_eq "stop-gate emits decision=block" "block" "$(printf '%s' "$out" | jq -r '.decision // empty')"
+# state must NOT be auto-marked interrupted when blocked
+state_after=$(jq -r '.tasks."alpha-001".status' "$CLAUDE_PLUGIN_DATA/runs/run-stop-block/state.json")
+assert_eq "stop-gate preserves executing on block" "executing" "$state_after"
+rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
+
+echo ""
+echo "=== stop-gate: FACTORY_ALLOW_STOP bypass marks interrupted ==="
+
+_seed_run "run-stop-allow" '{"status":"running","tasks":{"beta-001":{"status":"executing"}}}'
+set +e
+FACTORY_AUTONOMOUS_MODE=1 FACTORY_ALLOW_STOP=1 bash "$HOOKS_DIR/stop-gate.sh" < /dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "stop-gate allow-stop exit 0" "0" "$rc"
+state_after=$(jq -r '.tasks."beta-001".status' "$CLAUDE_PLUGIN_DATA/runs/run-stop-allow/state.json")
+assert_eq "stop-gate marks executing → interrupted" "interrupted" "$state_after"
+
+echo ""
+echo "=== stop-gate: non-autonomous session preserves legacy behavior ==="
+
+_seed_run "run-stop-legacy" '{"status":"running","tasks":{"c-001":{"status":"executing"}}}'
+set +e
+bash "$HOOKS_DIR/stop-gate.sh" < /dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "stop-gate legacy exit 0" "0" "$rc"
+state_after=$(jq -r '.tasks."c-001".status' "$CLAUDE_PLUGIN_DATA/runs/run-stop-legacy/state.json")
+assert_eq "stop-gate legacy marks interrupted" "interrupted" "$state_after"
+
+echo ""
+echo "=== stop-gate: status=done = no-op ==="
+
+_seed_run "run-stop-done" '{"status":"done","tasks":{"d-001":{"status":"done"}}}'
+set +e
+bash "$HOOKS_DIR/stop-gate.sh" < /dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "stop-gate done noop exit 0" "0" "$rc"
+
+# ============================================================
+echo ""
+echo "=== pretooluse-pipeline-guards: denies gh pr create without quality_gate.ok ==="
+
+_seed_run "run-guards" '{"status":"running","tasks":{"alpha-001":{"status":"reviewing","quality_gate":{"ok":false}}}}'
+input='{"tool_input":{"command":"gh pr create --head task/alpha-001 --base staging"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_TASK_ID=alpha-001 bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "guards pr-create-bad exit 0" "0" "$rc"
+decision=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // empty')
+assert_eq "guards pr-create-bad denies"   "deny" "$decision"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: allows gh pr create when quality_gate.ok=true ==="
+
+_seed_run "run-guards-ok" '{"status":"running","tasks":{"alpha-001":{"status":"reviewing","quality_gate":{"ok":true}}}}'
+input='{"tool_input":{"command":"gh pr create --head task/alpha-001 --base staging"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_TASK_ID=alpha-001 bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "guards pr-create-ok exit 0"    "0" "$rc"
+assert_eq "guards pr-create-ok no output" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: denies task-status done without preconditions ==="
+
+_seed_run "run-guards-done" '{"status":"running","tasks":{"alpha-001":{"status":"executing"}}}'
+input='{"tool_input":{"command":"pipeline-state task-status run-guards-done alpha-001 done"}}'
+set +e
+out=$(printf '%s' "$input" | bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "guards task-status-done exit 0" "0" "$rc"
+assert_eq "guards task-status-done denies" "deny" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // empty')"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: no-op when no pipeline run ==="
+
+rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
+input='{"tool_input":{"command":"gh pr create --head feat --base main"}}'
+set +e
+out=$(printf '%s' "$input" | bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "guards no-run exit 0"    "0" "$rc"
+assert_eq "guards no-run no output" "" "$out"
+
+# ============================================================
+echo ""
+echo "=== subagent-stop-transcript: parses STATUS line + worktree ==="
+
+_seed_run "run-sag" '{"status":"running","tasks":{"alpha-001":{"status":"executing"}}}'
+transcript="$CLAUDE_PLUGIN_DATA/runs/run-sag/transcript.jsonl"
+cat > "$transcript" <<EOF
+{"role":"user","content":[{"type":"text","text":"see .state/run-sag/alpha-001.executor-prompt.md"}]}
+{"tool_use":{"input":{"cwd":"/tmp/fake/.claude/worktrees/agent-zzz"}}}
+EOF
+input=$(jq -cn --arg t "$transcript" --arg msg "Done.
+STATUS: DONE" '{agent_type:"task-executor", last_assistant_message:$msg, agent_transcript_path:$t}')
+set +e
+printf '%s' "$input" | bash "$HOOKS_DIR/subagent-stop-transcript.sh" >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "subagent-stop exit 0" "0" "$rc"
+exec_status=$(jq -r '.tasks."alpha-001".executor_status // empty' "$CLAUDE_PLUGIN_DATA/runs/run-sag/state.json")
+assert_eq "subagent-stop writes executor_status" "DONE" "$exec_status"
+wt=$(jq -r '.tasks."alpha-001".worktree // empty' "$CLAUDE_PLUGIN_DATA/runs/run-sag/state.json")
+assert_eq "subagent-stop writes worktree" "/tmp/fake/.claude/worktrees/agent-zzz" "$wt"
+
+echo ""
+echo "=== subagent-stop-transcript: missing STATUS -> BLOCKED ==="
+
+_seed_run "run-sag-missing" '{"status":"running","tasks":{"alpha-001":{"status":"executing"}}}'
+transcript="$CLAUDE_PLUGIN_DATA/runs/run-sag-missing/transcript.jsonl"
+printf '{"content":".state/run-sag-missing/alpha-001.executor-prompt.md"}\n' > "$transcript"
+input=$(jq -cn --arg t "$transcript" '{agent_type:"task-executor", last_assistant_message:"No status marker", agent_transcript_path:$t}')
+set +e
+printf '%s' "$input" | bash "$HOOKS_DIR/subagent-stop-transcript.sh" >/dev/null 2>&1
+set -e
+exec_status=$(jq -r '.tasks."alpha-001".executor_status // empty' "$CLAUDE_PLUGIN_DATA/runs/run-sag-missing/state.json")
+assert_eq "subagent-stop missing STATUS = BLOCKED" "BLOCKED" "$exec_status"
+
+echo ""
+echo "=== subagent-stop-transcript: reviewer writes review_files ==="
+
+_seed_run "run-sag-rev" '{"status":"running","tasks":{"alpha-001":{"status":"reviewing"}}}'
+transcript="$CLAUDE_PLUGIN_DATA/runs/run-sag-rev/transcript.jsonl"
+printf '{"content":".state/run-sag-rev/alpha-001.reviewer-prompt.md"}\n' > "$transcript"
+msg='{"decision":"APPROVE","blockers":[],"concerns":[]}
+STATUS: DONE'
+input=$(jq -cn --arg t "$transcript" --arg msg "$msg" '{agent_type:"task-reviewer", last_assistant_message:$msg, agent_transcript_path:$t}')
+set +e
+printf '%s' "$input" | bash "$HOOKS_DIR/subagent-stop-transcript.sh" >/dev/null 2>&1
+set -e
+rev_files=$(jq -r '.tasks."alpha-001".review_files // [] | length' "$CLAUDE_PLUGIN_DATA/runs/run-sag-rev/state.json")
+assert_eq "subagent-stop writes 1 review_file" "1" "$rev_files"
+first=$(jq -r '.tasks."alpha-001".review_files[0] // empty' "$CLAUDE_PLUGIN_DATA/runs/run-sag-rev/state.json")
+assert_eq "review_file exists on disk" "true" "$([[ -f "$first" ]] && echo true || echo false)"
+
+echo ""
+echo "=== subagent-stop-transcript: scribe writes .scribe.status ==="
+
+_seed_run "run-sag-scribe" '{"status":"running","tasks":{}}'
+input=$(jq -cn '{agent_type:"scribe", last_assistant_message:"Updated 3 docs.\nSTATUS: DONE", agent_transcript_path:""}')
+set +e
+printf '%s' "$input" | bash "$HOOKS_DIR/subagent-stop-transcript.sh" >/dev/null 2>&1
+set -e
+scribe_status=$(jq -r '.scribe.status // empty' "$CLAUDE_PLUGIN_DATA/runs/run-sag-scribe/state.json")
+assert_eq "subagent-stop sets .scribe.status=done" "done" "$scribe_status"
+
+# ============================================================
+echo ""
+echo "=== session-start-resume: injects additionalContext ==="
+
+_seed_run "run-resume" '{"status":"running","tasks":{"alpha-001":{"status":"executing","stage":"preflight_done"},"alpha-002":{"status":"pending"}}}'
+export CLAUDE_ENV_FILE=$(mktemp)
+set +e
+out=$(printf '{"source":"resume"}' | bash "$HOOKS_DIR/session-start-resume.sh")
+rc=$?
+set -e
+assert_eq "session-start exit 0" "0" "$rc"
+event=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName // empty')
+assert_eq "session-start event name" "SessionStart" "$event"
+ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty')
+[[ "$ctx" == *"Resuming pipeline run"* ]] && { echo "  PASS: session-start ctx contains resume header"; pass=$((pass+1)); } || { echo "  FAIL: session-start ctx missing header"; fail=$((fail+1)); }
+[[ "$ctx" == *"pipeline-run-task"* ]] && { echo "  PASS: session-start ctx names wrapper"; pass=$((pass+1)); } || { echo "  FAIL: session-start ctx missing wrapper reference"; fail=$((fail+1)); }
+env_contents=$(cat "$CLAUDE_ENV_FILE" 2>/dev/null)
+[[ "$env_contents" == *"FACTORY_CURRENT_RUN"* ]] && { echo "  PASS: session-start exports FACTORY_CURRENT_RUN"; pass=$((pass+1)); } || { echo "  FAIL: FACTORY_CURRENT_RUN not exported"; fail=$((fail+1)); }
+rm -f "$CLAUDE_ENV_FILE"
+unset CLAUDE_ENV_FILE
+
+echo ""
+echo "=== session-start-resume: non-resume source no-ops ==="
+
+set +e
+out=$(printf '{"source":"startup"}' | bash "$HOOKS_DIR/session-start-resume.sh")
+rc=$?
+set -e
+assert_eq "session-start non-resume exit 0" "0" "$rc"
+assert_eq "session-start non-resume no output" "" "$out"
+
+echo ""
+echo "=== session-start-resume: terminal run no-ops ==="
+
+_seed_run "run-resume-done" '{"status":"done","tasks":{"x":{"status":"done"}}}'
+set +e
+out=$(printf '{"source":"resume"}' | bash "$HOOKS_DIR/session-start-resume.sh")
+set -e
+assert_eq "session-start terminal no output" "" "$out"
+
+# ============================================================
+echo ""
+echo "=== asyncrewake-ci: no-op when Claude version below minimum ==="
+
+set +e
+out=$(printf '{"tool_input":{"command":"gh pr create"}}' | CLAUDE_VERSION=1.5.0 bash "$HOOKS_DIR/asyncrewake-ci.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "asyncrewake old-version exit 0" "0" "$rc"
+assert_eq "asyncrewake old-version no output" "" "$out"
+
+echo ""
+echo "=== asyncrewake-ci: no-op for non-pr-create commands ==="
+
+set +e
+printf '{"tool_input":{"command":"ls"}}' | bash "$HOOKS_DIR/asyncrewake-ci.sh" >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "asyncrewake non-pr exit 0" "0" "$rc"
+
+# ============================================================
+echo ""
+echo "=== settings.autonomous.json registers Layer-2 hooks ==="
+
+autonom="$(cd "$(dirname "$0")/../../templates" && pwd)/settings.autonomous.json"
+assert_eq "template has SubagentStop"        "1" "$(jq '.hooks.SubagentStop | length' "$autonom")"
+assert_eq "template has SessionStart"        "1" "$(jq '.hooks.SessionStart | length' "$autonom")"
+assert_eq "template PostToolUse has asyncRewake" "1" "$(jq '[.hooks.PostToolUse[].hooks[]? | select(.asyncRewake == true)] | length' "$autonom")"
+assert_eq "template PreToolUse has pipeline-guards" "1" "$(jq '[.hooks.PreToolUse[].hooks[]? | select(.command | test("pretooluse-pipeline-guards"))] | length' "$autonom")"
+assert_eq "template allows Bash(codex *)"     "true" "$(jq '[.permissions.allow[] | select(. == "Bash(codex *)")] | length > 0' "$autonom")"
+
+rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
+
+# ============================================================
 echo ""
 echo "=== All hook scripts are executable ==="
 
@@ -661,6 +910,10 @@ assert_eq "branch-protection executable" "true" "$([[ -x "$HOOKS_DIR/branch-prot
 assert_eq "run-tracker executable" "true" "$([[ -x "$HOOKS_DIR/run-tracker.sh" ]] && echo true || echo false)"
 assert_eq "stop-gate executable" "true" "$([[ -x "$HOOKS_DIR/stop-gate.sh" ]] && echo true || echo false)"
 assert_eq "subagent-stop-gate executable" "true" "$([[ -x "$HOOKS_DIR/subagent-stop-gate.sh" ]] && echo true || echo false)"
+assert_eq "pretooluse-pipeline-guards executable" "true" "$([[ -x "$HOOKS_DIR/pretooluse-pipeline-guards.sh" ]] && echo true || echo false)"
+assert_eq "subagent-stop-transcript executable" "true" "$([[ -x "$HOOKS_DIR/subagent-stop-transcript.sh" ]] && echo true || echo false)"
+assert_eq "session-start-resume executable" "true" "$([[ -x "$HOOKS_DIR/session-start-resume.sh" ]] && echo true || echo false)"
+assert_eq "asyncrewake-ci executable" "true" "$([[ -x "$HOOKS_DIR/asyncrewake-ci.sh" ]] && echo true || echo false)"
 
 # ============================================================
 echo ""

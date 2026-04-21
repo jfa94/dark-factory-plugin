@@ -1,0 +1,127 @@
+{
+  "run_id": "run-compliant-smoke",
+  "version": "0.3.2",
+  "status": "done",
+  "mode": "prd",
+  "started_at": "2026-04-21T08:00:00Z",
+  "ended_at": "2026-04-21T10:30:00Z",
+  "updated_at": "2026-04-21T10:30:00Z",
+  "final_pr_number": 9999,
+  "input": {
+    "issue_numbers": [42],
+    "resumed_from": null
+  },
+  "spec": {
+    "status": "done",
+    "path": "/FIXTURE/compliant-smoke/.state/run-compliant-smoke",
+    "review_iterations": 1,
+    "review_score": 57,
+    "handoff_branch": "spec-handoff/run-compliant-smoke",
+    "handoff_ref": "deadbeefcafebabe1234567890abcdef00000000",
+    "committed": true
+  },
+  "scribe": {
+    "status": "done"
+  },
+  "rollup": {
+    "pr_url": "https://github.com/acme/repo/pull/9999",
+    "pr_number": 9999
+  },
+  "execution_order": [
+    { "task_id": "alpha-001", "parallel_group": 0 },
+    { "task_id": "alpha-002", "parallel_group": 1 },
+    { "task_id": "alpha-003", "parallel_group": 2 }
+  ],
+  "tasks": {
+    "alpha-001": {
+      "task_id": "alpha-001",
+      "status": "done",
+      "depends_on": [],
+      "files": ["src/a.ts"],
+      "acceptance_criteria": ["ok"],
+      "tests_to_write": ["t"],
+      "risk_tier": "routine",
+      "stage": "ship_done",
+      "started_at": "2026-04-21T08:05:00Z",
+      "ended_at": "2026-04-21T08:45:00Z",
+      "worktree": "/FIXTURE/compliant-smoke/.claude/worktrees/agent-alpha001",
+      "branch": "task/alpha-001",
+      "pr_number": 101,
+      "pr_url": "https://github.com/acme/repo/pull/101",
+      "ci_status": "green",
+      "review_attempts": 0,
+      "quality_attempts": 0,
+      "ci_fix_attempts": 0,
+      "executor_status": "DONE",
+      "reviewer_status": "DONE",
+      "quality_gate": {
+        "ok": true,
+        "checks": [
+          { "command": "lint", "status": "passed" },
+          { "command": "typecheck", "status": "passed" },
+          { "command": "test", "status": "passed" }
+        ]
+      }
+    },
+    "alpha-002": {
+      "task_id": "alpha-002",
+      "status": "done",
+      "depends_on": ["alpha-001"],
+      "files": ["src/b.ts"],
+      "acceptance_criteria": ["ok"],
+      "tests_to_write": ["t"],
+      "risk_tier": "routine",
+      "stage": "ship_done",
+      "started_at": "2026-04-21T08:50:00Z",
+      "ended_at": "2026-04-21T09:30:00Z",
+      "worktree": "/FIXTURE/compliant-smoke/.claude/worktrees/agent-alpha002",
+      "branch": "task/alpha-002",
+      "pr_number": 102,
+      "pr_url": "https://github.com/acme/repo/pull/102",
+      "ci_status": "green",
+      "review_attempts": 0,
+      "quality_attempts": 0,
+      "ci_fix_attempts": 0,
+      "executor_status": "DONE",
+      "reviewer_status": "DONE",
+      "quality_gate": {
+        "ok": true,
+        "checks": [
+          { "command": "lint", "status": "passed" },
+          { "command": "typecheck", "status": "passed" },
+          { "command": "test", "status": "passed" }
+        ]
+      }
+    },
+    "alpha-003": {
+      "task_id": "alpha-003",
+      "status": "done",
+      "depends_on": ["alpha-002"],
+      "files": ["src/c.ts"],
+      "acceptance_criteria": ["ok"],
+      "tests_to_write": ["t"],
+      "risk_tier": "routine",
+      "stage": "ship_done",
+      "started_at": "2026-04-21T09:35:00Z",
+      "ended_at": "2026-04-21T10:15:00Z",
+      "worktree": "/FIXTURE/compliant-smoke/.claude/worktrees/agent-alpha003",
+      "branch": "task/alpha-003",
+      "pr_number": 103,
+      "pr_url": "https://github.com/acme/repo/pull/103",
+      "ci_status": "green",
+      "review_attempts": 0,
+      "quality_attempts": 0,
+      "ci_fix_attempts": 0,
+      "executor_status": "DONE",
+      "reviewer_status": "DONE",
+      "quality_gate": {
+        "ok": true,
+        "checks": [
+          { "command": "lint", "status": "passed" },
+          { "command": "typecheck", "status": "passed" },
+          { "command": "test", "status": "passed" }
+        ]
+      }
+    }
+  }
+}

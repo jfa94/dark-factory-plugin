@@ -303,6 +303,26 @@ assert_eq "delta lines zero" "0" "$(echo "$output" | jq -r '.delta.lines')"
 
 # ============================================================
 echo ""
+echo "=== pipeline-coverage-gate (--task-id emits metric with task_id) ==="
+
+# Isolate metrics file for this run to avoid contamination from other tests.
+cov_run_id="cov-task-id-$$"
+pipeline-init "$cov_run_id" --issue 1 --mode prd >/dev/null 2>&1
+metrics_cov="$CLAUDE_PLUGIN_DATA/runs/$cov_run_id/metrics.jsonl"
+CLAUDE_RUN_ID="$cov_run_id" pipeline-coverage-gate "$before_file" "$after_file" --task-id "proxy-001" >/dev/null 2>&1
+# The metric writer uses CLAUDE_RUN_ID to locate the run metrics file.
+if grep -q '"event":"task.gate.coverage"' "$metrics_cov" 2>/dev/null && \
+   grep -q '"task_id":"proxy-001"' "$metrics_cov" 2>/dev/null; then
+  echo "  PASS: coverage gate emits task.gate.coverage with task_id"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: coverage gate missing task_id metric"
+  echo "       metrics: $(cat "$metrics_cov" 2>/dev/null || echo '<no file>')"
+  fail=$((fail + 1))
+fi
+
+# ============================================================
+echo ""
 echo "=== pipeline-coverage-gate (missing file) ==="
 
 set +e

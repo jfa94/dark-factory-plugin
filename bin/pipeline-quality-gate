@@ -32,7 +32,7 @@ if [[ ! -f package.json ]]; then
   result='{"ok":false,"error":"no_package_json","checks":[]}'
   run_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}"
   if [[ -f "$run_dir/state.json" ]]; then
-    if ! pipeline-state write "$run_id" ".tasks.$task_id.quality_gate" "$result" >/dev/null; then
+    if ! pipeline-state task-write "$run_id" "$task_id" quality_gate "$result" >/dev/null; then
       log_error "failed to record quality_gate result for $task_id (state.json present but write failed)"
       exit 1
     fi

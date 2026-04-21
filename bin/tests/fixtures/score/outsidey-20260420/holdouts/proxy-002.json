@@ -1,0 +1,8 @@
+{
+  "task_id": "proxy-002",
+  "withheld_criteria": [
+    "Request to a route that would otherwise trigger onboarding redirect is passed through for admin"
+  ],
+  "total_criteria": 5,
+  "withheld_count": 1
+}

@@ -1,0 +1,8 @@
+{
+  "task_id": "rbac-001",
+  "withheld_criteria": [
+    "role_permissions table has id bigserial PK, role app_role, permission text, unique(role, permission)"
+  ],
+  "total_criteria": 5,
+  "withheld_count": 1
+}

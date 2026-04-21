@@ -26,7 +26,7 @@ metrics_file="$run_dir/metrics.jsonl"
 
 (
   source "$(dirname "$0")/../pipeline-lib.sh"
-  FACTORY_CURRENT_RUN_ID="run-ci-001" emit_ci_metric "task" "42" "green" '["lint","test"]'
+  emit_ci_metric "task" "42" "green" '["lint","test"]'
 )
 
 count=$(wc -l < "$metrics_file" | tr -d ' ')

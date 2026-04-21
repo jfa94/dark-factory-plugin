@@ -15,10 +15,6 @@ require_command jq
 pr="${1:?missing PR number}"
 shift
 
-_gh_checks_json() {
-  gh pr checks "$pr" --json name,state,conclusion 2>/dev/null || echo '[]'
-}
-
 # Defaults come from config (dependencies.prMergeTimeout / dependencies.pollInterval).
 # CLI flags override. Empty config returns "" → fallback to the second read_config arg.
 timeout_minutes=$(read_config '.dependencies.prMergeTimeout' '45')
@@ -301,7 +297,7 @@ while true; do
     log_info "PR #${pr} merged"
     jq -n --arg pr "$pr" --arg merged_at "$merged_at" \
       '{status: "merged", pr: $pr, merged_at: $merged_at}'
-    emit_ci_metric task "$pr" "green" "$(_gh_checks_json)"
+    emit_ci_metric task "$pr" "green" "${checks_data:-[]}"
     exit 0
   fi
 
@@ -366,7 +362,7 @@ while true; do
         --arg pr "$pr" \
         --arg failed "$failed_names" \
         '{status: "ci_failed", pr: $pr, failed_checks: $failed}'
-      emit_ci_metric task "$pr" "red" "$(_gh_checks_json)"
+      emit_ci_metric task "$pr" "red" "$checks_data"
       exit 3
     fi
 

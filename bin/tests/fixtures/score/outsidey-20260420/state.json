@@ -27,7 +27,15 @@
       ],
       "risk_tier": "routine",
       "started_at": "2026-04-20T19:14:36Z",
-      "ended_at": "2026-04-20T19:43:04Z"
+      "ended_at": "2026-04-20T19:43:04Z",
+      "worktree": "/FIXTURE/outsidey/.worktrees/rbac-001",
+      "quality_gate": {
+        "checks": [
+          {"command": "lint", "status": "passed"},
+          {"command": "typecheck", "status": "passed"},
+          {"command": "test", "status": "passed"}
+        ]
+      }
     },
     "rbac-002": {
       "status": "done",

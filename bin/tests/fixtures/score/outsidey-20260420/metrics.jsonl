@@ -53,3 +53,4 @@
 {"ts":"2026-04-20T21:19:40Z","run_id":"run-20260420-141621","event":"task.start","task_id":"shell-003"}
 {"ts":"2026-04-20T21:19:40Z","run_id":"run-20260420-141621","event":"task.start","task_id":"waitlist-004"}
 {"ts":"2026-04-20T21:19:40Z","run_id":"run-20260420-141621","event":"task.start","task_id":"quiz-002"}
+{"ts":"2026-04-20T19:43:04Z","run_id":"run-20260420-141621","event":"task.gate.coverage","task_id":"rbac-001","status":"pass"}

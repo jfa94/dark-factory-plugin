@@ -139,3 +139,48 @@ eval_R12_terminal_status_done() {
   local s; s=$(printf '%s' "$state" | jq -r '.status')
   [[ "$s" == "done" ]] && echo "pass" || echo "fail"
 }
+
+_task_reached_executing() {
+  local t="$1"
+  local status; status=$(printf '%s' "$state" | jq -r --arg t "$t" '.tasks[$t].status // "pending"')
+  [[ "$status" != "pending" ]]
+}
+
+_quality_check_status() {
+  local t="$1" cmd="$2"
+  printf '%s' "$state" | jq -r --arg t "$t" --arg c "$cmd" \
+    '.tasks[$t].quality_gate.checks // [] | map(select(.command == $c)) | .[0].status // empty'
+}
+
+_quality_check_step() {
+  local t="$1" cmd="$2"
+  if ! _task_reached_executing "$t"; then echo "skipped_ok"; return; fi
+  local s; s=$(_quality_check_status "$t" "$cmd")
+  case "$s" in
+    passed) echo "pass" ;;
+    failed) echo "fail" ;;
+    *)      echo "not_performed" ;;
+  esac
+}
+
+eval_T1_executor_spawned() {
+  local t="$1"
+  local wt; wt=$(printf '%s' "$state" | jq -r --arg t "$t" '.tasks[$t].worktree // empty')
+  [[ -n "$wt" && "$wt" != "null" ]] && echo "pass" || echo "not_performed"
+}
+
+eval_T2_lint_pass()      { _quality_check_step "$1" lint; }
+eval_T3_typecheck_pass() { _quality_check_step "$1" typecheck; }
+eval_T4_tests_pass()     { _quality_check_step "$1" test; }
+
+eval_T5_coverage_non_regress() {
+  local t="$1"
+  if ! _task_reached_executing "$t"; then echo "skipped_ok"; return; fi
+  if [[ -f "$metrics_file" ]] && grep -q "\"event\":\"task.gate.coverage\".*\"task_id\":\"$t\".*\"status\":\"pass\"" "$metrics_file" 2>/dev/null; then
+    echo "pass"
+  elif [[ -f "$metrics_file" ]] && grep -q "\"event\":\"task.gate.coverage\".*\"task_id\":\"$t\".*\"status\":\"fail\"" "$metrics_file" 2>/dev/null; then
+    echo "fail"
+  else
+    echo "not_performed"
+  fi
+}

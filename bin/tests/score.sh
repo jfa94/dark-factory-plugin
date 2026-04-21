@@ -95,6 +95,19 @@ assert_eq "R10 rollup_ci_green"            "skipped_ok"  "$R10"
 assert_eq "R11 no_escalation_comments"     "pass"        "$R11"
 assert_eq "R12 terminal_status_done"       "fail"        "$R12"
 
+echo "=== per-task steps T1-T5 ==="
+
+out=$(pipeline-score --run run-fix-001 --format json --no-gh)
+T1_pass=$(printf '%s' "$out" | jq -r '.task_steps_aggregate.T1_executor_spawned.pass')
+T2_pass=$(printf '%s' "$out" | jq -r '.task_steps_aggregate.T2_lint_pass.pass')
+T3_pass=$(printf '%s' "$out" | jq -r '.task_steps_aggregate.T3_typecheck_pass.pass')
+T4_pass=$(printf '%s' "$out" | jq -r '.task_steps_aggregate.T4_tests_pass.pass')
+
+[[ "$T1_pass" -ge 1 ]] && { echo "  PASS: T1 has >=1 pass"; pass=$((pass+1)); } || { echo "  FAIL: T1 pass count = $T1_pass"; fail=$((fail+1)); }
+[[ "$T2_pass" -ge 1 ]] && { echo "  PASS: T2 has >=1 pass"; pass=$((pass+1)); } || { echo "  FAIL: T2 pass count = $T2_pass"; fail=$((fail+1)); }
+[[ "$T3_pass" -ge 1 ]] && { echo "  PASS: T3 has >=1 pass"; pass=$((pass+1)); } || { echo "  FAIL: T3 pass count = $T3_pass"; fail=$((fail+1)); }
+[[ "$T4_pass" -ge 1 ]] && { echo "  PASS: T4 has >=1 pass"; pass=$((pass+1)); } || { echo "  FAIL: T4 pass count = $T4_pass"; fail=$((fail+1)); }
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

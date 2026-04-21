@@ -79,8 +79,8 @@ R8=$(printf '%s' "$out" | jq -r '.run_steps.R8_rollup_pr_opened.state')
 assert_eq "R5 no_circuit_trip"      "pass"        "$R5"
 assert_eq "R6 no_human_gate_pause"  "pass"        "$R6"
 # Fixture: not all tasks done (interrupted) → scribe did not need to run.
-assert_eq "R7 scribe_ran"           "skipped_ok"  "$R7"
-assert_eq "R8 rollup_pr_opened"     "skipped_ok"  "$R8"
+assert_eq "R7 scribe_ran"           "skipped_na"  "$R7"
+assert_eq "R8 rollup_pr_opened"     "skipped_na"  "$R8"
 
 echo "=== run-level steps R9-R12 ==="
 
@@ -90,8 +90,8 @@ R10=$(printf '%s' "$out" | jq -r '.run_steps.R10_rollup_ci_green.state')
 R11=$(printf '%s' "$out" | jq -r '.run_steps.R11_no_escalation_comments.state')
 R12=$(printf '%s' "$out" | jq -r '.run_steps.R12_terminal_status_done.state')
 
-assert_eq "R9 rollup_pr_merged"           "skipped_ok"  "$R9"
-assert_eq "R10 rollup_ci_green"            "skipped_ok"  "$R10"
+assert_eq "R9 rollup_pr_merged"           "skipped_na"  "$R9"
+assert_eq "R10 rollup_ci_green"            "skipped_na"  "$R10"
 assert_eq "R11 no_escalation_comments"     "pass"        "$R11"
 assert_eq "R12 terminal_status_done"       "fail"        "$R12"
 

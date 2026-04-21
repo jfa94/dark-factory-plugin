@@ -77,19 +77,25 @@ _task_ids() {
 
 _aggregate_step() {
   local id="$1" fn="$2"
-  local p=0 f=0 s=0 np=0
+  local p=0 f=0 sna=0 sti=0 np=0
   while IFS= read -r t; do
     [[ -z "$t" ]] && continue
     local r; r=$($fn "$t")
     case "$r" in
-      pass)          p=$((p+1)) ;;
-      fail)          f=$((f+1)) ;;
-      skipped_ok)    s=$((s+1)) ;;
-      not_performed) np=$((np+1)) ;;
+      pass)                  p=$((p+1)) ;;
+      fail)                  f=$((f+1)) ;;
+      skipped_na)            sna=$((sna+1)) ;;
+      skipped_task_inactive) sti=$((sti+1)) ;;
+      not_performed)         np=$((np+1)) ;;
     esac
   done < <(_task_ids)
-  jq -n --arg id "$id" --argjson p "$p" --argjson f "$f" --argjson s "$s" --argjson np "$np" \
-    '{id: $id, pass: $p, fail: $f, skipped_ok: $s, not_performed: $np}'
+  jq -n --arg id "$id" \
+        --argjson p "$p" --argjson f "$f" \
+        --argjson sna "$sna" --argjson sti "$sti" \
+        --argjson np "$np" \
+    '{id: $id, pass: $p, fail: $f,
+      skipped_na: $sna, skipped_task_inactive: $sti,
+      not_performed: $np}'
 }
 
 task_steps_aggregate=$(jq -n \
@@ -116,7 +122,7 @@ anomalies=$(jq -n \
     def count_run:
       [ .[] | select(.state == "not_performed") ] | length;
     def count_tasks:
-      [ .[] | .not_performed ] | add // 0;
+      [ .[] | (.not_performed + .skipped_task_inactive) ] | add // 0;
     ($rs | count_run) + ($ts | count_tasks)
   ')
 
@@ -125,15 +131,16 @@ full_success=$(jq -n \
   --argjson ts "$task_steps_aggregate" \
   '
     def all_run_pass:
-      [ .[] | select(.state != "pass" and .state != "skipped_ok") ] | length == 0;
+      [ .[] | select(.state != "pass" and .state != "skipped_na") ] | length == 0;
     def all_task_clean:
-      [ .[] | select(.fail > 0 or .not_performed > 0) ] | length == 0;
+      [ .[] | select(.fail > 0 or .not_performed > 0 or .skipped_task_inactive > 0) ] | length == 0;
     ($rs | all_run_pass) and ($ts | all_task_clean)
   ')
 
 observability=$(_observability_json)
 
 result=$(jq -n \
+  --argjson score_schema 2 \
   --arg run_id "$run_id" \
   --arg plugin_version "$plugin_version" \
   --arg mode "$mode" \
@@ -147,6 +154,7 @@ result=$(jq -n \
   --argjson full_success "$full_success" \
   --argjson observability "$observability" \
   '{
+    score_schema: $score_schema,
     run_id: $run_id,
     plugin_version: $plugin_version,
     mode: $mode,

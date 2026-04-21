@@ -4,6 +4,41 @@
 
 set -euo pipefail
 
+# --- Plugin data dir canonicalization ---
+#
+# Claude Code sets CLAUDE_PLUGIN_DATA per the active plugin context. When a
+# factory script is invoked from a bash block inside another plugin's command
+# or hook chain, the inherited CLAUDE_PLUGIN_DATA can point at the wrong
+# plugin's data dir (e.g. codex-openai-codex/), which leaks factory state
+# (merged-settings.json, runs/, state/) into foreign directories.
+#
+# Detect the marketplace-cache install layout (~/.claude/plugins/cache/
+# <marketplace>/<plugin>/<version>/) and rewrite CLAUDE_PLUGIN_DATA to
+# <plugin>-<marketplace> whenever it does not already match. Dev checkouts
+# (plugin not under the cache root) are left untouched so local runs keep
+# whatever CLAUDE_PLUGIN_DATA the session was launched with.
+_factory_expected_data_dir() {
+  local lib_dir plugin_root plugin_name marketplace_name cache_anchor
+  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || return 1
+  plugin_root=$(cd "$lib_dir/.." 2>/dev/null && pwd) || return 1
+  plugin_name=$(basename "$(dirname "$plugin_root")")
+  marketplace_name=$(basename "$(dirname "$(dirname "$plugin_root")")")
+  cache_anchor=$(cd "$plugin_root/../../.." 2>/dev/null && pwd) || return 1
+  case "$cache_anchor" in
+    "$HOME/.claude/plugins/cache") ;;
+    *) return 1 ;;
+  esac
+  [[ -n "$plugin_name" && -n "$marketplace_name" ]] || return 1
+  printf '%s' "$HOME/.claude/plugins/data/${plugin_name}-${marketplace_name}"
+}
+
+if _factory_expected=$(_factory_expected_data_dir 2>/dev/null); then
+  if [[ "${CLAUDE_PLUGIN_DATA:-}" != "$_factory_expected" ]]; then
+    export CLAUDE_PLUGIN_DATA="$_factory_expected"
+  fi
+fi
+unset _factory_expected
+
 # --- Logging ---
 
 _SCRIPT_NAME="${0##*/}"

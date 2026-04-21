@@ -248,6 +248,29 @@ else
   fail=$((fail + 1))
 fi
 
+echo "=== _gh_pr_ci_color all outcomes ==="
+
+steps_path="$(cd "$(dirname "$0")/.." && pwd)/pipeline-score-steps.sh"
+
+_run_color() {
+  _FAKE_PR_VIEW="$1" bash -c "source '$steps_path'; _gh_pr_ci_color 42"
+}
+
+assert_eq "SUCCESS StatusContext → green" "green" \
+  "$(_run_color '{"statusCheckRollup":[{"__typename":"StatusContext","state":"SUCCESS","conclusion":null}]}')"
+assert_eq "FAILURE CheckRun → red" "red" \
+  "$(_run_color '{"statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE"}]}')"
+assert_eq "IN_PROGRESS CheckRun → pending" "pending" \
+  "$(_run_color '{"statusCheckRollup":[{"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":null}]}')"
+assert_eq "StatusContext PENDING → pending" "pending" \
+  "$(_run_color '{"statusCheckRollup":[{"__typename":"StatusContext","state":"PENDING","conclusion":null}]}')"
+assert_eq "mixed success+in-flight → pending" "pending" \
+  "$(_run_color '{"statusCheckRollup":[{"__typename":"StatusContext","state":"SUCCESS","conclusion":null},{"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":null}]}')"
+assert_eq "mixed success+failure → red" "red" \
+  "$(_run_color '{"statusCheckRollup":[{"conclusion":"SUCCESS"},{"conclusion":"FAILURE"}]}')"
+assert_eq "empty rollup → unknown" "unknown" \
+  "$(_run_color '{"statusCheckRollup":[]}')"
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

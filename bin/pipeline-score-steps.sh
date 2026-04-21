@@ -56,6 +56,44 @@ _render_table() {
   '
 }
 
+_gh_pr_ci_color() {
+  local pr="$1" repo_arg="" payload
+  if [[ -n "${2:-}" ]]; then repo_arg="--repo $2"; fi
+  if [[ -n "${_FAKE_PR_VIEW:-}" ]]; then
+    payload="$_FAKE_PR_VIEW"
+  else
+    payload=$(gh pr view "$pr" $repo_arg --json statusCheckRollup 2>/dev/null) || {
+      echo "unknown"; return
+    }
+  fi
+  printf '%s' "$payload" | jq -r '
+    # Classify one rollup entry into pass | fail | pending | unknown.
+    def classify:
+      (.status // "" | ascii_upcase) as $st |
+      (.state  // "" | ascii_upcase) as $se |
+      (.conclusion // "" | ascii_upcase) as $c |
+      if ($st == "QUEUED" or $st == "IN_PROGRESS" or $st == "WAITING" or $st == "PENDING"
+          or $se == "PENDING" or $se == "EXPECTED"
+          or ($st == "COMPLETED" and $c == "")) then "pending"
+      else
+        (if $c != "" then $c else $se end) as $o |
+        if ["SUCCESS","SKIPPED","NEUTRAL"] | index($o) then "pass"
+        elif ["FAILURE","TIMED_OUT","CANCELLED","STARTUP_FAILURE","ACTION_REQUIRED","ERROR"] | index($o) then "fail"
+        else "unknown"
+        end
+      end;
+    (.statusCheckRollup // []) as $r |
+    if ($r | length) == 0 then "unknown"
+    else
+      ($r | map(classify)) as $cls |
+      if   ($cls | any(. == "fail"))    then "red"
+      elif ($cls | any(. == "pending")) then "pending"
+      elif ($cls | all(. == "pass"))    then "green"
+      else "unknown"
+      end
+    end'
+}
+
 eval_R1_autonomy_ok() {
   if [[ -f "$audit_file" ]] && grep -q '"event":"init.error"' "$audit_file" 2>/dev/null; then
     echo "fail"
@@ -163,12 +201,13 @@ eval_R10_rollup_ci_green() {
     return
   fi
   if [[ "${use_gh:-true}" == "true" ]]; then
-    local conclusion
-    conclusion=$(gh pr view "$pr" --json statusCheckRollup -q '.statusCheckRollup | map(.conclusion) | if length == 0 then "unknown" elif all(. == "SUCCESS") then "green" else "red" end' 2>/dev/null || echo "unknown")
-    case "$conclusion" in
-      green) echo "pass" ;;
-      red)   echo "fail" ;;
-      *)     echo "not_performed" ;;
+    local color
+    color=$(_gh_pr_ci_color "$pr")
+    case "$color" in
+      green)   echo "pass" ;;
+      red)     echo "fail" ;;
+      pending) echo "not_performed" ;;
+      *)       echo "not_performed" ;;
     esac
   else
     echo "not_performed"
@@ -309,12 +348,13 @@ eval_T11_pr_ci_green() {
     return
   fi
   if [[ "${use_gh:-true}" == "true" ]]; then
-    local conclusion
-    conclusion=$(gh pr checks "$pr" --json state,conclusion 2>/dev/null | jq -r 'map(.conclusion) | if length == 0 then "unknown" elif all(. == "SUCCESS") then "green" else "red" end' 2>/dev/null || echo "unknown")
-    case "$conclusion" in
-      green) echo "pass" ;;
-      red) echo "fail" ;;
-      *) echo "not_performed" ;;
+    local color
+    color=$(_gh_pr_ci_color "$pr")
+    case "$color" in
+      green)   echo "pass" ;;
+      red)     echo "fail" ;;
+      pending) echo "not_performed" ;;
+      *)       echo "not_performed" ;;
     esac
   else
     echo "not_performed"

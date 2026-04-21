@@ -11,6 +11,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${CLAUDE_PLUGIN_DATA:=$HOME/.claude/plugins/data/factory-jfa94}"
 
+# shellcheck disable=SC1091
+source "$REPO_ROOT/bin/pipeline-score-steps.sh"
+
 run_id=""
 assume_version=""
 repo=""
@@ -75,11 +78,18 @@ for t in "${tasks[@]}"; do
   if [[ -n "$pr" ]]; then
     tmp=$(mktemp)
     jq --arg t "$t" --argjson pr "$pr" '.tasks[$t].pr_number = $pr' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
-    conclusion=$(gh pr view "$pr" --repo "$repo" --json statusCheckRollup -q '.statusCheckRollup | map(.conclusion) | if length == 0 then "unknown" elif all(. == "SUCCESS") then "green" else "red" end' 2>/dev/null || echo "unknown")
-    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    printf '{"ts":"%s","run_id":"%s","event":"task.ci","pr_number":%s,"status":"%s","backfilled":true}\n' \
-      "$ts" "$run_id" "$pr" "$conclusion" >> "$run_dir/metrics.jsonl"
-    echo "Backfilled task $t → PR $pr ($conclusion)"
+    color=$(_gh_pr_ci_color "$pr" "$repo")
+    case "$color" in
+      green|red)
+        ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        printf '{"ts":"%s","run_id":"%s","event":"task.ci","pr_number":%s,"status":"%s","backfilled":true}\n' \
+          "$ts" "$run_id" "$pr" "$color" >> "$run_dir/metrics.jsonl"
+        echo "Backfilled task $t → PR $pr ($color)"
+        ;;
+      pending|unknown)
+        echo "Skipped task $t → PR $pr (ci $color, no terminal state)"
+        ;;
+    esac
   fi
 done
 

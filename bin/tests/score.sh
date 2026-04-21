@@ -182,6 +182,34 @@ touch "$CLAUDE_PLUGIN_DATA/runs/run-no-version/audit.jsonl"
 version=$(jq -r '.version' "$CLAUDE_PLUGIN_DATA/runs/run-no-version/state.json")
 assert_eq "backfill stamps version" "0.3.2" "$version"
 
+echo "=== quota.check + quota.wait metric emission ==="
+
+pipeline-init "run-quota-001" --issue 1 --mode prd --force >/dev/null
+(
+  source "$(dirname "$0")/../pipeline-lib.sh"
+  # Force a proceed outcome by making pipeline-quota-check return the sentinel
+  # "over_threshold=true" — but we want proceed, so use a stub:
+  pipeline-quota-check() { jq -n '{
+    detection_method:"statusline",
+    five_hour:{utilization:0.1,over_threshold:false},
+    seven_day:{utilization:0.2,over_threshold:false},
+    captured_at:"2026-04-21T08:00:00Z"
+  }'; }
+  pipeline-model-router() { jq -n '{action:"proceed"}'; }
+  export -f pipeline-quota-check pipeline-model-router
+  pipeline_quota_gate "run-quota-001" "feature" "test-gate-A" >/dev/null
+)
+
+metrics="$CLAUDE_PLUGIN_DATA/runs/run-quota-001/metrics.jsonl"
+qc=$(grep -c '"event":"quota.check"' "$metrics" 2>/dev/null || echo 0)
+assert_eq "quota.check emitted on proceed" "1" "$qc"
+
+gate=$(grep '"event":"quota.check"' "$metrics" | tail -1 | jq -r '.gate')
+assert_eq "gate label captured" "test-gate-A" "$gate"
+
+action=$(grep '"event":"quota.check"' "$metrics" | tail -1 | jq -r '.action')
+assert_eq "action captured" "proceed" "$action"
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

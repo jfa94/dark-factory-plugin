@@ -124,6 +124,17 @@ for k in T10_pr_created T11_pr_ci_green T12_pr_merged T13_no_fix_loop_exhaustion
   assert_eq "$k present in aggregate" "$k" "$val"
 done
 
+echo "=== totals + table render ==="
+
+out=$(pipeline-score --run run-fix-001 --format json --no-gh)
+anomalies=$(printf '%s' "$out" | jq -r '.anomalies')
+full=$(printf '%s' "$out" | jq -r '.full_success')
+[[ "$anomalies" -ge 0 ]] && { echo "  PASS: anomalies present"; pass=$((pass+1)); } || { echo "  FAIL: anomalies missing"; fail=$((fail+1)); }
+assert_eq "full_success false on interrupted fixture" "false" "$full"
+
+table=$(pipeline-score --run run-fix-001 --format table --no-gh)
+echo "$table" | grep -q 'RUN-LEVEL STEPS' && { echo "  PASS: table renders header"; pass=$((pass+1)); } || { echo "  FAIL: table missing header"; fail=$((fail+1)); }
+
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="
 [[ $fail -eq 0 ]]

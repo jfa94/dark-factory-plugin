@@ -4,8 +4,30 @@
 # one of: pass | fail | skipped_ok | not_performed.
 
 _render_table() {
-  # Minimal passthrough — enhanced in Task 12.
-  cat
+  local json; json=$(cat)
+  local run_id version mode status bucket anomalies full
+  run_id=$(printf '%s' "$json" | jq -r '.run_id')
+  version=$(printf '%s' "$json" | jq -r '.plugin_version')
+  mode=$(printf '%s' "$json" | jq -r '.mode')
+  status=$(printf '%s' "$json" | jq -r '.status')
+  bucket=$(printf '%s' "$json" | jq -r '.bucket')
+  anomalies=$(printf '%s' "$json" | jq -r '.anomalies')
+  full=$(printf '%s' "$json" | jq -r '.full_success')
+
+  printf "Run: %s   plugin-version: %s   mode: %s   status: %s   bucket: %s\n" \
+    "$run_id" "$version" "$mode" "$status" "$bucket"
+  printf "\nRUN-LEVEL STEPS\n"
+  printf '%s' "$json" | jq -r '.run_steps | to_entries[] | "  \(.value.state | (. + "            ")[0:12])  \(.key)"'
+  printf "\nPER-TASK STEPS (aggregate)\n"
+  printf "  %-35s  %5s  %5s  %7s  %8s  %s\n" "step" "pass" "fail" "skipped" "not_perf" "compliance"
+  printf '%s' "$json" | jq -r '.task_steps_aggregate | to_entries[] |
+    .key as $k |
+    .value as $v |
+    (($v.pass) as $p | ($v.fail) as $f |
+      (if ($p + $f) == 0 then "--" else (($p * 100 / ($p + $f)) | floor | tostring + "%") end) as $pct |
+      "  \(($k + (" " * 35))[0:35])  \(($p | tostring) + (" " * (5 - ($p | tostring | length))))  \(($f | tostring) + (" " * (5 - ($f | tostring | length))))  \(($v.skipped_ok | tostring) + (" " * (7 - ($v.skipped_ok | tostring | length))))  \(($v.not_performed | tostring) + (" " * (8 - ($v.not_performed | tostring | length))))  \($pct)")'
+  printf "\nANOMALIES: %s step-instances marked not_performed\n" "$anomalies"
+  printf "FULL SUCCESS: %s\n" "$full"
 }
 
 eval_R1_autonomy_ok() {

@@ -107,7 +107,27 @@ task_steps_aggregate=$(jq -n \
   --argjson T14 "$(_aggregate_step T14_terminal_status_done     eval_T14_terminal_status_done)" \
   '{T1_executor_spawned: $T1, T2_lint_pass: $T2, T3_typecheck_pass: $T3, T4_tests_pass: $T4, T5_coverage_non_regress: $T5, T6_holdout_pass: $T6, T7_mutation_pass: $T7, T8_reviewer_approved_first_round: $T8, T9_reviewer_approved_overall: $T9, T10_pr_created: $T10, T11_pr_ci_green: $T11, T12_pr_merged: $T12, T13_no_fix_loop_exhaustion: $T13, T14_terminal_status_done: $T14}')
 
-anomalies=0
+anomalies=$(jq -n \
+  --argjson rs "$run_steps" \
+  --argjson ts "$task_steps_aggregate" \
+  '
+    def count_run:
+      [ .[] | select(.state == "not_performed") ] | length;
+    def count_tasks:
+      [ .[] | .not_performed ] | add // 0;
+    ($rs | count_run) + ($ts | count_tasks)
+  ')
+
+full_success=$(jq -n \
+  --argjson rs "$run_steps" \
+  --argjson ts "$task_steps_aggregate" \
+  '
+    def all_run_pass:
+      [ .[] | select(.state != "pass" and .state != "skipped_ok") ] | length == 0;
+    def all_task_clean:
+      [ .[] | select(.fail > 0 or .not_performed > 0) ] | length == 0;
+    ($rs | all_run_pass) and ($ts | all_task_clean)
+  ')
 
 result=$(jq -n \
   --arg run_id "$run_id" \
@@ -118,6 +138,7 @@ result=$(jq -n \
   --argjson run_steps "$run_steps" \
   --argjson task_steps_aggregate "$task_steps_aggregate" \
   --argjson anomalies "$anomalies" \
+  --argjson full_success "$full_success" \
   '{
     run_id: $run_id,
     plugin_version: $plugin_version,
@@ -126,7 +147,8 @@ result=$(jq -n \
     bucket: $bucket,
     run_steps: $run_steps,
     task_steps_aggregate: $task_steps_aggregate,
-    anomalies: $anomalies
+    anomalies: $anomalies,
+    full_success: $full_success
   }')
 
 case "$format" in

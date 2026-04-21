@@ -1,0 +1,8 @@
+{
+  "task_id": "edge-001",
+  "withheld_criteria": [
+    "Normalises emails (lowercase + trim) before comparison"
+  ],
+  "total_criteria": 6,
+  "withheld_count": 1
+}

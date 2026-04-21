@@ -26,6 +26,7 @@ SUITES=(
   run-command
   config
   integration
+  score
 )
 
 if [[ "${1:-}" == "--list" ]]; then

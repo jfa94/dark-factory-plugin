@@ -1,0 +1,8 @@
+{
+  "task_id": "waitlist-003",
+  "withheld_criteria": [
+    "Initial values are hydrated from the URL query string on mount"
+  ],
+  "total_criteria": 5,
+  "withheld_count": 1
+}

@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# Score a pipeline run against the expected-steps checklist.
+# Usage: pipeline-score --run <run-id> [--format json|table] [--no-gh] [--no-log]
+#
+# Output: JSON (default) or a terminal table (--format table).
+# Appends one-line record to ${CLAUDE_PLUGIN_DATA}/scores.jsonl unless --no-log.
+set -euo pipefail
+
+source "$(dirname "$0")/pipeline-lib.sh"
+source "$(dirname "$0")/pipeline-score-steps.sh"
+require_command jq
+
+run_id=""
+format="json"
+use_gh=true
+log_history=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run) run_id="$2"; shift 2 ;;
+    --format) format="$2"; shift 2 ;;
+    --no-gh) use_gh=false; shift ;;
+    --no-log) log_history=false; shift ;;
+    *) log_error "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+[[ -z "$run_id" ]] && { log_error "missing --run"; exit 1; }
+
+run_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}"
+[[ -f "$run_dir/state.json" ]] || { log_error "state.json not found: $run_dir"; exit 1; }
+
+state=$(cat "$run_dir/state.json")
+metrics_file="$run_dir/metrics.jsonl"
+audit_file="$run_dir/audit.jsonl"
+
+plugin_version=$(printf '%s' "$state" | jq -r '.version // "unknown"')
+mode=$(printf '%s' "$state" | jq -r '.mode')
+status=$(printf '%s' "$state" | jq -r '.status')
+
+# Bucketing.
+final_pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+bucket="terminated"
+case "$status" in
+  interrupted|partial)
+    [[ -z "$final_pr" ]] && bucket="incomplete"
+    ;;
+esac
+
+_score_run_step() {
+  local id="$1" label="$2" fn="$3"
+  local state_out; state_out=$($fn)
+  jq -n --arg id "$id" --arg label "$label" --arg state "$state_out" \
+    '{id: $id, label: $label, state: $state}'
+}
+
+run_steps=$(jq -n \
+  --argjson R1 "$(_score_run_step R1_autonomy_ok          autonomy_ok          eval_R1_autonomy_ok)" \
+  --argjson R2 "$(_score_run_step R2_spec_generated       spec_generated       eval_R2_spec_generated)" \
+  --argjson R3 "$(_score_run_step R3_spec_reviewer_approved spec_reviewer_approved eval_R3_spec_reviewer_approved)" \
+  --argjson R4 "$(_score_run_step R4_tasks_decomposed     tasks_decomposed     eval_R4_tasks_decomposed)" \
+  --argjson R5 "$(_score_run_step R5_no_circuit_trip      no_circuit_trip      eval_R5_no_circuit_trip)" \
+  --argjson R6 "$(_score_run_step R6_no_human_gate_pause  no_human_gate_pause  eval_R6_no_human_gate_pause)" \
+  --argjson R7 "$(_score_run_step R7_scribe_ran           scribe_ran           eval_R7_scribe_ran)" \
+  --argjson R8 "$(_score_run_step R8_rollup_pr_opened     rollup_pr_opened     eval_R8_rollup_pr_opened)" \
+  --argjson R9 "$(_score_run_step R9_rollup_pr_merged     rollup_pr_merged     eval_R9_rollup_pr_merged)" \
+  --argjson R10 "$(_score_run_step R10_rollup_ci_green    rollup_ci_green      eval_R10_rollup_ci_green)" \
+  --argjson R11 "$(_score_run_step R11_no_escalation_comments no_escalation_comments eval_R11_no_escalation_comments)" \
+  --argjson R12 "$(_score_run_step R12_terminal_status_done   terminal_status_done   eval_R12_terminal_status_done)" \
+  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4, R5_no_circuit_trip: $R5, R6_no_human_gate_pause: $R6, R7_scribe_ran: $R7, R8_rollup_pr_opened: $R8, R9_rollup_pr_merged: $R9, R10_rollup_ci_green: $R10, R11_no_escalation_comments: $R11, R12_terminal_status_done: $R12}')
+
+_task_ids() {
+  printf '%s' "$state" | jq -r '.tasks // {} | keys[]'
+}
+
+_aggregate_step() {
+  local id="$1" fn="$2"
+  local p=0 f=0 s=0 np=0
+  while IFS= read -r t; do
+    [[ -z "$t" ]] && continue
+    local r; r=$($fn "$t")
+    case "$r" in
+      pass)          p=$((p+1)) ;;
+      fail)          f=$((f+1)) ;;
+      skipped_ok)    s=$((s+1)) ;;
+      not_performed) np=$((np+1)) ;;
+    esac
+  done < <(_task_ids)
+  jq -n --arg id "$id" --argjson p "$p" --argjson f "$f" --argjson s "$s" --argjson np "$np" \
+    '{id: $id, pass: $p, fail: $f, skipped_ok: $s, not_performed: $np}'
+}
+
+task_steps_aggregate=$(jq -n \
+  --argjson T1 "$(_aggregate_step T1_executor_spawned     eval_T1_executor_spawned)" \
+  --argjson T2 "$(_aggregate_step T2_lint_pass            eval_T2_lint_pass)" \
+  --argjson T3 "$(_aggregate_step T3_typecheck_pass       eval_T3_typecheck_pass)" \
+  --argjson T4 "$(_aggregate_step T4_tests_pass           eval_T4_tests_pass)" \
+  --argjson T5 "$(_aggregate_step T5_coverage_non_regress eval_T5_coverage_non_regress)" \
+  --argjson T6 "$(_aggregate_step T6_holdout_pass                   eval_T6_holdout_pass)" \
+  --argjson T7 "$(_aggregate_step T7_mutation_pass                  eval_T7_mutation_pass)" \
+  --argjson T8 "$(_aggregate_step T8_reviewer_approved_first_round  eval_T8_reviewer_approved_first_round)" \
+  --argjson T9 "$(_aggregate_step T9_reviewer_approved_overall      eval_T9_reviewer_approved_overall)" \
+  --argjson T10 "$(_aggregate_step T10_pr_created               eval_T10_pr_created)" \
+  --argjson T11 "$(_aggregate_step T11_pr_ci_green              eval_T11_pr_ci_green)" \
+  --argjson T12 "$(_aggregate_step T12_pr_merged                eval_T12_pr_merged)" \
+  --argjson T13 "$(_aggregate_step T13_no_fix_loop_exhaustion   eval_T13_no_fix_loop_exhaustion)" \
+  --argjson T14 "$(_aggregate_step T14_terminal_status_done     eval_T14_terminal_status_done)" \
+  '{T1_executor_spawned: $T1, T2_lint_pass: $T2, T3_typecheck_pass: $T3, T4_tests_pass: $T4, T5_coverage_non_regress: $T5, T6_holdout_pass: $T6, T7_mutation_pass: $T7, T8_reviewer_approved_first_round: $T8, T9_reviewer_approved_overall: $T9, T10_pr_created: $T10, T11_pr_ci_green: $T11, T12_pr_merged: $T12, T13_no_fix_loop_exhaustion: $T13, T14_terminal_status_done: $T14}')
+
+anomalies=$(jq -n \
+  --argjson rs "$run_steps" \
+  --argjson ts "$task_steps_aggregate" \
+  '
+    def count_run:
+      [ .[] | select(.state == "not_performed") ] | length;
+    def count_tasks:
+      [ .[] | .not_performed ] | add // 0;
+    ($rs | count_run) + ($ts | count_tasks)
+  ')
+
+full_success=$(jq -n \
+  --argjson rs "$run_steps" \
+  --argjson ts "$task_steps_aggregate" \
+  '
+    def all_run_pass:
+      [ .[] | select(.state != "pass" and .state != "skipped_ok") ] | length == 0;
+    def all_task_clean:
+      [ .[] | select(.fail > 0 or .not_performed > 0) ] | length == 0;
+    ($rs | all_run_pass) and ($ts | all_task_clean)
+  ')
+
+observability=$(_observability_json)
+
+result=$(jq -n \
+  --arg run_id "$run_id" \
+  --arg plugin_version "$plugin_version" \
+  --arg mode "$mode" \
+  --arg status "$status" \
+  --arg bucket "$bucket" \
+  --argjson run_steps "$run_steps" \
+  --argjson task_steps_aggregate "$task_steps_aggregate" \
+  --argjson anomalies "$anomalies" \
+  --argjson full_success "$full_success" \
+  --argjson observability "$observability" \
+  '{
+    run_id: $run_id,
+    plugin_version: $plugin_version,
+    mode: $mode,
+    status: $status,
+    bucket: $bucket,
+    run_steps: $run_steps,
+    task_steps_aggregate: $task_steps_aggregate,
+    anomalies: $anomalies,
+    full_success: $full_success,
+    observability: $observability
+  }')
+
+if [[ "$log_history" == "true" ]]; then
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  history_line=$(printf '%s' "$result" | jq -c --arg ts "$ts" '. + {ts: $ts}')
+  history_file="${CLAUDE_PLUGIN_DATA}/scores.jsonl"
+  printf '%s\n' "$history_line" >> "$history_file"
+fi
+
+case "$format" in
+  json)  printf '%s\n' "$result" ;;
+  table) printf '%s\n' "$result" | _render_table ;;
+  *) log_error "invalid format: $format"; exit 1 ;;
+esac

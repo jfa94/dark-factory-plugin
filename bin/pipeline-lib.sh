@@ -216,6 +216,19 @@ log_metric() {
   jq -c "${jq_args[@]}" "$filter" >> "$metrics_file" 2>/dev/null || true
 }
 
+# Emit a structured CI-outcome metric.
+# Usage: emit_ci_metric <kind: task|run> <pr_number> <status: green|red|timeout> [<checks_json>]
+emit_ci_metric() {
+  local kind="$1" pr="$2" status="$3" checks="${4:-[]}"
+  local event
+  case "$kind" in
+    task) event="task.ci" ;;
+    run)  event="run.ci" ;;
+    *) log_error "emit_ci_metric: invalid kind: $kind"; return 1 ;;
+  esac
+  log_metric "$event" "pr_number=$pr" "status=\"$status\"" "checks=$checks"
+}
+
 # --- Safety guards ---
 
 # Refuse a path if it is empty, a known system root, outside CLAUDE_PLUGIN_DATA,
@@ -300,6 +313,16 @@ pipeline_quota_gate() {
   route=$(pipeline-model-router --quota "$quota" --tier "$tier")
   action=$(printf '%s' "$route" | jq -r '.action')
 
+  local util5 util7
+  util5=$(printf '%s' "$quota" | jq -r '.five_hour.utilization // null')
+  util7=$(printf '%s' "$quota" | jq -r '.seven_day.utilization // null')
+  log_metric "quota.check" \
+    "gate=\"$boundary_label\"" \
+    "action=\"$action\"" \
+    "tier=\"$tier\"" \
+    "over_5h=$util5" \
+    "over_7d=$util7"
+
   case "$action" in
     proceed)
       # Reset the stuck-cache counter on any successful proceed.
@@ -330,10 +353,25 @@ pipeline_quota_gate() {
         log_warn "quota gate [$boundary_label]: failed to write pause_minutes for run_id=$run_id"
       fi
 
+      log_metric "quota.wait" \
+        "gate=\"$boundary_label\"" \
+        "tier=\"$tier\"" \
+        "minutes_slept=$slept_min" \
+        "cumulative_pause_minutes=$(( prior + slept_min ))" \
+        "cycle=$((cycles + 1))"
+
       # Re-check after the chunk. If clear, proceed; else yield to orchestrator.
       quota=$(pipeline-quota-check)
       route=$(pipeline-model-router --quota "$quota" --tier "$tier")
       action=$(printf '%s' "$route" | jq -r '.action')
+
+      log_metric "quota.check" \
+        "gate=\"$boundary_label\"" \
+        "action=\"$action\"" \
+        "tier=\"$tier\"" \
+        "over_5h=$(printf '%s' "$quota" | jq -r '.five_hour.utilization // null')" \
+        "over_7d=$(printf '%s' "$quota" | jq -r '.seven_day.utilization // null')" \
+        "phase=\"post-wait\""
       if [[ "$action" == "proceed" ]]; then
         pipeline-state write "$run_id" '.circuit_breaker.quota_wait_cycles' '0' 2>/dev/null \
           || log_warn "quota gate [$boundary_label]: failed to reset quota_wait_cycles"

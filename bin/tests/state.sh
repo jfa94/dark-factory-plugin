@@ -58,6 +58,18 @@ assert_eq "run_id in state" "run-test-001" "$run_id"
 status=$(jq -r '.status' "$CLAUDE_PLUGIN_DATA/runs/run-test-001/state.json")
 assert_eq "status is running" "running" "$status"
 
+version=$(jq -r '.version // empty' "$CLAUDE_PLUGIN_DATA/runs/run-test-001/state.json")
+plugin_version=$(jq -r '.version' "$(dirname "$0")/../../.claude-plugin/plugin.json")
+if [[ -z "$version" || "$version" == "null" ]]; then
+  echo "  FAIL: plugin version is empty/null in state.json"
+  fail=$((fail + 1))
+fi
+if [[ "$version" == "unknown" ]]; then
+  echo "  FAIL: plugin version stamped as \"unknown\" (manifest not resolved)"
+  fail=$((fail + 1))
+fi
+assert_eq "plugin version matches plugin.json" "$plugin_version" "$version"
+
 mode=$(jq -r '.mode' "$CLAUDE_PLUGIN_DATA/runs/run-test-001/state.json")
 assert_eq "mode is prd" "prd" "$mode"
 

@@ -1,0 +1,8 @@
+{
+  "task_id": "proxy-001",
+  "withheld_criteria": [
+    "readUserRole returns null when the cookie contains a malformed / unparseable JWT (no throw)"
+  ],
+  "total_criteria": 6,
+  "withheld_count": 1
+}

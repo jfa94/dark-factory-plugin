@@ -1,0 +1,387 @@
+{
+  "run_id": "run-20260420-141621",
+  "status": "interrupted",
+  "mode": "prd",
+  "started_at": "2026-04-20T14:16:21Z",
+  "updated_at": "2026-04-21T05:49:15Z",
+  "ended_at": "2026-04-21T05:49:15Z",
+  "input": {
+    "issue_numbers": [],
+    "resumed_from": null
+  },
+  "spec": {
+    "status": "pending",
+    "path": "/FIXTURE/outsidey/.state/run-20260420-141621",
+    "review_iterations": 0,
+    "review_score": null,
+    "handoff_branch": "spec-handoff/run-20260420-141621",
+    "handoff_ref": "46bc7a4171d78443980f2623a794698275557be0",
+    "committed": true
+  },
+  "tasks": {
+    "rbac-001": {
+      "status": "done",
+      "depends_on": [],
+      "files": [
+        "supabase/migrations/20260420141700_rbac_roles_and_hook.sql"
+      ],
+      "risk_tier": "routine",
+      "started_at": "2026-04-20T19:14:36Z",
+      "ended_at": "2026-04-20T19:43:04Z",
+      "worktree": "/FIXTURE/outsidey/.worktrees/rbac-001",
+      "quality_gate": {
+        "checks": [
+          {"command": "lint", "status": "passed"},
+          {"command": "typecheck", "status": "passed"},
+          {"command": "test", "status": "passed"}
+        ]
+      }
+    },
+    "rbac-002": {
+      "status": "done",
+      "depends_on": [
+        "rbac-001"
+      ],
+      "files": [
+        "supabase/migrations/20260420141700_rbac_roles_and_hook.sql"
+      ],
+      "ended_at": "2026-04-20T19:44:02Z"
+    },
+    "rbac-003": {
+      "status": "done",
+      "depends_on": [
+        "rbac-002"
+      ],
+      "files": [
+        "supabase/migrations/20260420141701_seed_first_admin.sql",
+        "supabase/config.toml"
+      ],
+      "started_at": "2026-04-20T20:47:18Z",
+      "ended_at": "2026-04-20T20:58:12Z"
+    },
+    "proxy-001": {
+      "status": "done",
+      "depends_on": [],
+      "files": [
+        "utils/jwt.ts",
+        "utils/jwt.test.ts",
+        "package.json"
+      ],
+      "risk_tier": "routine",
+      "started_at": "2026-04-20T19:14:36Z",
+      "ended_at": "2026-04-20T19:39:50Z"
+    },
+    "proxy-002": {
+      "status": "done",
+      "depends_on": [
+        "proxy-001"
+      ],
+      "files": [
+        "proxy.ts"
+      ],
+      "started_at": "2026-04-20T19:44:02Z",
+      "ended_at": "2026-04-20T20:29:01Z"
+    },
+    "shell-001": {
+      "status": "done",
+      "depends_on": [
+        "proxy-001"
+      ],
+      "files": [
+        "app/actions/admin-auth.ts",
+        "app/actions/admin-auth.test.ts"
+      ],
+      "started_at": "2026-04-20T20:30:43Z",
+      "ended_at": "2026-04-20T20:46:12Z"
+    },
+    "shell-002": {
+      "status": "done",
+      "depends_on": [
+        "shell-001"
+      ],
+      "files": [
+        "app/actions/admin-counts.ts",
+        "app/actions/admin-counts.test.ts"
+      ],
+      "started_at": "2026-04-20T20:47:18Z",
+      "ended_at": "2026-04-20T20:58:12Z"
+    },
+    "shell-003": {
+      "status": "interrupted",
+      "depends_on": [
+        "shell-002"
+      ],
+      "files": [
+        "app/(admin)/admin/layout.tsx",
+        "app/(admin)/admin/page.tsx"
+      ],
+      "started_at": "2026-04-20T21:19:40Z",
+      "ended_at": "2026-04-21T05:49:15Z"
+    },
+    "waitlist-001": {
+      "status": "done",
+      "depends_on": [
+        "rbac-001"
+      ],
+      "files": [
+        "supabase/migrations/20260420141800_admin_waitlist_view.sql"
+      ],
+      "started_at": "2026-04-20T19:44:02Z",
+      "ended_at": "2026-04-20T20:28:58Z"
+    },
+    "waitlist-002": {
+      "status": "done",
+      "depends_on": [
+        "shell-001",
+        "waitlist-001"
+      ],
+      "files": [
+        "app/actions/admin-waitlist.ts",
+        "app/actions/admin-waitlist.test.ts"
+      ],
+      "started_at": "2026-04-20T20:47:18Z",
+      "ended_at": "2026-04-20T20:58:12Z"
+    },
+    "waitlist-003": {
+      "status": "done",
+      "depends_on": [],
+      "files": [
+        "components/admin/WaitlistFilters.tsx",
+        "components/admin/WaitlistFilters.test.tsx"
+      ],
+      "risk_tier": "routine",
+      "started_at": "2026-04-20T19:14:36Z",
+      "ended_at": "2026-04-20T19:43:04Z"
+    },
+    "waitlist-004": {
+      "status": "interrupted",
+      "depends_on": [
+        "waitlist-002",
+        "waitlist-003"
+      ],
+      "files": [
+        "components/admin/WaitlistTable.tsx",
+        "app/(admin)/admin/waitlist/page.tsx"
+      ],
+      "started_at": "2026-04-20T21:19:40Z",
+      "ended_at": "2026-04-21T05:49:15Z"
+    },
+    "quiz-001": {
+      "status": "done",
+      "depends_on": [
+        "shell-001"
+      ],
+      "files": [
+        "app/actions/admin-quiz.ts",
+        "app/actions/admin-quiz.test.ts"
+      ],
+      "started_at": "2026-04-20T20:58:29Z",
+      "ended_at": "2026-04-20T21:18:10Z"
+    },
+    "quiz-002": {
+      "status": "interrupted",
+      "depends_on": [
+        "quiz-001"
+      ],
+      "files": [
+        "app/actions/admin-quiz.ts",
+        "app/actions/admin-quiz-catalog.ts",
+        "app/actions/admin-quiz-parse.test.ts"
+      ],
+      "started_at": "2026-04-20T21:19:40Z",
+      "ended_at": "2026-04-21T05:49:15Z"
+    },
+    "quiz-003": {
+      "status": "pending",
+      "depends_on": [
+        "quiz-002"
+      ],
+      "files": [
+        "components/admin/QuizTable.tsx",
+        "components/admin/QuizAnswersModal.tsx",
+        "app/(admin)/admin/quiz/page.tsx"
+      ]
+    },
+    "edge-001": {
+      "status": "done",
+      "depends_on": [],
+      "files": [
+        "supabase/functions/send-survey-emails/eligibility.ts",
+        "supabase/functions/send-survey-emails/eligibility.test.ts"
+      ],
+      "started_at": "2026-04-20T19:30:36Z",
+      "ended_at": "2026-04-20T19:43:04Z"
+    },
+    "edge-002": {
+      "status": "done",
+      "depends_on": [
+        "edge-001"
+      ],
+      "files": [
+        "supabase/functions/send-survey-emails/index.ts",
+        "supabase/functions/send-survey-emails/index.test.ts"
+      ],
+      "started_at": "2026-04-20T20:30:43Z",
+      "ended_at": "2026-04-20T20:46:12Z"
+    },
+    "audit-001": {
+      "status": "done",
+      "depends_on": [
+        "rbac-001"
+      ],
+      "files": [
+        "supabase/migrations/20260420141900_admin_audit_log.sql"
+      ],
+      "started_at": "2026-04-20T19:44:02Z",
+      "ended_at": "2026-04-20T20:29:01Z"
+    },
+    "send-001": {
+      "status": "done",
+      "depends_on": [
+        "shell-001",
+        "edge-002",
+        "audit-001"
+      ],
+      "files": [
+        "app/actions/send-survey-emails.ts",
+        "app/actions/send-survey-emails.test.ts"
+      ],
+      "started_at": "2026-04-20T20:58:29Z",
+      "ended_at": "2026-04-20T21:18:14Z"
+    },
+    "send-002": {
+      "status": "pending",
+      "depends_on": [
+        "waitlist-004"
+      ],
+      "files": [
+        "components/admin/WaitlistTable.tsx",
+        "components/admin/WaitlistTable.test.tsx"
+      ]
+    },
+    "send-003": {
+      "status": "pending",
+      "depends_on": [
+        "send-001",
+        "send-002"
+      ],
+      "files": [
+        "components/admin/SendSurveyPanel.tsx",
+        "components/admin/SendPreviewModal.tsx",
+        "components/admin/SendSurveyPanel.test.tsx"
+      ]
+    }
+  },
+  "circuit_breaker": {
+    "tasks_completed": 15,
+    "consecutive_failures": 0,
+    "runtime_minutes": 0,
+    "pause_minutes": 0,
+    "quota_wait_cycles": 0
+  },
+  "cost": {
+    "total_tokens": 0,
+    "estimated_usd": 0,
+    "by_model": {}
+  },
+  "issue": 82,
+  "orchestrator": {
+    "worktree": "/FIXTURE/outsidey/.claude/worktrees/orchestrator-run-20260420-141621",
+    "project_root": "/FIXTURE/outsidey"
+  },
+  "execution_order": [
+    {
+      "task_id": "rbac-001",
+      "parallel_group": 0
+    },
+    {
+      "task_id": "proxy-001",
+      "parallel_group": 0
+    },
+    {
+      "task_id": "waitlist-003",
+      "parallel_group": 0
+    },
+    {
+      "task_id": "edge-001",
+      "parallel_group": 0
+    },
+    {
+      "task_id": "rbac-002",
+      "parallel_group": 1
+    },
+    {
+      "task_id": "waitlist-001",
+      "parallel_group": 1
+    },
+    {
+      "task_id": "audit-001",
+      "parallel_group": 1
+    },
+    {
+      "task_id": "proxy-002",
+      "parallel_group": 1
+    },
+    {
+      "task_id": "shell-001",
+      "parallel_group": 1
+    },
+    {
+      "task_id": "edge-002",
+      "parallel_group": 1
+    },
+    {
+      "task_id": "rbac-003",
+      "parallel_group": 2
+    },
+    {
+      "task_id": "shell-002",
+      "parallel_group": 2
+    },
+    {
+      "task_id": "waitlist-002",
+      "parallel_group": 2
+    },
+    {
+      "task_id": "quiz-001",
+      "parallel_group": 2
+    },
+    {
+      "task_id": "send-001",
+      "parallel_group": 2
+    },
+    {
+      "task_id": "shell-003",
+      "parallel_group": 3
+    },
+    {
+      "task_id": "waitlist-004",
+      "parallel_group": 3
+    },
+    {
+      "task_id": "quiz-002",
+      "parallel_group": 3
+    },
+    {
+      "task_id": "send-002",
+      "parallel_group": 4
+    },
+    {
+      "task_id": "quiz-003",
+      "parallel_group": 4
+    },
+    {
+      "task_id": "send-003",
+      "parallel_group": 5
+    }
+  ],
+  "tasks_rbac001_worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-a981d53d",
+  "tasks_proxy001_worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-aa89e6e7",
+  "tasks_waitlist003_worktree": "/FIXTURE/outsidey/.claude/worktrees/agent-a438c6b9",
+  "tasks_rbac001_holdout": "pass",
+  "tasks_proxy001_holdout": "pass",
+  "tasks_waitlist003_holdout_attempts": 1,
+  "tasks_waitlist003_holdout_revealed": true,
+  "resume_point": "shell-003",
+  "version": "0.3.2"
+}

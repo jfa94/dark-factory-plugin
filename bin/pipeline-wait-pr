@@ -277,6 +277,7 @@ while true; do
     log_error "timeout after ${timeout_minutes} minutes waiting for PR #${pr}"
     jq -n --arg pr "$pr" --argjson timeout "$timeout_minutes" \
       '{status: "timeout", pr: $pr, timeout_minutes: $timeout}'
+    emit_ci_metric task "$pr" "timeout" '[]'
     exit 1
   fi
 
@@ -296,6 +297,7 @@ while true; do
     log_info "PR #${pr} merged"
     jq -n --arg pr "$pr" --arg merged_at "$merged_at" \
       '{status: "merged", pr: $pr, merged_at: $merged_at}'
+    emit_ci_metric task "$pr" "green" "${checks_data:-[]}"
     exit 0
   fi
 
@@ -328,12 +330,14 @@ while true; do
     if [[ "$rebase_attempted" == "true" ]]; then
       log_error "PR #${pr} has unresolvable merge conflict"
       jq -n --arg pr "$pr" '{status: "conflict", pr: $pr}'
+      emit_ci_metric task "$pr" "red" '[]'
       exit 4
     fi
 
     rebase_attempted=true
     if ! _attempt_rebase "$pr_data"; then
       log_error "PR #${pr} rebase failed — conflict escalated"
+      emit_ci_metric task "$pr" "red" '[]'
       exit 4
     fi
 
@@ -358,6 +362,7 @@ while true; do
         --arg pr "$pr" \
         --arg failed "$failed_names" \
         '{status: "ci_failed", pr: $pr, failed_checks: $failed}'
+      emit_ci_metric task "$pr" "red" "$checks_data"
       exit 3
     fi
 

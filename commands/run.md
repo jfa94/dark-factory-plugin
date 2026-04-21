@@ -192,6 +192,16 @@ S2. Spawn spec-generator agent with PRD body
     → spec-generator runs with isolation: worktree in an ephemeral worktree.
     → spec-generator calls pipeline-validate-spec internally
     → spec-generator calls spec-reviewer (bundled) and retries up to 5x on validation failure
+    → After spec-reviewer completes, persist the review score to state so the
+      scorer's R3 step (spec_reviewer_approved) can evaluate it:
+      ```bash
+      if [[ -f "$spec_reviewer_output" ]]; then
+        review_score=$(jq -r '.score // empty' "$spec_reviewer_output")
+        if [[ -n "$review_score" ]]; then
+          pipeline-state write "$run_id" '.spec.review_score' "$review_score"
+        fi
+      fi
+      ```
     → As its final step spec-generator completes the "Handoff Protocol" described in
       agents/spec-generator.md: it commits spec.md + tasks.json on a
       `spec-handoff/<run_id>` branch and writes the branch name, ref sha, and spec
@@ -328,7 +338,11 @@ For each task `$t` in the current parallel group, walk these seven steps in orde
    - **Human gate (pre-execute):** `pipeline-human-gate $run_id pre-execute` — if exit 42, pause and surface the comment. Exit 0 proceeds.
    - `pipeline-state task-status $run_id $t executing`
    - Spawn `task-executor` agent with the built prompt and `isolation: worktree`.
-   - On return, record the worktree path: `pipeline-state write $run_id ".tasks.$t.worktree" "$worktree_path"`.
+   - On return, record the worktree path. **Mandatory:** every task that enters
+     the executing state must have `.tasks.$t.worktree` written. The scorer uses
+     this field to distinguish tasks that spawned successfully from those that
+     never ran.
+     `pipeline-state write $run_id ".tasks.$t.worktree" "$worktree_path"`
    - If the agent failed hard (Agent tool returned non-success):
      - `pipeline-state task-status $run_id $t failed`
      - Jump to step 7 (Finalize) for this task.
@@ -411,10 +425,25 @@ For each task `$t` in the current parallel group, walk these seven steps in orde
 4. **Spawn Reviewers**
    - `detect=$(pipeline-detect-reviewer --base staging)` — discover the reviewer
      toolchain (`{reviewer, command}`).
+   - Emit a review-provider metric so the scorer can report which reviewer ran:
+     ```bash
+     reviewer_name=$(printf '%s' "$detect" | jq -r '.reviewer')
+     log_metric "task.review.provider" \
+       "task_id=\"$t\"" \
+       "reviewer=\"$reviewer_name\"" \
+       "reason=\"detected\""
+     ```
    - If `$(printf '%s' "$detect" | jq -r '.reviewer') == "codex"`:
      - Run `$(printf '%s' "$detect" | jq -r '.command') --task-id $t --spec-dir $spec_dir 2>codex.err >codex.out`
-     - If non-zero exit: retry once. If still non-zero, log warning and fall
-       through to Claude `task-reviewer` (spawn via Agent below).
+     - If non-zero exit: retry once. If still non-zero, log warning, emit a
+       fallback metric, and fall through to Claude `task-reviewer` (spawn via
+       Agent below):
+       ```bash
+       log_metric "task.review.provider" \
+         "task_id=\"$t\"" \
+         "reviewer=\"claude\"" \
+         "reason=\"fallback\""
+       ```
      - On success: `pipeline-parse-review --reviewer codex <codex.out` → verdict JSON.
      - Do NOT spawn `task-reviewer` (Codex replaces it).
    - Else: spawn `task-reviewer` via `Agent({subagent_type: "task-reviewer", ...})`.
@@ -488,6 +517,14 @@ Agent({
 })
 ```
 
+Record that scribe finished so the post-run scorer can detect that step 7 (docs update) actually ran.
+
+```bash
+( source "$(dirname "$(which pipeline-state)")/pipeline-lib.sh"
+  log_metric "agent.scribe.end" "status=\"completed\""
+)
+```
+
 Scribe reads `<!-- last-documented: <hash> -->` from the first line of `docs/README.md`, diffs against HEAD, and updates only affected doc sections. If scribe commits changes, those commits land on the working branch before cleanup. If scribe fails or finds nothing to update, the pipeline still completes — docs update is best-effort, never a blocker.
 
 ### Final staging → develop PR
@@ -505,6 +542,17 @@ pipeline-state write $run_id ".final_pr_number" "$final_pr_number"
 CI runs the full-codebase quality gate on this PR (the workflow detects `base_ref == develop` and runs full mutation testing instead of incremental). Auto-merge is already enabled by the `auto-merge` job in `.github/workflows/quality-gate.yml` — no extra `gh pr merge --auto` call is needed.
 
 If `humanReviewLevel >= 2`, skip the rollup PR creation and post a `pipeline-gh-comment <issue> final-rollup-pending` instead; a human opens the PR after review.
+
+Emit run.ci so the post-run scorer can measure rollup CI outcome.
+
+```bash
+# Wait briefly for CI to report; run.ci metric lets the scorer detect rollup CI outcome without a live gh call.
+ci_state=$(gh pr view "$final_pr_number" --json statusCheckRollup -q '.statusCheckRollup | map(.conclusion) | if length == 0 then "timeout" elif all(. == "SUCCESS") then "green" else "red" end' 2>/dev/null || echo "timeout")
+ci_checks=$(gh pr view "$final_pr_number" --json statusCheckRollup -q '.statusCheckRollup' 2>/dev/null || echo '[]')
+( source "$(dirname "$(which pipeline-state)")/pipeline-lib.sh"
+  emit_ci_metric run "$final_pr_number" "$ci_state" "$ci_checks"
+)
+```
 
 ```
 pipeline-cleanup $run_id --close-issues --delete-branches \

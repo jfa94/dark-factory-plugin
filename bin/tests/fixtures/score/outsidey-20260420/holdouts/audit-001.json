@@ -1,0 +1,8 @@
+{
+  "task_id": "audit-001",
+  "withheld_criteria": [
+    "RLS enabled; authenticated/anon/public cannot SELECT or INSERT"
+  ],
+  "total_criteria": 5,
+  "withheld_count": 1
+}

@@ -1,0 +1,8 @@
+{
+  "task_id": "waitlist-001",
+  "withheld_criteria": [
+    "has_quiz_result is true iff a quiz_results row has the same email"
+  ],
+  "total_criteria": 4,
+  "withheld_count": 1
+}

@@ -79,6 +79,7 @@ jq -n \
   }'
 
 if [[ "$tripped" == "true" ]]; then
+  log_metric "circuit_breaker" "consecutive_failures=$consecutive_failures" "runtime_minutes=$runtime_minutes" "reason=\"$reason\""
   log_error "circuit breaker tripped: $reason"
   exit 1
 fi

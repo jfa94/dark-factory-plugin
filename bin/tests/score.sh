@@ -29,16 +29,17 @@ metrics_file="$run_dir/metrics.jsonl"
   emit_ci_metric "task" "42" "green" '["lint","test"]'
 )
 
-count=$(wc -l < "$metrics_file" | tr -d ' ')
+count=$(grep -c '"event":"task.ci"' "$metrics_file" || echo 0)
 assert_eq "task.ci metric written" "1" "$count"
 
-event=$(jq -r '.event' "$metrics_file")
+ci_line=$(grep '"event":"task.ci"' "$metrics_file")
+event=$(printf '%s' "$ci_line" | jq -r '.event')
 assert_eq "event name is task.ci" "task.ci" "$event"
 
-status=$(jq -r '.status' "$metrics_file")
+status=$(printf '%s' "$ci_line" | jq -r '.status')
 assert_eq "status field captured" "green" "$status"
 
-pr_num=$(jq -r '.pr_number' "$metrics_file")
+pr_num=$(printf '%s' "$ci_line" | jq -r '.pr_number')
 assert_eq "pr_number captured" "42" "$pr_num"
 
 echo "=== pipeline-score skeleton ==="

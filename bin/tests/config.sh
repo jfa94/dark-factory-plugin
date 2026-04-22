@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # config.sh — plugin.json userConfig schema, commands/configure.md,
 # templates (settings.autonomous, stryker, dep-cruiser, package.scaffold),
-# commands/run.md materialization, .mcp.json, pipeline-metrics server.
+# commands/run.md materialization, .mcp.json.
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -637,103 +637,6 @@ echo "=== .mcp.json ==="
 MCP_JSON="$PLUGIN_ROOT/.mcp.json"
 assert_file_exists ".mcp.json exists" "$MCP_JSON"
 assert_valid_json ".mcp.json is valid JSON" "$MCP_JSON"
-
-cmd=$(jq -r '.mcpServers["pipeline-metrics"].command' "$MCP_JSON")
-assert_eq "mcp server command = node" "node" "$cmd"
-
-# Args must resolve via ${CLAUDE_PLUGIN_ROOT}; relative paths break when
-# Claude Code launches the server from an arbitrary CWD.
-args_arg0=$(jq -r '.mcpServers["pipeline-metrics"].args[0]' "$MCP_JSON")
-if printf '%s' "$args_arg0" | grep -q 'CLAUDE_PLUGIN_ROOT'; then
-  echo "  PASS: args[0] uses \${CLAUDE_PLUGIN_ROOT}"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: args[0] does not reference \${CLAUDE_PLUGIN_ROOT} (got '$args_arg0')"
-  fail=$((fail + 1))
-fi
-
-# `disabled` is a VS Code MCP convention not honoured by the plugin schema.
-# Its presence on the default install was the original bug.
-if jq -e '.mcpServers["pipeline-metrics"] | has("disabled")' "$MCP_JSON" >/dev/null; then
-  echo "  FAIL: .mcp.json still has 'disabled' key (unsupported by plugin schema)"
-  fail=$((fail + 1))
-else
-  echo "  PASS: .mcp.json has no 'disabled' key"
-  pass=$((pass + 1))
-fi
-
-db_env=$(jq -r '.mcpServers["pipeline-metrics"].env.METRICS_DB' "$MCP_JSON")
-if printf '%s' "$db_env" | grep -q 'CLAUDE_PLUGIN_DATA'; then
-  echo "  PASS: METRICS_DB uses CLAUDE_PLUGIN_DATA"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: METRICS_DB does not reference CLAUDE_PLUGIN_DATA"
-  fail=$((fail + 1))
-fi
-
-if printf '%s' "$db_env" | grep -q '\.jsonl$'; then
-  echo "  PASS: METRICS_DB points at a .jsonl file"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: METRICS_DB should end in .jsonl (got '$db_env')"
-  fail=$((fail + 1))
-fi
-
-# ============================================================
-echo ""
-echo "=== servers/pipeline-metrics/ layout ==="
-
-# Server is zero-dependency: package.json must NOT exist, otherwise
-# Claude Code / npm may try to resolve phantom runtime deps.
-STALE_PKG="$PLUGIN_ROOT/servers/pipeline-metrics/package.json"
-if [[ -f "$STALE_PKG" ]]; then
-  echo "  FAIL: stale package.json present at $STALE_PKG (server is zero-dep)"
-  fail=$((fail + 1))
-else
-  echo "  PASS: no package.json in servers/pipeline-metrics (zero-dep server)"
-  pass=$((pass + 1))
-fi
-
-# ============================================================
-echo ""
-echo "=== servers/pipeline-metrics/index.js ==="
-
-INDEX="$PLUGIN_ROOT/servers/pipeline-metrics/index.js"
-assert_file_exists "index.js exists" "$INDEX"
-
-# Syntax check (no deps required for --check)
-if node --check "$INDEX" 2>/dev/null; then
-  echo "  PASS: index.js syntax check passes"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: index.js syntax check failed"
-  fail=$((fail + 1))
-fi
-
-# 4 tool names present
-for tool in metrics_record metrics_query metrics_summary metrics_export; do
-  assert_contains "tool $tool defined" "$tool" "$INDEX"
-done
-
-# 7 event types defined (model_switch removed in 0.3.0 with Ollama routing)
-for event in task_start task_end review_round quality_gate circuit_breaker run_start run_end; do
-  assert_contains "event type $event defined" "$event" "$INDEX"
-done
-
-# mkdirSync for store parent directory
-assert_contains "mkdirSync for store dir" "mkdirSync" "$INDEX"
-
-# Zero-dep contract: no external npm imports allowed.
-if grep -Eq "from \"(better-sqlite3|@modelcontextprotocol)" "$INDEX"; then
-  echo "  FAIL: index.js imports an external runtime dep (must be zero-dep)"
-  fail=$((fail + 1))
-else
-  echo "  PASS: index.js imports only node: built-ins"
-  pass=$((pass + 1))
-fi
-
-# pagination offset support
-assert_contains "index.js supports offset parameter" "offset" "$INDEX"
 
 # ============================================================
 echo ""

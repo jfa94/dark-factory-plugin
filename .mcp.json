@@ -1,12 +1,4 @@
 {
   "$schema": "https://code.claude.com/schemas/mcp.json",
-  "mcpServers": {
-    "pipeline-metrics": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/pipeline-metrics/index.js"],
-      "env": {
-        "METRICS_DB": "${CLAUDE_PLUGIN_DATA}/metrics.jsonl"
-      }
-    }
-  }
+  "mcpServers": {}
 }

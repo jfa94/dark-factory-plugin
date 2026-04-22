@@ -305,40 +305,6 @@ assert_contains "rollup PR number captured in state" ".rollup.pr_number" "$RUN_C
 
 # ============================================================
 echo ""
-echo "=== pipeline-metrics MCP server ==="
-
-METRICS="$PLUGIN_ROOT/servers/pipeline-metrics/index.js"
-assert_file_exists "metrics index.js exists" "$METRICS"
-
-# Removed: model_switch is no longer a valid event type (Ollama routing
-# was deleted in 0.3.0; the dispatcher should reject the legacy value).
-if grep -q '"model_switch"' "$METRICS"; then
-  echo "  FAIL: metrics still references removed event type 'model_switch'"
-  fail=$((fail + 1))
-else
-  echo "  PASS: metrics no longer accepts removed event type 'model_switch'"
-  pass=$((pass + 1))
-fi
-
-assert_contains "HandlerInputError class declared" "class HandlerInputError" "$METRICS"
-assert_contains "_requireString validator declared" "function _requireString" "$METRICS"
-assert_contains "_parseStoredData helper declared"  "function _parseStoredData" "$METRICS"
-assert_contains "dispatcher try/catch wraps handlers" "if (err instanceof HandlerInputError)" "$METRICS"
-assert_contains "input_validation kind surfaced"    "kind: \"input_validation\"" "$METRICS"
-assert_contains "internal_error kind surfaced"      "kind: \"internal_error\""   "$METRICS"
-assert_contains "isError propagated to MCP response" "isError: true,"            "$METRICS"
-
-# Node syntax check — server is zero-dep, so --check is sufficient.
-if node --check "$METRICS" >/dev/null 2>&1; then
-  echo "  PASS: metrics index.js parses (node --check)"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: metrics index.js failed node --check"
-  fail=$((fail + 1))
-fi
-
-# ============================================================
-echo ""
 echo "=== Results ==="
 echo "  Passed: $pass"
 echo "  Failed: $fail"

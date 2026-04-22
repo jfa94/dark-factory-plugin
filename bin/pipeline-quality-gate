@@ -48,7 +48,7 @@ pkg_mgr=$(detect_pkg_manager "$worktree")
 # field yields an empty list, which we then replace with the default.
 commands=$(jq -r '.["dark-factory"].quality // empty | .[]?' package.json 2>/dev/null || true)
 if [[ -z "$commands" ]]; then
-  commands=$'lint\ntypecheck\ntest'
+  commands=$'lint\ntypecheck\ntest:coverage'
 fi
 
 run_dir="${CLAUDE_PLUGIN_DATA}/runs/${run_id}"

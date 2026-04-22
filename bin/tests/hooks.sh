@@ -430,7 +430,7 @@ cat > "$qg_proj1/package.json" << 'PJSON'
   "scripts": {
     "lint": "true",
     "typecheck": "true",
-    "test": "true"
+    "test:coverage": "true"
   }
 }
 PJSON
@@ -453,7 +453,7 @@ cat > "$qg_proj2/package.json" << 'PJSON'
   "scripts": {
     "lint": "false",
     "typecheck": "true",
-    "test": "true"
+    "test:coverage": "true"
   }
 }
 PJSON

@@ -22,15 +22,15 @@ In: fix each of the seven items, add a test for each where feasible. Out: MCP se
 
 ## Tasks
 
-| task_id    | Title                                                           |
-| ---------- | --------------------------------------------------------------- |
-| task_13_01 | Emit reasoning trace from `pipeline-classify-risk`              |
-| task_13_02 | Document metrics schema in `servers/pipeline-metrics/README.md` |
-| task_13_03 | Paginate all `gh issue list` / `gh pr list` calls               |
-| task_13_04 | Fsync on state writes                                           |
-| task_13_05 | Coverage gate >= not ==                                         |
-| task_13_06 | Seed holdout test selection from run_id                         |
-| task_13_07 | Deny list entries handle absolute paths                         |
+| task_id    | Title                                                                                                                                                      |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| task_13_01 | Emit reasoning trace from `pipeline-classify-risk`                                                                                                         |
+| task_13_02 | ~~Document metrics schema in `servers/pipeline-metrics/README.md`~~ WontDo — server deleted; metrics path is now `$run_dir/metrics.jsonl` via `log_metric` |
+| task_13_03 | Paginate all `gh issue list` / `gh pr list` calls                                                                                                          |
+| task_13_04 | Fsync on state writes                                                                                                                                      |
+| task_13_05 | Coverage gate >= not ==                                                                                                                                    |
+| task_13_06 | Seed holdout test selection from run_id                                                                                                                    |
+| task_13_07 | Deny list entries handle absolute paths                                                                                                                    |
 
 ## Execution Guidance
 
@@ -103,58 +103,9 @@ Test in `bin/test-phase3.sh`:
 2. Task with `title: "Add SSO login"` → `risk=security`
 3. Task with no signals → `risk=low`, `reasoning=[]`
 
-### task_13_02 — Metrics schema docs
+### task_13_02 — Metrics schema docs ~~WontDo~~
 
-File: `servers/pipeline-metrics/README.md` (NEW)
-
-Write a short README that documents:
-
-- The 4 MCP tools (`metrics_record`, `metrics_query`, `metrics_summary`, `metrics_export`) with input/output shapes
-- The event types the server accepts (run_started, run_completed, task_started, task_completed, agent_spawned, quota_checked, rate_limited, etc.)
-- The SQLite schema (if the server uses SQLite) or the JSON shape of stored records
-- How to enable it (toggle `.mcpServers.pipeline-metrics.disabled` to false in `.mcp.json`) and the prerequisite `npm install`
-
-Also add a JSON schema file at `servers/pipeline-metrics/schema.json` that validates the event payload:
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Dark Factory Metrics Event",
-  "type": "object",
-  "required": ["event_type", "run_id", "timestamp"],
-  "properties": {
-    "event_type": {
-      "enum": [
-        "run_started",
-        "run_completed",
-        "run_failed",
-        "run_interrupted",
-        "task_started",
-        "task_completed",
-        "task_failed",
-        "task_blocked",
-        "agent_spawned",
-        "agent_returned",
-        "quota_checked",
-        "rate_limited",
-        "review_submitted",
-        "review_accepted"
-      ]
-    },
-    "run_id": { "type": "string" },
-    "task_id": { "type": "string" },
-    "timestamp": { "type": "string", "format": "date-time" },
-    "duration_ms": { "type": "number" },
-    "cost_usd": { "type": "number" },
-    "metadata": { "type": "object" }
-  }
-}
-```
-
-Test in `bin/test-phase9.sh`:
-
-- `servers/pipeline-metrics/README.md` exists
-- `servers/pipeline-metrics/schema.json` is valid JSON, has required `event_type` enum with ≥10 entries
+`servers/pipeline-metrics/` deleted. Server was orphaned — event vocabulary and storage path diverged from the real pipeline with zero wiring. Metrics path consolidated to `$run_dir/metrics.jsonl` via `log_metric` in `bin/pipeline-lib.sh`. Events `run.start` and `circuit_breaker` backfilled to per-run log so no observability is lost. See `docs/architecture/components.md` for current event vocabulary.
 
 ### task_13_03 — gh pagination
 
@@ -340,5 +291,5 @@ Test in `bin/test-phase9.sh`:
 1. `bash bin/test-phase1.sh` through `bin/test-phase9.sh` — all existing + new cleanup tests pass
 2. Grep `bin/` for `gh issue list` without `--limit` — zero matches
 3. Grep `bin/` for `RANDOM_SEED=42` — zero matches
-4. `servers/pipeline-metrics/README.md` and `schema.json` exist
+4. ~~`servers/pipeline-metrics/README.md` and `schema.json` exist~~ (task_13_02 WontDo — server deleted)
 5. `bin/pipeline-classify-risk` output contains a `reasoning` array

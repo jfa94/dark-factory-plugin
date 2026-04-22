@@ -401,28 +401,9 @@ All scripts live in `bin/`. They source `pipeline-lib.sh` for shared functions.
 
 ---
 
-## MCP Servers
+## Metrics
 
-### pipeline-metrics
-
-Provides tools for recording and querying pipeline execution metrics.
-
-**Configuration:** `.mcp.json`
-
-**Storage:** JSONL append-only log at `${CLAUDE_PLUGIN_DATA}/metrics.jsonl`
-
-**Tools:**
-
-| Tool              | Description                 |
-| ----------------- | --------------------------- |
-| `metrics_record`  | Record a pipeline event     |
-| `metrics_query`   | Query events with filters   |
-| `metrics_summary` | Summarize metrics for a run |
-| `metrics_export`  | Export all metrics as JSON  |
-
-**Event types:** `task_start`, `task_end`, `review_round`, `quality_gate`, `circuit_breaker`, `run_start`, `run_end`
-
-**Runtime:** zero-dependency. Requires Node 18+. No `npm install` step; server ships as a single self-contained file and is always available once the plugin is installed.
+Pipeline execution metrics are written to `$run_dir/metrics.jsonl` (one JSONL line per event) by the `log_metric` helper in `bin/pipeline-lib.sh`. Every event carries `ts`, `run_id`, and `event` fields plus optional key-value pairs. Events of note: `run.start`, `run.summary`, `task.start`, `task.end`, `task.executor_spawned`, `task.gate.quality`, `task.gate.coverage`, `task.coverage.snapshot`, `task.review.provider`, `task.pr_created`, `pipeline.step.begin/end`, `quota.check`, `quota.wait`, `circuit_breaker`. The scorer (`bin/pipeline-score`) reads this file to derive run quality scores.
 
 ---
 

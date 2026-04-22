@@ -171,6 +171,22 @@ _stage_preflight() {
   _task_write stage '"preflight_done"'
   pipeline-state task-status "$run_id" "$task_id" executing >/dev/null || true
 
+  local cov_base snapshotted="false"
+  cov_base=$(pipeline-state read "$run_id" '.orchestrator.worktree // empty' 2>/dev/null || true)
+  if [[ -n "$cov_base" && -d "$cov_base" ]]; then
+    local cov_before="$run_dir/.state/$run_id/$task_id.coverage-before.json"
+    mkdir -p "$(dirname "$cov_before")"
+    local _pkg_mgr
+    _pkg_mgr=$(detect_pkg_manager "$cov_base" 2>/dev/null || echo "npm")
+    if ( cd "$cov_base" && "$_pkg_mgr" run -s test:coverage >/dev/null 2>&1 ); then
+      if [[ -f "$cov_base/coverage/coverage-summary.json" ]]; then
+        cp "$cov_base/coverage/coverage-summary.json" "$cov_before"
+        snapshotted="true"
+      fi
+    fi
+  fi
+  log_metric "task.coverage.snapshot" "task_id=\"$task_id\"" "snapshotted=$snapshotted"
+
   local model max_turns agents_json
   model=$(printf '%s' "$classify" | jq -r '.model // "sonnet"')
   max_turns=$(printf '%s' "$classify" | jq -r '.maxTurns // .max_turns // 60')

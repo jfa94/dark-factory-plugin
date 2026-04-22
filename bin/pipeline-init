@@ -132,6 +132,7 @@ fi
 rm -f "$current_link"
 ln -s "$run_dir" "$current_link"
 
+log_metric "run.start" "mode=\"$mode\"" "issue=\"$issue\""
 log_info "initialized run $run_id (mode=$mode, issue=$issue)"
 
 jq -n \

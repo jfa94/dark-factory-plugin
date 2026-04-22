@@ -60,18 +60,20 @@ fi
 # 4. Required agents — bundled by plugin (spec-reviewer, code-reviewer, task-reviewer, etc.)
 # No user-side check needed: plugin install guarantees presence.
 
-# 5. Required skills — check project-local then home-global
+# 5. Required skills — check project-local, home-global, and plugin-bundled
 _found_skill=""
-if [[ -d ".claude/skills/prd-to-spec" ]]; then
-  _found_skill=".claude/skills/prd-to-spec/"
-elif [[ -d "$HOME/.claude/skills/prd-to-spec" ]]; then
-  _found_skill="$HOME/.claude/skills/prd-to-spec/"
-fi
+_plugin_root="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
+for loc in ".claude/skills/prd-to-spec" "$HOME/.claude/skills/prd-to-spec" "$_plugin_root/skills/prd-to-spec"; do
+  if [[ -d "$loc" ]]; then
+    _found_skill="$loc/"
+    break
+  fi
+done
 
 if [[ -n "$_found_skill" ]]; then
   _add_check "skill_prd_to_spec" "pass" "found $_found_skill"
 else
-  _add_check "skill_prd_to_spec" "fail" "missing .claude/skills/prd-to-spec/ (checked project and home)"
+  _add_check "skill_prd_to_spec" "fail" "missing prd-to-spec skill (checked project, home, plugin)"
 fi
 
 # 6. CLAUDE_PLUGIN_DATA writable

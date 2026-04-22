@@ -116,8 +116,8 @@ _run_codex() {
     --output-schema "$schema_file"
     --output-last-message "$out_file")
   [[ -n "$sandbox_flag" ]] && args+=(--sandbox "$sandbox_flag")
-  args+=(-  < "$prompt_file")
-  codex "${args[@]}" >/dev/null 2>&1
+  args+=(-)
+  codex "${args[@]}" < "$prompt_file" >/dev/null 2>&1
 }
 
 codex_ok=false

@@ -168,12 +168,12 @@ eval_R7_scribe_ran() {
 
 eval_R8_rollup_pr_opened() {
   if ! _all_tasks_done; then echo "skipped_na"; return; fi
-  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
   if [[ -n "$pr" ]]; then echo "pass"; else echo "not_performed"; fi
 }
 
 eval_R9_rollup_pr_merged() {
-  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
   if [[ -z "$pr" ]]; then echo "skipped_na"; return; fi
   if [[ "${use_gh:-true}" == "true" ]]; then
     local merged
@@ -193,7 +193,7 @@ eval_R9_rollup_pr_merged() {
 }
 
 eval_R10_rollup_ci_green() {
-  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
   if [[ -z "$pr" ]]; then echo "skipped_na"; return; fi
   local ci_status=""
   if [[ -f "$metrics_file" ]]; then
@@ -297,9 +297,10 @@ eval_T7_holdout_pass() {
   if [[ ! -f "$run_dir/holdouts/$t.json" ]]; then echo "skipped_na"; return; fi
   local s; s=$(printf '%s' "$state" | jq -r --arg t "$t" '.tasks[$t].quality_gates.holdout // empty')
   case "$s" in
-    pass)  echo "pass" ;;
-    fail)  echo "fail" ;;
-    *)     echo "not_performed" ;;
+    pass)    echo "pass" ;;
+    fail)    echo "fail" ;;
+    skipped) echo "skipped_na" ;;
+    *)       echo "not_performed" ;;
   esac
 }
 

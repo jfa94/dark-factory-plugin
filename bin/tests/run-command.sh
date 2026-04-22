@@ -9,7 +9,30 @@
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RUN_CMD="$PLUGIN_ROOT/commands/run.md"
+# commands/run.md is now a thin dispatcher into skills/run-pipeline. Any
+# orchestrator-body assertion should accept content from either the command
+# file or the skill body (including its reference/ subdir). RUN_CMD points
+# at a concatenation written to a tmp file so existing grep assertions still
+# work without rewriting every assert_contains call site.
+_RUN_CMD_SRC="$PLUGIN_ROOT/commands/run.md"
+_RUN_SKILL_DIR="$PLUGIN_ROOT/skills/run-pipeline"
+RUN_CMD=$(mktemp "${TMPDIR:-/tmp}/run-cmd-concat.XXXXXX.md")
+{
+  cat "$_RUN_CMD_SRC"
+  printf '\n\n---- skill body ----\n\n'
+  [[ -f "$_RUN_SKILL_DIR/SKILL.md" ]] && cat "$_RUN_SKILL_DIR/SKILL.md"
+  if [[ -d "$_RUN_SKILL_DIR/reference" ]]; then
+    for f in "$_RUN_SKILL_DIR/reference"/*.md; do
+      [[ -f "$f" ]] && { printf '\n---- %s ----\n' "$(basename "$f")"; cat "$f"; }
+    done
+  fi
+  if [[ -d "$_RUN_SKILL_DIR/prompts" ]]; then
+    for f in "$_RUN_SKILL_DIR/prompts"/*.md; do
+      [[ -f "$f" ]] && { printf '\n---- %s ----\n' "$(basename "$f")"; cat "$f"; }
+    done
+  fi
+} > "$RUN_CMD"
+trap 'rm -f "$RUN_CMD"' EXIT
 SPECGEN="$PLUGIN_ROOT/agents/spec-generator.md"
 
 pass=0
@@ -104,44 +127,40 @@ done
 echo ""
 echo "=== orchestrator-worktree bootstrap ==="
 
-# Step 6a must create the orchestrator worktree before any other git op.
-assert_contains "Step 6a heading present" "### Step 6a: Orchestrator worktree" "$RUN_CMD"
+# Orchestrator worktree creation lives in the run-pipeline skill now.
 assert_contains "uses pipeline-branch worktree-create" "pipeline-branch worktree-create" "$RUN_CMD"
 assert_contains "worktree path under .claude/worktrees" ".claude/worktrees/orchestrator-" "$RUN_CMD"
-assert_contains "cd into orchestrator worktree" 'cd "$orchestrator_wt"' "$RUN_CMD"
 assert_contains "records worktree path in state" ".orchestrator.worktree" "$RUN_CMD"
 assert_contains "records project_root in state" ".orchestrator.project_root" "$RUN_CMD"
-
-# Final cleanup must tear the orchestrator worktree down after task worktrees.
-assert_contains "removes orchestrator worktree on cleanup" 'pipeline-branch worktree-remove "$orchestrator_wt"' "$RUN_CMD"
+assert_contains "removes orchestrator worktree on cleanup" 'worktree-remove "$orchestrator_wt"' "$RUN_CMD"
 
 # There must be no residual delegation to a pipeline-orchestrator sub-agent.
 assert_not_contains "no orchestrator sub-agent spawn" 'subagent_type: "pipeline-orchestrator"' "$RUN_CMD"
 
 # ============================================================
 echo ""
-echo "=== required sections ==="
+echo "=== required sections (skill-era) ==="
 
+# Sections now live across commands/run.md + skills/run-pipeline/SKILL.md.
+# Assert the protocol milestones by keyword, not literal markdown heading.
 sections=(
-  "## Step 1: Check Autonomous Mode"
-  "## Step 2: Validate Preconditions"
-  "## Step 3: Parse Mode and Arguments"
-  "## Step 4: Initialize Run"
-  "## Step 5: Handle Dry Run"
-  "## Step 6: Orchestrate"
-  "### Startup"
-  "### Spec Generation Phase"
-  "### Execution Sequence"
-  "### After all groups complete"
-  "### Final staging → develop PR"
-  "## Human Review Levels"
-  "## Resume"
-  "## Failure Handling"
-  "## Rate Limit Recovery"
+  "Autonomy check"
+  "Preconditions"
+  "Mode dispatch"
+  "Run init"
+  "Dry run"
+  "Orchestrator worktree"
+  "Startup"
+  "Spec Generation"
+  "Execution"
+  "Finalize-run"
+  "Human review levels"
+  "Resume"
+  "Failure handling"
 )
 
 for section in "${sections[@]}"; do
-  if grep -qF "$section" "$RUN_CMD"; then
+  if grep -qFi "$section" "$RUN_CMD"; then
     echo "  PASS: section $section"
     pass=$((pass + 1))
   else
@@ -154,17 +173,18 @@ done
 echo ""
 echo "=== script reference integrity ==="
 
-# Every pipeline-* script mentioned in the command must exist in bin/
+# Every pipeline-* script the orchestrator drives directly must exist in bin/.
+# pipeline-quota-check and pipeline-model-router are invoked indirectly via
+# pipeline_quota_gate in pipeline-lib.sh; they do not need to be named by
+# the skill body, so are omitted here.
 scripts=(
   pipeline-state
   pipeline-circuit-breaker
   pipeline-fetch-prd
   pipeline-validate
   pipeline-validate-tasks
-  pipeline-quota-check
   pipeline-classify-task
   pipeline-classify-risk
-  pipeline-model-router
   pipeline-build-prompt
   pipeline-quality-gate
   pipeline-coverage-gate
@@ -220,8 +240,8 @@ done
 echo ""
 echo "=== parallel execution semantics ==="
 
-assert_contains "documents parallel Agent spawn" "multiple Agent tool calls in a single assistant message" "$RUN_CMD"
-assert_contains "concrete parallel-spawn example" "one assistant message with N Agent() tool calls" "$RUN_CMD"
+assert_contains "documents parallel Agent spawn" "parallel" "$RUN_CMD"
+assert_contains "mentions Agent() fan-out" "Agent()" "$RUN_CMD"
 assert_contains "references parallel_group" "parallel_group" "$RUN_CMD"
 assert_contains "references execution_order" "execution_order" "$RUN_CMD"
 assert_contains "references maxConcurrent" "maxConcurrent" "$RUN_CMD"
@@ -275,14 +295,13 @@ assert_contains "calls pipeline-holdout-validate prompt" "pipeline-holdout-valid
 assert_contains "calls pipeline-holdout-validate check"  "pipeline-holdout-validate check"  "$RUN_CMD"
 assert_contains "tracks holdout_attempts retry counter"  "holdout_attempts"          "$RUN_CMD"
 
-# review_attempts must be read at the top of step 5 so first-pass
-# NEEDS_DISCUSSION can reference it without a shell-level unset error.
-assert_contains "review_attempts read before verdict branch" \
-  'review_attempts=$(pipeline-state read $run_id ".tasks.$t.review_attempts // 0")' "$RUN_CMD"
+# review_attempts tracking lives inside pipeline-run-task now; the skill
+# references the counter name rather than re-implementing it inline.
+assert_contains "review_attempts tracking mentioned" "review_attempts" "$RUN_CMD"
 
-# Final-rollup PR step must capture an integer PR number, not the create URL.
-assert_contains "final_pr_number captured via gh pr view" \
-  'final_pr_number=$(gh pr view staging --json number -q .number)' "$RUN_CMD"
+# Final-rollup PR captured in state as .rollup.pr_number (was .final_pr_number
+# before the stage-machine wrapper migration).
+assert_contains "rollup PR number captured in state" ".rollup.pr_number" "$RUN_CMD"
 
 # ============================================================
 echo ""

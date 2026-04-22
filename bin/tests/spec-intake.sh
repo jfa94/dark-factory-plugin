@@ -381,11 +381,17 @@ echo "$detail" | grep -q "/.claude/skills/prd-to-spec/" && \
   assert_eq "reports home location found" "0" "0" || \
   assert_eq "reports home location found" "contains home path" "$detail"
 
-# Test both absent
+# Test project + home both absent — plugin-bundled skill still found.
+# (Plugin ship path is authoritative since marketplace installs don't copy
+# skills into .claude/skills. See pipeline-validate check 5.)
 rm -rf "$HOME/.claude/skills/prd-to-spec"
 output=$(pipeline-validate 2>/dev/null) || true
 status=$(echo "$output" | jq -r '.checks[] | select(.name=="skill_prd_to_spec") | .status')
-assert_eq "fails when both project and home skill absent" "fail" "$status"
+assert_eq "passes via plugin-bundled skill when project+home absent" "pass" "$status"
+detail=$(echo "$output" | jq -r '.checks[] | select(.name=="skill_prd_to_spec") | .detail')
+echo "$detail" | grep -q "skills/prd-to-spec/" && \
+  assert_eq "reports plugin-bundled location" "0" "0" || \
+  assert_eq "reports plugin-bundled location" "contains plugin path" "$detail"
 export HOME="$REAL_HOME"
 
 echo ""

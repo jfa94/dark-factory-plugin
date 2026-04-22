@@ -208,5 +208,65 @@ assert_eq "finalize-run 2nd: exit 0" "0" "$RC"
 assert_eq "finalize-run: run status=done" "done" \
   "$(pipeline-state read "$RUN_ID" .status 2>/dev/null)"
 
+# --- 13: postreview — real parse-review contract (markdown → .verdict) ----
+# Regression for the .decision/.verdict key mismatch: stub parse-review is
+# removed so the wrapper shells out to the real bin/pipeline-parse-review,
+# which emits {verdict:...} from a markdown review file. The wrapper MUST
+# read .verdict (fallback to .decision for legacy fixtures).
+rm -f "$STUB_DIR/pipeline-parse-review"
+new_run postreview-real-approve
+pipeline-state task-write "$RUN_ID" alpha-001 stage '"postexec_done"' >/dev/null
+rf="$ROOT_TMP/$current-review.md"
+cat > "$rf" <<'MDEOF'
+## Findings
+
+## Acceptance Criteria Check
+
+## Summary
+
+All criteria satisfied.
+
+## Verdict
+
+VERDICT: APPROVE
+CONFIDENCE: HIGH
+BLOCKERS: 0
+ROUND: 1
+MDEOF
+run_wrapper alpha-001 --stage postreview --review-file "$rf"
+assert_eq "postreview real APPROVE: exit 0" "0" "$RC"
+assert_eq "postreview real APPROVE: stage=postreview_done" "postreview_done" "$(stage_of)"
+
+new_run postreview-real-changes
+pipeline-state task-write "$RUN_ID" alpha-001 stage '"postexec_done"' >/dev/null
+rf="$ROOT_TMP/$current-review.md"
+cat > "$rf" <<'MDEOF'
+## Findings
+
+### [BLOCKING] Missing null check
+- **File:** src/a.ts:42
+- **Severity:** major
+- **Category:** correctness
+- **Description:** Null input crashes.
+- **Suggestion:** Add guard.
+
+## Summary
+
+One blocker.
+
+## Verdict
+
+VERDICT: REQUEST_CHANGES
+CONFIDENCE: HIGH
+BLOCKERS: 1
+ROUND: 1
+MDEOF
+run_wrapper alpha-001 --stage postreview --review-file "$rf"
+assert_eq "postreview real REQUEST_CHANGES: exit 10" "10" "$RC"
+assert_eq "postreview real REQUEST_CHANGES: attempts=1" "1" "$(field_of review_attempts)"
+
+# Restore the stub so later tests (if added) still get the cat passthrough.
+write_stub pipeline-parse-review 'cat'
+
 printf '\n=== RESULTS: %d passed, %d failed ===\n' "$passed" "$failed"
 exit $(( failed > 0 ? 1 : 0 ))

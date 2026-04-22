@@ -352,6 +352,7 @@ All scripts live in `bin/`. They source `pipeline-lib.sh` for shared functions.
 | `pipeline-init`     | Create run state tracking files                             |
 | `pipeline-state`    | Read/write task status, dep satisfaction                    |
 | `pipeline-lock`     | Acquire/release directory lock                              |
+| `pipeline-run-task` | Stage-machine wrapper for task/finalize lifecycle           |
 
 ### Input & Discovery
 

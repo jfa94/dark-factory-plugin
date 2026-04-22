@@ -157,6 +157,69 @@ pipeline-lock release <lock-name>
 
 ---
 
+### pipeline-run-task
+
+Stage-machine wrapper that drives a single task (or the run-level finalize step) through the pipeline protocol. Every validation, classification, state-write, quota-gate, quality-gate, coverage-gate, holdout, review dispatch, PR-open, CI-wait, and cleanup step lives inside this wrapper — the orchestrator LLM never names them.
+
+**Usage:**
+
+```bash
+pipeline-run-task <run-id> <task-id> --stage <stage> [--worktree <path>] [--review-file <path>]... [--ci-status <green|red|timeout>]
+pipeline-run-task <run-id> RUN --stage finalize-run
+```
+
+**Arguments:**
+
+| Argument        | Required | Description                               |
+| --------------- | -------- | ----------------------------------------- |
+| `run-id`        | Yes      | Run identifier                            |
+| `task-id`       | Yes      | Task ID (or `RUN` for finalize-run stage) |
+| `--stage`       | Yes      | Stage to execute                          |
+| `--worktree`    | No       | Path to task worktree                     |
+| `--review-file` | No       | Path to reviewer output (repeatable)      |
+| `--ci-status`   | No       | CI result: `green`, `red`, or `timeout`   |
+
+**Stages:**
+
+| Stage          | Purpose                                                  |
+| -------------- | -------------------------------------------------------- |
+| `preflight`    | Circuit breaker, dep check, classify, quota gate, prompt |
+| `postexec`     | Quality gate, coverage gate, holdout, review dispatch    |
+| `postreview`   | Parse verdicts, retry or advance                         |
+| `ship`         | Human gate, task-commit, PR create, CI wait              |
+| `finalize-run` | Scribe spawn, rollup PR, cleanup                         |
+
+**Exit codes:**
+
+| Code | Meaning                                                        |
+| ---- | -------------------------------------------------------------- |
+| 0    | Stage complete — advance to next                               |
+| 2    | `end_gracefully` (quota cap, circuit breaker, exhausted)       |
+| 3    | `wait_retry` (quota chunk slept, still over) — re-invoke       |
+| 10   | `spawn_required` — stdout is a JSON spawn manifest             |
+| 20   | `human_gate_pause` — orchestrator halts until resume           |
+| 30   | `task_terminal_failed` / `needs_human_review` — skip, continue |
+
+**Spawn manifest shape (exit 10):**
+
+```json
+{
+  "action": "spawn_agents",
+  "stage_after": "<next-stage>",
+  "agents": [
+    {
+      "subagent_type": "task-executor",
+      "isolation": "worktree",
+      "model": "sonnet",
+      "maxTurns": 60,
+      "prompt_file": ".state/<run-id>/<task-id>.executor-prompt.md"
+    }
+  ]
+}
+```
+
+---
+
 ## Input and Discovery
 
 ### pipeline-fetch-prd
@@ -243,15 +306,40 @@ pipeline-validate-tasks <tasks-json-path>
 
 ### pipeline-branch
 
-Branch creation, worktree operations, staging init.
+Branch creation, worktree operations, staging init, task commit.
 
 **Usage:**
 
 ```bash
-pipeline-branch create <branch-name> [--from <ref>]
-pipeline-branch worktree <branch-name> <worktree-path>
-pipeline-branch cleanup <worktree-path>
+pipeline-branch staging-init
+pipeline-branch commit-spec <spec-dir>
+pipeline-branch create <branch-name> [--base <ref>]
+pipeline-branch worktree-create <branch-name> <worktree-path>
+pipeline-branch worktree-remove <worktree-path>
+pipeline-branch exists <branch-name>
+pipeline-branch naming <task-id> <issue-number>
+pipeline-branch task-commit <task-id> --worktree <path> [--message <msg>]
 ```
+
+**Actions:**
+
+| Action            | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `staging-init`    | Create or reconcile staging branch from base       |
+| `commit-spec`     | Commit spec directory to staging                   |
+| `create`          | Create task branch from base (default: staging)    |
+| `worktree-create` | Create worktree for branch                         |
+| `worktree-remove` | Remove worktree and optionally delete branch       |
+| `exists`          | Check if branch exists (local or remote)           |
+| `naming`          | Generate branch name from task-id and issue number |
+| `task-commit`     | Finalize task changes in worktree                  |
+
+**task-commit flags:**
+
+| Flag         | Required | Description           |
+| ------------ | -------- | --------------------- |
+| `--worktree` | Yes      | Path to task worktree |
+| `--message`  | No       | Custom commit message |
 
 ---
 

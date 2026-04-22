@@ -459,13 +459,16 @@ echo "=== commands/run.md materialization (\${CLAUDE_PLUGIN_ROOT} substitution) 
 RUN_MD="$PLUGIN_ROOT/commands/run.md"
 assert_file_exists "run.md exists" "$RUN_MD"
 
-# Materialization moved to pipeline-ensure-autonomy; run.md delegates via the
-# script call. Verify run.md invokes the script and no longer inlines the jq block.
-if grep -q 'pipeline-ensure-autonomy' "$RUN_MD"; then
-  echo "  PASS: run.md delegates autonomy check to pipeline-ensure-autonomy"
+# Materialization moved to pipeline-ensure-autonomy; run.md delegates to the
+# run-pipeline skill which invokes the autonomy check. Accept either inline
+# reference in run.md or in the skill body.
+SKILL_MD="$PLUGIN_ROOT/skills/run-pipeline/SKILL.md"
+if grep -q 'pipeline-ensure-autonomy' "$RUN_MD" \
+   || { [[ -f "$SKILL_MD" ]] && grep -q 'pipeline-ensure-autonomy' "$SKILL_MD"; }; then
+  echo "  PASS: orchestrator (run.md or run-pipeline skill) calls pipeline-ensure-autonomy"
   pass=$((pass + 1))
 else
-  echo "  FAIL: run.md does not call pipeline-ensure-autonomy"
+  echo "  FAIL: neither run.md nor run-pipeline skill calls pipeline-ensure-autonomy"
   fail=$((fail + 1))
 fi
 

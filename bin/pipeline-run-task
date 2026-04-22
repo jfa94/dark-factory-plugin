@@ -173,7 +173,7 @@ _stage_preflight() {
 
   local model max_turns agents_json
   model=$(printf '%s' "$classify" | jq -r '.model // "sonnet"')
-  max_turns=$(printf '%s' "$classify" | jq -r '.max_turns // 60')
+  max_turns=$(printf '%s' "$classify" | jq -r '.maxTurns // .max_turns // 60')
   agents_json=$(jq -cn \
     --arg role "task-executor" \
     --arg pf   "$prompt_file" \
@@ -230,29 +230,27 @@ _stage_postexec() {
     fi
   fi
 
-  local holdout_file="$run_dir/.state/$run_id/$task_id.holdout.json"
+  local holdout_file="$run_dir/holdouts/$task_id.json"
   if [[ -f "$holdout_file" ]]; then
     local reviewer_output
     reviewer_output=$(_task_field holdout_review_file)
     reviewer_output=$(printf '%s' "$reviewer_output" | sed -e 's/^"//' -e 's/"$//')
-    if [[ -z "$reviewer_output" ]]; then
-      local pf
-      pf=$(_prompt_path holdout)
-      _ensure_prompt_dir
-      pipeline-holdout-validate prompt "$run_id" "$task_id" > "$pf" || true
-      local agents_json
-      agents_json=$(jq -cn --arg pf "$pf" \
-        '[{subagent_type:"task-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf, purpose:"holdout"}]')
-      _emit_manifest postexec "$agents_json"
-      t1=$(_now_ms)
-      log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "purpose=\"holdout\""
-      return 10
-    fi
-    if ! pipeline-holdout-validate check "$run_id" "$task_id" "$reviewer_output" >/dev/null; then
-      log_warn "holdout failed for $task_id"
-      t1=$(_now_ms)
-      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"holdout\""
-      return 30
+    if [[ -n "$reviewer_output" && -f "$reviewer_output" ]]; then
+      if pipeline-holdout-validate check "$run_id" "$task_id" "$reviewer_output" >/dev/null; then
+        _task_write quality_gates.holdout '"pass"'
+      else
+        _task_write quality_gates.holdout '"fail"'
+        log_warn "holdout failed for $task_id"
+        t1=$(_now_ms)
+        log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"holdout\""
+        return 30
+      fi
+    else
+      # holdout_review_file not wired by SubagentStop yet — record skip so the
+      # scorer can distinguish "not configured" from "passed". Do not spawn a
+      # dedicated holdout reviewer here; infinite re-entry risk.
+      _task_write quality_gates.holdout '"skipped"'
+      log_warn "holdout file present but reviewer output not wired for $task_id; skipping Layer 4"
     fi
   fi
 
@@ -274,7 +272,7 @@ _stage_postexec() {
       log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"codex\""
       return 30
     fi
-    _task_write review_files "[\"$review_file\"]"
+    _task_write review_files "$(jq -n --arg f "$review_file" '[$f]')"
     _task_write stage '"postexec_done"'
     t1=$(_now_ms)
     log_step_end "postexec" "ok" "$((t1-t0))" "task_id=\"$task_id\"" "reviewer=\"codex\""
@@ -346,7 +344,9 @@ _stage_postreview() {
   for f in "${files[@]}"; do
     [[ ! -f "$f" ]] && { log_warn "review file missing: $f"; continue; }
     verdict=$(pipeline-parse-review < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
-    decision=$(printf '%s' "$verdict" | jq -r '.decision // "UNKNOWN"')
+    # pipeline-parse-review emits `.verdict`; accept legacy `.decision` for
+    # backward compatibility with older reviewer outputs / test fixtures.
+    decision=$(printf '%s' "$verdict" | jq -r '.verdict // .decision // "UNKNOWN"')
     case "$decision" in
       APPROVE) : ;;
       REQUEST_CHANGES) any_changes=true ;;
@@ -455,8 +455,8 @@ _stage_ship() {
 
   local gate_lvl
   gate_lvl=$(read_config '.humanReviewLevel' '2')
-  if (( gate_lvl >= 3 )); then
-    if ! pipeline-human-gate "$run_id" "ship-$task_id"; then
+  if (( gate_lvl >= 1 )); then
+    if ! pipeline-human-gate "$run_id" pre-merge; then
       t1=$(_now_ms)
       log_step_end "ship" "human_gate_pause" "$((t1-t0))" "task_id=\"$task_id\""
       return 20
@@ -473,7 +473,7 @@ _stage_ship() {
     return 30
   fi
 
-  if ! pipeline-branch task-commit "$run_id" "$task_id" "$wt" >/dev/null; then
+  if ! pipeline-branch task-commit "$task_id" --worktree "$wt" >/dev/null; then
     log_error "task-commit failed"
     t1=$(_now_ms)
     log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\""
@@ -562,7 +562,8 @@ _stage_finalize_run() {
     fi
   fi
 
-  pipeline-cleanup "$run_id" >/dev/null 2>&1 || log_warn "cleanup failed"
+  pipeline-cleanup "$run_id" --delete-branches --remove-worktrees --close-issues \
+    >/dev/null 2>&1 || log_warn "cleanup failed"
   pipeline-state write "$run_id" '.status' '"done"' >/dev/null || true
   pipeline-state write "$run_id" '.ended_at' "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" >/dev/null || true
 

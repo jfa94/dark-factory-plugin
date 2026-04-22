@@ -109,6 +109,10 @@ Since task-executors run in worktrees and holdouts live in plugin data, the exec
 
 If fewer than 80% of withheld criteria are satisfied, the implementation is surface-level. The task-executor receives the full spec (including previously withheld criteria) and re-implements. Holdout validation is NOT repeated on re-implementation (that would be unfair - the executor now knows all criteria).
 
+**Graceful skip behavior:**
+
+When a holdout file exists but the `SubagentStop` hook has not wired the `holdout_review_file` field to state, the pipeline records `.tasks.<id>.quality_gates.holdout = "skipped"` and continues rather than blocking. This avoids infinite re-entry loops when the holdout reviewer output is not yet available. The scorer treats `skipped` as `skipped_na` (not applicable) rather than a failure.
+
 **Configuration:**
 
 | Setting                   | Default | Description                        |

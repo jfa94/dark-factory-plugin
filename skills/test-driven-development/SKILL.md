@@ -360,7 +360,7 @@ Can't check all boxes? You skipped TDD. Start over.
 
 | Problem                | Solution                                                                                   |
 | ---------------------- | ------------------------------------------------------------------------------------------ |
-| Don't know how to test | Write wished-for API. Write assertion first. Raise the question in the task's STATUS line. |
+| Don't know how to test | Write wished-for API. Write assertion first. Ask the user, or emit STATUS: NEEDS_CONTEXT if running in an autonomous task. |
 | Test too complicated   | Design too complicated. Simplify interface.                                                |
 | Must mock everything   | Code too coupled. Use dependency injection.                                                |
 | Test setup huge        | Extract helpers. Still complex? Simplify design.                                           |

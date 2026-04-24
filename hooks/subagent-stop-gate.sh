@@ -22,6 +22,9 @@ input=$(cat)
 agent_type=$(printf '%s' "$input" | jq -r '.agent_type // empty' 2>/dev/null)
 
 if [[ -z "$agent_type" ]]; then
+  if [[ -n "$input" ]]; then
+    echo "[subagent-stop-gate] Warning: non-empty stdin but agent_type could not be parsed; passing through" >&2
+  fi
   exit 0
 fi
 
@@ -65,10 +68,41 @@ if [[ "$autonomous" == "1" ]]; then
           continue
         fi
         log_output=""
-        if [[ -n "$worktree" && -d "$worktree" ]]; then
-          log_output=$(git -C "$worktree" log --oneline "staging..$branch" 2>/dev/null || true)
+        git_dir="${worktree:-}"
+        if [[ -n "$git_dir" && -d "$git_dir" ]]; then
+          base_ref=""
+          if git -C "$git_dir" rev-parse --verify staging >/dev/null 2>&1; then
+            base_ref="staging"
+          elif git -C "$git_dir" rev-parse --verify origin/staging >/dev/null 2>&1; then
+            base_ref="origin/staging"
+          fi
+          if [[ -n "$base_ref" ]]; then
+            log_output=$(git -C "$git_dir" log --oneline "$base_ref..$branch" 2>/dev/null || true)
+          elif git -C "$git_dir" rev-parse --verify "$branch" >/dev/null 2>&1; then
+            # Branch exists but no staging ref — can't compare; skip to avoid false positive
+            echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found in $git_dir; skipping commit check" >&2
+            continue
+          else
+            # Branch itself doesn't exist — zero commits is certain
+            log_output=""
+          fi
         else
-          log_output=$(git log --oneline "staging..$branch" 2>/dev/null || true)
+          base_ref=""
+          if git rev-parse --verify staging >/dev/null 2>&1; then
+            base_ref="staging"
+          elif git rev-parse --verify origin/staging >/dev/null 2>&1; then
+            base_ref="origin/staging"
+          fi
+          if [[ -n "$base_ref" ]]; then
+            log_output=$(git log --oneline "$base_ref..$branch" 2>/dev/null || true)
+          elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            # Branch exists but no staging ref — skip to avoid false positive
+            echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found; skipping commit check" >&2
+            continue
+          else
+            # Branch itself doesn't exist — zero commits is certain
+            log_output=""
+          fi
         fi
         if [[ -z "$log_output" ]]; then
           block_reason="No commits detected — complete the implementation and commit before finishing the turn."
@@ -115,6 +149,21 @@ if [[ "$autonomous" == "1" ]]; then
     jq -cn --arg reason "$block_reason" '{decision:"block", reason:$reason}'
     exit 1
   fi
+
+  # No block — clean up the retry sidecar if it exists
+  task_id_for_cleanup="${FACTORY_TASK_ID:-}"
+  if [[ -z "$task_id_for_cleanup" ]]; then
+    state_file_for_cleanup="${state_file:-$run_dir/state.json}"
+    if [[ -f "${state_file_for_cleanup:-}" ]]; then
+      task_id_for_cleanup=$(jq -r '
+        [.tasks | to_entries[] | select(.value.status == "executing") | .key] | first // empty
+      ' "$state_file_for_cleanup" 2>/dev/null || true)
+    fi
+  fi
+  if [[ -n "$task_id_for_cleanup" ]]; then
+    retry_file_cleanup="$run_dir/.subagent_retries.${task_id_for_cleanup}"
+    [[ -f "$retry_file_cleanup" ]] && rm -f "$retry_file_cleanup"
+  fi
 fi
 
 # ----------------------------------------------------------------
@@ -157,10 +206,37 @@ case "$agent_type" in
         # Prefer the task's own worktree for the git log check — cwd is the
         # orchestrator, which has no knowledge of the task branch.
         log_output=""
-        if [[ -n "$worktree" && -d "$worktree" ]]; then
-          log_output=$(git -C "$worktree" log --oneline "staging..$branch" 2>/dev/null || true)
+        git_dir_warn="${worktree:-}"
+        if [[ -n "$git_dir_warn" && -d "$git_dir_warn" ]]; then
+          base_ref_warn=""
+          if git -C "$git_dir_warn" rev-parse --verify staging >/dev/null 2>&1; then
+            base_ref_warn="staging"
+          elif git -C "$git_dir_warn" rev-parse --verify origin/staging >/dev/null 2>&1; then
+            base_ref_warn="origin/staging"
+          fi
+          if [[ -n "$base_ref_warn" ]]; then
+            log_output=$(git -C "$git_dir_warn" log --oneline "$base_ref_warn..$branch" 2>/dev/null || true)
+          elif git -C "$git_dir_warn" rev-parse --verify "$branch" >/dev/null 2>&1; then
+            echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found in $git_dir_warn; skipping commit check" >&2
+            continue
+          else
+            log_output=""
+          fi
         else
-          log_output=$(git log --oneline "staging..$branch" 2>/dev/null || true)
+          base_ref_warn=""
+          if git rev-parse --verify staging >/dev/null 2>&1; then
+            base_ref_warn="staging"
+          elif git rev-parse --verify origin/staging >/dev/null 2>&1; then
+            base_ref_warn="origin/staging"
+          fi
+          if [[ -n "$base_ref_warn" ]]; then
+            log_output=$(git log --oneline "$base_ref_warn..$branch" 2>/dev/null || true)
+          elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found; skipping commit check" >&2
+            continue
+          else
+            log_output=""
+          fi
         fi
         if [[ -z "$log_output" ]]; then
           warnings+=("no commits found on branch $branch for task $tid")

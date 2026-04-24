@@ -1174,6 +1174,10 @@ set -e
 retry_count=$(cat "$retry_dir/.subagent_retries.t3" 2>/dev/null || echo 0)
 assert_eq "retry file = 2 after second block" "2" "$retry_count"
 
+# Verify BLOCKED written to state.json after 2nd block (pipeline-state may not be available in test harness)
+executor_status_after=$(jq -r '.tasks.t3.executor_status // empty' "$retry_dir/state.json" 2>/dev/null || true)
+assert_eq "executor_status=BLOCKED written to state after 2nd block" "BLOCKED" "$executor_status_after"
+
 # ============================================================
 echo ""
 echo "=== All hook scripts are executable ==="

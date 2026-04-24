@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SubagentStop hook: verify expected artifacts exist when subagents complete.
-# Checks vary by agent type (spec-generator, task-executor, task-reviewer).
+# Checks vary by agent type (spec-generator, task-executor, implementation-reviewer).
 #
 # Stdin: JSON with agent_id, agent_type
 # Exit: always 0 (logs warnings but never blocks)
@@ -75,7 +75,7 @@ case "$agent_type" in
     fi
     ;;
 
-  task-reviewer)
+  implementation-reviewer|quality-reviewer)
     # Expect a review verdict file
     state_file="$run_dir/state.json"
     if [[ -f "$state_file" ]]; then

@@ -99,7 +99,7 @@ Maximum adversarial review rounds by risk tier.
 
 **Default:** true
 
-Use OpenAI Codex for adversarial review when available, fall back to Claude Code `task-reviewer` otherwise.
+Use OpenAI Codex for adversarial review when available, fall back to Claude Code `implementation-reviewer` otherwise.
 
 **When to change:**
 

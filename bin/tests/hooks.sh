@@ -273,7 +273,7 @@ assert_exit "no run exits 0" 0 bash -c 'printf "{\"session_id\":\"test\"}" | '"$
 echo ""
 echo "=== subagent-stop-gate: no-op without active run ==="
 
-assert_exit "subagent no run exits 0" 0 bash -c 'printf "{\"agent_type\":\"task-reviewer\"}" | '"$HOOKS_DIR/subagent-stop-gate.sh"
+assert_exit "subagent no run exits 0" 0 bash -c 'printf "{\"agent_type\":\"implementation-reviewer\"}" | '"$HOOKS_DIR/subagent-stop-gate.sh"
 
 # ============================================================
 echo ""
@@ -291,8 +291,8 @@ assert_exit "unknown agent exits 0" 0 bash -c 'printf "{\"agent_type\":\"unknown
 echo ""
 echo "=== subagent-stop-gate: warns on missing review files ==="
 
-# task-reviewer with no review files
-output=$(printf '{"agent_type":"task-reviewer"}' | "$HOOKS_DIR/subagent-stop-gate.sh" 2>&1)
+# implementation-reviewer with no review files
+output=$(printf '{"agent_type":"implementation-reviewer"}' | "$HOOKS_DIR/subagent-stop-gate.sh" 2>&1)
 assert_eq "warns no reviews" "true" "$(printf '%s' "$output" | grep -q 'no review files' && echo true || echo false)"
 
 # ============================================================
@@ -300,7 +300,7 @@ echo ""
 echo "=== subagent-stop-gate: no warning with review files present ==="
 
 echo '{"verdict":"APPROVE"}' > "$run_dir/reviews/T1.json"
-output=$(printf '{"agent_type":"task-reviewer"}' | "$HOOKS_DIR/subagent-stop-gate.sh" 2>&1)
+output=$(printf '{"agent_type":"implementation-reviewer"}' | "$HOOKS_DIR/subagent-stop-gate.sh" 2>&1)
 assert_eq "no warning with reviews" "false" "$(printf '%s' "$output" | grep -q 'WARNING' && echo true || echo false)"
 
 # ============================================================
@@ -809,7 +809,7 @@ transcript="$CLAUDE_PLUGIN_DATA/runs/run-sag-rev/transcript.jsonl"
 printf '{"content":".state/run-sag-rev/alpha-001.reviewer-prompt.md"}\n' > "$transcript"
 msg='{"decision":"APPROVE","blockers":[],"concerns":[]}
 STATUS: DONE'
-input=$(jq -cn --arg t "$transcript" --arg msg "$msg" '{agent_type:"task-reviewer", last_assistant_message:$msg, agent_transcript_path:$t}')
+input=$(jq -cn --arg t "$transcript" --arg msg "$msg" '{agent_type:"implementation-reviewer", last_assistant_message:$msg, agent_transcript_path:$t}')
 set +e
 printf '%s' "$input" | bash "$HOOKS_DIR/subagent-stop-transcript.sh" >/dev/null 2>&1
 set -e

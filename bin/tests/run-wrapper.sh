@@ -43,6 +43,8 @@ write_stub pipeline-quota-check 'cat <<EOF
 EOF'
 
 write_stub pipeline-quality-gate 'exit 0'
+write_stub pipeline-tdd-gate 'exit 0'
+write_stub pipeline-coverage-gate 'exit 0'
 write_stub pipeline-holdout-validate 'exit 0'
 write_stub pipeline-branch 'exit 0'
 write_stub pipeline-wait-pr 'echo "{\"status\":\"green\"}"; exit 0'
@@ -94,10 +96,10 @@ run_wrapper alpha-001 --stage preflight
 assert_eq "preflight: exit 10" "10" "$RC"
 assert_eq "preflight: action=spawn_agents" "spawn_agents" \
   "$(printf '%s' "$OUT" | jq -r '.action')"
-assert_eq "preflight: stage_after=postexec" "postexec" \
+assert_eq "preflight: stage_after=preexec_tests" "preexec_tests" \
   "$(printf '%s' "$OUT" | jq -r '.stage_after')"
 assert_eq "preflight: 1 agent" "1" "$(printf '%s' "$OUT" | jq -r '.agents | length')"
-assert_eq "preflight: agent=task-executor" "task-executor" \
+assert_eq "preflight: agent=test-writer" "test-writer" \
   "$(printf '%s' "$OUT" | jq -r '.agents[0].subagent_type')"
 prompt_file=$(printf '%s' "$OUT" | jq -r '.agents[0].prompt_file')
 if [[ -f "$prompt_file" ]]; then pass "preflight: prompt file written"
@@ -117,7 +119,11 @@ wt="$ROOT_TMP/$current-wt"; mkdir -p "$wt"
 pipeline-state task-write "$RUN_ID" alpha-001 worktree "\"$wt\"" >/dev/null
 echo codex > "$STUB_DIR/reviewer"
 run_wrapper alpha-001 --stage postexec
-assert_eq "postexec codex: exit 0" "0" "$RC"
+assert_eq "postexec codex: exit 10" "10" "$RC"
+assert_eq "postexec codex: agent=implementation-reviewer" "implementation-reviewer" \
+  "$(printf '%s' "$OUT" | jq -r '.agents[0].subagent_type')"
+assert_eq "postexec codex: stage_after=postreview" "postreview" \
+  "$(printf '%s' "$OUT" | jq -r '.stage_after')"
 assert_eq "postexec codex: stage=postexec_done" "postexec_done" "$(stage_of)"
 echo claude > "$STUB_DIR/reviewer"
 

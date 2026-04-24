@@ -223,16 +223,16 @@ echo "=== agent references ==="
 
 # Must reference the bundled agent types it spawns.
 assert_contains "references task-executor" "task-executor" "$RUN_CMD"
-assert_contains "references task-reviewer" "task-reviewer" "$RUN_CMD"
+assert_contains "references implementation-reviewer" "implementation-reviewer" "$RUN_CMD"
 assert_contains "references spec-generator" "spec-generator" "$RUN_CMD"
-assert_contains "references code-reviewer for security tier" "code-reviewer" "$RUN_CMD"
+assert_contains "references quality-reviewer for security tier" "quality-reviewer" "$RUN_CMD"
 assert_contains "references security-reviewer for security tier" "security-reviewer" "$RUN_CMD"
 assert_contains "references architecture-reviewer" "architecture-reviewer" "$RUN_CMD"
 assert_contains "references scribe for docs update" "scribe" "$RUN_CMD"
 assert_contains "references test-writer for mutation retries" "test-writer" "$RUN_CMD"
 
 # Each agent file must exist in the plugin.
-for agent in task-executor task-reviewer spec-generator code-reviewer \
+for agent in task-executor implementation-reviewer spec-generator quality-reviewer \
              security-reviewer architecture-reviewer scribe test-writer spec-reviewer; do
   assert_file_exists "agent file $agent.md exists" "$PLUGIN_ROOT/agents/$agent.md"
 done

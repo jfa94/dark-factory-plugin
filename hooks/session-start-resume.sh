@@ -46,7 +46,7 @@ next_task=$(jq -r '
 
 next_stage=$(jq -r --arg t "$next_task" '
   (.tasks[$t].stage // "preflight")
-  | if . == "preflight_done"  then "postexec"
+  | if . == "preflight_done"  then "preexec_tests"
     elif . == "postexec_done" then "postreview"
     elif . == "postreview_done" then "ship"
     elif . == "ship_done"     then "finalize-run"

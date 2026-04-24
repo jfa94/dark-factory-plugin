@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# pipeline-tdd-gate — validate that each impl commit is preceded by a test-only
+# commit with the same [task-id] tag. Writes structured JSON to stdout and
+# (if state is available) to .tasks.<task-id>.quality_gates.tdd.
+#
+# Usage: pipeline-tdd-gate --task-id <id> [--base <ref>] [--run-id <id>] [--spec-dir <path>]
+# Exit: 0 if ok or exempt; 1 on violation.
+set -euo pipefail
+
+# shellcheck source=/dev/null
+source "$(dirname "$0")/pipeline-lib.sh"
+require_command jq
+
+base_ref="staging"
+task_id=""
+run_id=""
+spec_dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --base)     base_ref="$2"; shift 2 ;;
+    --task-id)  task_id="$2";  shift 2 ;;
+    --run-id)   run_id="$2";   shift 2 ;;
+    --spec-dir) spec_dir="$2"; shift 2 ;;
+    *) echo "unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+[[ -z "$task_id" ]] && { printf '{"ok":false,"exempt":false,"violations":[],"error":"task_id_required"}\n'; exit 1; }
+
+if ! git rev-parse --verify "$base_ref" >/dev/null 2>&1; then
+  printf '{"ok":false,"exempt":false,"violations":[],"error":"base_ref_not_found","base_ref":"%s"}\n' "$base_ref"
+  exit 1
+fi
+
+_is_test_path() {
+  case "$1" in
+    *.test.*|*.spec.*|tests/*|*/__tests__/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_is_docs_path() {
+  case "$1" in
+    docs/*|*.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_is_config_path() {
+  case "$1" in
+    *.json|*.yml|*.yaml|*.toml|.gitignore) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_task_exempt() {
+  local tfile
+  for tfile in "$spec_dir/tasks.json" specs/current/tasks.json; do
+    [[ -f "$tfile" ]] || continue
+    local flag
+    flag=$(jq -r --arg id "$task_id" '.tasks[]? | select(.id==$id) | .tdd_exempt // false' "$tfile" 2>/dev/null)
+    [[ "$flag" == "true" ]] && return 0
+  done
+  if [[ -f package.json ]]; then
+    local g
+    g=$(jq -r '.["dark-factory"].tddExempt // false' package.json 2>/dev/null)
+    [[ "$g" == "true" ]] && return 0
+  fi
+  return 1
+}
+
+_emit() {
+  local ok="$1" exempt="$2" violations="$3"
+  local out
+  out=$(jq -n --argjson ok "$ok" --argjson exempt "$exempt" --argjson v "$violations" \
+    '{ok:$ok, exempt:$exempt, violations:$v}')
+  printf '%s\n' "$out"
+  if [[ -n "$run_id" ]] && command -v pipeline-state >/dev/null 2>&1; then
+    pipeline-state task-write "$run_id" "$task_id" quality_gates.tdd "$out" >/dev/null 2>&1 || true
+  fi
+  command -v log_metric >/dev/null && log_metric "task.gate.tdd" "task_id=\"$task_id\"" "ok=$ok" "exempt=$exempt" || true
+}
+
+commits=$(git log --format='%H' "${base_ref}..HEAD" 2>/dev/null \
+  | while read -r sha; do
+      msg=$(git log -1 --format='%s%n%b' "$sha")
+      if printf '%s' "$msg" | grep -qF "[$task_id]"; then printf '%s\n' "$sha"; fi
+    done)
+
+if [[ -z "$commits" ]]; then
+  _emit true true '[]'
+  exit 0
+fi
+
+commits_oldest=$(printf '%s\n' "$commits" | awk '{a[NR]=$0} END{for(i=NR;i>0;i--) print a[i]}')
+classes=()
+while read -r sha; do
+  [[ -z "$sha" ]] && continue
+  # Skip merge commits — two parents means two SHAs on the %P line.
+  if git show -s --format='%P' "$sha" | grep -q ' '; then
+    continue
+  fi
+  files=$(git show --name-only --format= "$sha")
+  kind="test-only"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    if ! _is_test_path "$f"; then
+      if ! _is_docs_path "$f" && ! _is_config_path "$f"; then
+        kind="impl"
+      fi
+    fi
+  done <<<"$files"
+  classes+=("$sha|$kind")
+done <<<"$commits_oldest"
+
+has_impl=0
+for c in "${classes[@]}"; do
+  IFS='|' read -r _ kind <<<"$c"
+  [[ "$kind" == "impl" ]] && has_impl=1
+done
+if (( has_impl == 0 )); then _emit true true '[]'; exit 0; fi
+if _task_exempt;           then _emit true true '[]'; exit 0; fi
+
+seen_test_only=0
+violations='[]'
+for c in "${classes[@]}"; do
+  IFS='|' read -r sha kind <<<"$c"
+  if [[ "$kind" == "test-only" ]]; then
+    seen_test_only=1
+  elif [[ "$kind" == "impl" ]]; then
+    if (( seen_test_only == 0 )); then
+      violations=$(printf '%s' "$violations" | jq --arg s "$sha" '. + [{commit:$s, reason:"impl-without-preceding-test"}]')
+    fi
+  fi
+done
+
+if [[ "$violations" != '[]' ]]; then
+  _emit false false "$violations"
+  exit 1
+fi
+_emit true false '[]'

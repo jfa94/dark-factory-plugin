@@ -57,7 +57,7 @@ else
   _add_check "gh_cli" "pass" "gh installed and authenticated"
 fi
 
-# 4. Required agents — bundled by plugin (spec-reviewer, code-reviewer, task-reviewer, etc.)
+# 4. Required agents — bundled by plugin (spec-reviewer, quality-reviewer, implementation-reviewer, etc.)
 # No user-side check needed: plugin install guarantees presence.
 
 # 5. Required skills — check project-local, home-global, and plugin-bundled

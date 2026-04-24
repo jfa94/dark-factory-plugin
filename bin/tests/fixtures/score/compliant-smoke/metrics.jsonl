@@ -9,7 +9,7 @@
 {"ts":"2026-04-21T08:30:06Z","run_id":"run-compliant-smoke","event":"task.gate.coverage","task_id":"alpha-001","status":"pass","delta_lines":0.1,"tolerance":0.5}
 {"ts":"2026-04-21T08:30:10Z","run_id":"run-compliant-smoke","event":"task.review.provider","task_id":"alpha-001","reviewer":"claude","reason":"detected"}
 {"ts":"2026-04-21T08:30:15Z","run_id":"run-compliant-smoke","event":"pipeline.step.end","step":"postexec","status":"spawn","duration_ms":15000,"task_id":"alpha-001"}
-{"ts":"2026-04-21T08:35:00Z","run_id":"run-compliant-smoke","event":"pipeline.subagent.end","agent_type":"task-reviewer","status":"DONE","task_id":"alpha-001"}
+{"ts":"2026-04-21T08:35:00Z","run_id":"run-compliant-smoke","event":"pipeline.subagent.end","agent_type":"implementation-reviewer","status":"DONE","task_id":"alpha-001"}
 {"ts":"2026-04-21T08:35:05Z","run_id":"run-compliant-smoke","event":"pipeline.step.begin","step":"postreview","task_id":"alpha-001"}
 {"ts":"2026-04-21T08:35:10Z","run_id":"run-compliant-smoke","event":"pipeline.step.end","step":"postreview","status":"ok","duration_ms":5000,"task_id":"alpha-001"}
 {"ts":"2026-04-21T08:40:00Z","run_id":"run-compliant-smoke","event":"pipeline.step.begin","step":"ship","task_id":"alpha-001"}
@@ -46,7 +46,7 @@
 {"ts":"2026-04-21T10:00:06Z","run_id":"run-compliant-smoke","event":"task.gate.coverage","task_id":"alpha-003","status":"pass","delta_lines":0.0,"tolerance":0.5}
 {"ts":"2026-04-21T10:00:10Z","run_id":"run-compliant-smoke","event":"task.review.provider","task_id":"alpha-003","reviewer":"claude","reason":"detected"}
 {"ts":"2026-04-21T10:00:15Z","run_id":"run-compliant-smoke","event":"pipeline.step.end","step":"postexec","status":"spawn","duration_ms":15000,"task_id":"alpha-003"}
-{"ts":"2026-04-21T10:05:00Z","run_id":"run-compliant-smoke","event":"pipeline.subagent.end","agent_type":"task-reviewer","status":"DONE","task_id":"alpha-003"}
+{"ts":"2026-04-21T10:05:00Z","run_id":"run-compliant-smoke","event":"pipeline.subagent.end","agent_type":"implementation-reviewer","status":"DONE","task_id":"alpha-003"}
 {"ts":"2026-04-21T10:05:05Z","run_id":"run-compliant-smoke","event":"pipeline.step.begin","step":"postreview","task_id":"alpha-003"}
 {"ts":"2026-04-21T10:05:10Z","run_id":"run-compliant-smoke","event":"pipeline.step.end","step":"postreview","status":"ok","duration_ms":5000,"task_id":"alpha-003"}
 {"ts":"2026-04-21T10:10:00Z","run_id":"run-compliant-smoke","event":"pipeline.step.begin","step":"ship","task_id":"alpha-003"}

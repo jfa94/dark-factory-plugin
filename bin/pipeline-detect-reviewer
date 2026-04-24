@@ -27,8 +27,8 @@ if command -v codex &>/dev/null; then
   fi
 fi
 
-# Fallback to Claude Code task-reviewer agent
+# Fallback to Claude Code quality-reviewer agent — Codex performs adversarial code-quality review, so its fallback is the quality reviewer
 jq -n \
   --arg reviewer "claude-code" \
-  --arg agent "task-reviewer" \
+  --arg agent "quality-reviewer" \
   '{reviewer: $reviewer, agent: $agent}'

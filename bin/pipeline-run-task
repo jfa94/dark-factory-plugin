@@ -80,7 +80,7 @@ _already_past() {
   local cur
   cur=$(_task_field stage 2>/dev/null || printf '')
   case "$cur" in null|"") return 1 ;; esac
-  local order=(preflight_done postexec_done postreview_done ship_done)
+  local order=(preflight_done preexec_tests_done postexec_done postreview_done ship_done)
   local cur_rank=-1 want_rank=-1 i
   for i in "${!order[@]}"; do
     [[ "${order[$i]}" == "$cur"  ]] && cur_rank=$i
@@ -154,19 +154,17 @@ _stage_preflight() {
   esac
 
   _ensure_prompt_dir
-  local spec_path prompt_file holdout_pct
+  local spec_path prompt_file
   spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
-  holdout_pct=$(read_config '.quality.holdoutPercent' '20')
-  prompt_file=$(_prompt_path executor)
-  local args=()
-  [[ -n "$spec_path" ]] && args+=(--spec-path "$spec_path")
-  args+=(--holdout "$holdout_pct")
-  if ! pipeline-build-prompt "$task_json" "${args[@]}" > "$prompt_file"; then
-    log_error "build-prompt failed"
-    t1=$(_now_ms)
-    log_step_end "preflight" "failed" "$((t1-t0))" "task_id=\"$task_id\""
-    return 30
-  fi
+  prompt_file=$(_prompt_path test-writer)
+  {
+    printf 'mode: pre-impl\n'
+    printf 'task_id: %s\n' "$task_id"
+    [[ -n "$spec_path" ]] && printf 'spec_path: %s\n' "$spec_path"
+    printf 'Write failing tests derived purely from the spec.\n'
+    printf 'Commit with message: test(<scope>): failing tests for %s [%s]\n' "$task_id" "$task_id"
+    printf 'End with STATUS: RED_READY or STATUS: BLOCKED.\n'
+  } > "$prompt_file"
 
   _task_write stage '"preflight_done"'
   pipeline-state task-status "$run_id" "$task_id" executing >/dev/null || true
@@ -187,9 +185,104 @@ _stage_preflight() {
   fi
   log_metric "task.coverage.snapshot" "task_id=\"$task_id\"" "snapshotted=$snapshotted"
 
-  local model max_turns agents_json
-  model=$(printf '%s' "$classify" | jq -r '.model // "sonnet"')
-  max_turns=$(printf '%s' "$classify" | jq -r '.maxTurns // .max_turns // 60')
+  local agents_json
+  agents_json=$(jq -cn --arg pf "$prompt_file" \
+    '[{subagent_type:"test-writer", isolation:"worktree", model:"opus", maxTurns:25, prompt_file:$pf}]')
+  _emit_manifest preexec_tests "$agents_json"
+
+  t1=$(_now_ms)
+  log_step_end "preflight" "spawn_test_writer" "$((t1-t0))" "task_id=\"$task_id\""
+  log_metric "task.test_writer_spawned" "task_id=\"$task_id\""
+  return 10
+}
+
+# --- preexec_tests ----------------------------------------------------------
+_stage_preexec_tests() {
+  local t0 t1
+  t0=$(_now_ms)
+  log_step_begin "preexec_tests" "task_id=\"$task_id\""
+
+  if _already_past preexec_tests_done; then
+    t1=$(_now_ms)
+    log_step_end "preexec_tests" "skipped" "$((t1-t0))" "task_id=\"$task_id\""
+    return 0
+  fi
+
+  local tw_status
+  tw_status=$(_task_field test_writer_status)
+  tw_status=$(printf '%s' "$tw_status" | tr -d '"')
+
+  # Resume path: status not recorded; check for an existing test commit.
+  if [[ -z "$tw_status" ]]; then
+    local tw_wt
+    tw_wt=$(_task_field worktree)
+    tw_wt=$(printf '%s' "$tw_wt" | tr -d '"')
+    [[ -z "$tw_wt" ]] && tw_wt="$worktree"
+    if [[ -n "$tw_wt" && -d "$tw_wt" ]] \
+       && ( cd "$tw_wt" && git log --format=%s staging..HEAD 2>/dev/null \
+              | grep -qE "^test\(.*\):.*\[${task_id}\]" 2>/dev/null ); then
+      tw_status="RED_READY"
+    fi
+  fi
+
+  if [[ -z "$tw_status" ]]; then
+    _ensure_prompt_dir
+    local spec_path pf
+    spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
+    pf=$(_prompt_path test-writer)
+    {
+      printf 'mode: pre-impl\n'
+      printf 'task_id: %s\n' "$task_id"
+      [[ -n "$spec_path" ]] && printf 'spec_path: %s\n' "$spec_path"
+      printf 'Write failing tests derived purely from the spec.\n'
+      printf 'Commit: test(<scope>): failing tests for %s [%s]\n' "$task_id" "$task_id"
+      printf 'End with STATUS: RED_READY or STATUS: BLOCKED.\n'
+    } > "$pf"
+    local agents_json
+    agents_json=$(jq -cn --arg pf "$pf" \
+      '[{subagent_type:"test-writer", isolation:"worktree", model:"opus", maxTurns:25, prompt_file:$pf}]')
+    _emit_manifest preexec_tests "$agents_json"
+    t1=$(_now_ms)
+    log_step_end "preexec_tests" "spawn_test_writer" "$((t1-t0))" "task_id=\"$task_id\""
+    return 10
+  fi
+
+  if [[ "$tw_status" == "BLOCKED" ]]; then
+    log_warn "test-writer blocked for $task_id"
+    pipeline-state task-status "$run_id" "$task_id" failed >/dev/null || true
+    t1=$(_now_ms)
+    log_step_end "preexec_tests" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"test_writer_blocked\""
+    return 30
+  fi
+
+  # RED_READY (or other non-blocked): spawn task-executor for GREEN phase.
+  _ensure_prompt_dir
+  local spec_path prompt_file holdout_pct task_json
+  spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
+  holdout_pct=$(read_config '.quality.holdoutPercent' '20')
+  task_json=$(pipeline-state task-read "$run_id" "$task_id" 2>/dev/null)
+  prompt_file=$(_prompt_path executor)
+  local args=()
+  [[ -n "$spec_path" ]] && args+=(--spec-path "$spec_path")
+  args+=(--holdout "$holdout_pct")
+  if ! pipeline-build-prompt "$task_json" "${args[@]}" > "$prompt_file"; then
+    log_error "build-prompt failed"
+    t1=$(_now_ms)
+    log_step_end "preexec_tests" "failed" "$((t1-t0))" "task_id=\"$task_id\""
+    return 30
+  fi
+
+  _task_write stage '"preexec_tests_done"'
+
+  local classify_json model max_turns agents_json
+  classify_json=$(_task_field classify)
+  if [[ -n "$classify_json" && "$classify_json" != "null" ]]; then
+    model=$(printf '%s' "$classify_json" | jq -r '.model // "sonnet"' 2>/dev/null || printf 'sonnet')
+    max_turns=$(printf '%s' "$classify_json" | jq -r '.maxTurns // .max_turns // 60' 2>/dev/null || printf '60')
+  else
+    model="sonnet"
+    max_turns="60"
+  fi
   agents_json=$(jq -cn \
     --arg role "task-executor" \
     --arg pf   "$prompt_file" \
@@ -199,7 +292,7 @@ _stage_preflight() {
   _emit_manifest postexec "$agents_json"
 
   t1=$(_now_ms)
-  log_step_end "preflight" "spawn" "$((t1-t0))" "task_id=\"$task_id\""
+  log_step_end "preexec_tests" "spawn_executor" "$((t1-t0))" "task_id=\"$task_id\""
   log_metric "task.executor_spawned" "task_id=\"$task_id\"" "model=\"$model\""
   return 10
 }
@@ -232,6 +325,13 @@ _stage_postexec() {
     log_warn "quality gate failed for $task_id"
     t1=$(_now_ms)
     log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"quality\""
+    return 30
+  fi
+
+  if ! ( cd "$wt" && pipeline-tdd-gate --task-id "$task_id" --run-id "$run_id" --base staging ) >/dev/null; then
+    log_warn "tdd gate failed for $task_id"
+    t1=$(_now_ms)
+    log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"tdd\""
     return 30
   fi
 
@@ -275,9 +375,28 @@ _stage_postexec() {
   provider=$(printf '%s' "$detect" | jq -r '.reviewer')
   log_metric "task.review.provider" "task_id=\"$task_id\"" "reviewer=\"$provider\""
 
+  local tier
+  tier=$(_task_field risk_tier)
+  tier=$(printf '%s' "$tier" | sed -e 's/^"//' -e 's/"$//')
+  [[ -z "$tier" ]] && tier="routine"
+
+  _ensure_prompt_dir
+  local pf
+  pf=$(_prompt_path reviewer)
+  {
+    printf 'Review task %s in the worktree at %s.\n' "$task_id" "$wt"
+    printf 'End your response with exactly one of:\n'
+    printf '  STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT\n'
+  } > "$pf"
+
+  # Slot 1: implementation-reviewer (spec alignment, always present)
+  local agents_json
+  agents_json=$(jq -cn --arg pf "$pf" \
+    '[{subagent_type:"implementation-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
+
+  # Slot 2: quality reviewer — Codex preferred, agent fallback
   if [[ "$provider" == "codex" ]]; then
     local review_file="$run_dir/.state/$run_id/$task_id.review.codex.json"
-    _ensure_prompt_dir
     local spec_path
     spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
     local cargs=(--base staging --task-id "$task_id")
@@ -289,41 +408,26 @@ _stage_postexec() {
       return 30
     fi
     _task_write review_files "$(jq -n --arg f "$review_file" '[$f]')"
-    _task_write stage '"postexec_done"'
-    t1=$(_now_ms)
-    log_step_end "postexec" "ok" "$((t1-t0))" "task_id=\"$task_id\"" "reviewer=\"codex\""
-    return 0
+  else
+    agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+      '. + [{subagent_type:"quality-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
   fi
 
-  local tier
-  tier=$(_task_field risk_tier)
-  tier=$(printf '%s' "$tier" | sed -e 's/^"//' -e 's/"$//')
-  [[ -z "$tier" ]] && tier="routine"
-  local reviewers=("task-reviewer")
+  # Risk-tier additions
   case "$tier" in
-    feature)  reviewers+=("architecture-reviewer") ;;
-    security) reviewers+=("code-reviewer" "security-reviewer" "architecture-reviewer") ;;
+    feature)
+      agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+        '. + [{subagent_type:"architecture-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]') ;;
+    security)
+      agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+        '. + [{subagent_type:"security-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf},
+              {subagent_type:"architecture-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]') ;;
   esac
 
-  _ensure_prompt_dir
-  local pf
-  pf=$(_prompt_path reviewer)
-  {
-    printf 'Review task %s in the worktree at %s.\n' "$task_id" "$wt"
-    printf 'End your response with exactly one of:\n'
-    printf '  STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT\n'
-  } > "$pf"
-
-  local agents_json='[]' r
-  for r in "${reviewers[@]}"; do
-    agents_json=$(printf '%s' "$agents_json" | jq -c \
-      --arg role "$r" --arg pf "$pf" \
-      '. + [{subagent_type:$role, isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
-  done
+  _task_write stage '"postexec_done"'
   _emit_manifest postreview "$agents_json"
-
   t1=$(_now_ms)
-  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=$(printf '%s' "${reviewers[*]}" | jq -R .)"
+  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=\"implementation+quality\""
   return 10
 }
 
@@ -621,10 +725,11 @@ _stage_finalize_run() {
 }
 
 case "$stage" in
-  preflight)     _stage_preflight ;;
-  postexec)      _stage_postexec ;;
-  postreview)    _stage_postreview ;;
-  ship)          _stage_ship ;;
-  finalize-run)  _stage_finalize_run ;;
+  preflight)      _stage_preflight ;;
+  preexec_tests)  _stage_preexec_tests ;;
+  postexec)       _stage_postexec ;;
+  postreview)     _stage_postreview ;;
+  ship)           _stage_ship ;;
+  finalize-run)   _stage_finalize_run ;;
   *) log_error "unknown stage: $stage"; exit 1 ;;
 esac

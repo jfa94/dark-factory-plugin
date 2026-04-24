@@ -25,7 +25,7 @@ The pipeline implements the Actor-Critic adversarial pattern:
 - Has full implementation context
 - Goal: ship working code quickly
 
-**Critic (Reviewer):** task-reviewer agent or Codex
+**Critic (Reviewer):** implementation-reviewer agent or Codex
 
 - Paranoid adversary
 - Reviews cold (zero implementation context)
@@ -38,7 +38,7 @@ The asymmetry is critical. The Critic has no knowledge of why the Actor made cer
 
 ## Fresh-Context Review
 
-The task-reviewer agent reviews with zero implementation context. It receives:
+The implementation-reviewer agent reviews with zero implementation context. It receives:
 
 - The code diff
 - The acceptance criteria
@@ -105,8 +105,8 @@ The reviewer must provide specific findings with file, line, severity, and descr
 
 Security-tier tasks (those touching auth, payment, crypto, etc.) receive four bundled reviewers running in parallel:
 
-1. `task-reviewer` — adversarial review with zero implementation context; validates acceptance and holdout criteria
-2. `code-reviewer` — specialized for injection vectors, auth/authz, secrets, crypto, input validation at trust boundaries
+1. `implementation-reviewer` — adversarial review with zero implementation context; validates acceptance and holdout criteria
+2. `quality-reviewer` — specialized for injection vectors, auth/authz, secrets, crypto, input validation at trust boundaries
 3. `security-reviewer` — OWASP Top 10, secrets exposure, supply-chain risks, AI-specific insecure defaults
 4. `architecture-reviewer` — module boundaries, dependency direction, coupling metrics, AI anti-patterns
 
@@ -121,7 +121,7 @@ The pipeline prefers OpenAI Codex for adversarial review when available:
 ```bash
 pipeline-detect-reviewer
   → If Codex CLI installed + authenticated: use Codex
-  → Otherwise: use Claude Code task-reviewer
+  → Otherwise: use Claude Code implementation-reviewer
 ```
 
 When Codex is available, `pipeline-codex-review` builds a review prompt from the
@@ -137,9 +137,9 @@ codex exec \
 
 The wrapper maps Codex's structured JSON output to the same normalized verdict
 shape `pipeline-parse-review` produces. On Codex failure, the orchestrator
-retries once, then falls through to the Claude Code `task-reviewer` agent.
+retries once, then falls through to the Claude Code `implementation-reviewer` agent.
 
-The Claude Code fallback uses the `task-reviewer` agent with the `review-protocol` skill injected. This provides consistent review behavior regardless of which reviewer is used.
+The Claude Code fallback uses the `implementation-reviewer` agent with the `review-protocol` skill injected. This provides consistent review behavior regardless of which reviewer is used.
 
 ---
 

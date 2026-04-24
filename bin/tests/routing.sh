@@ -346,6 +346,22 @@ assert_eq "parse_iso8601_to_epoch 2026-04-10T12:00:00Z" "1775822400" "$(parse_is
 
 # ============================================================
 echo ""
+echo "=== pipeline-detect-reviewer (G4: Codex-unavailable fallback) ==="
+
+# G4: Codex-unavailable fallback must be quality-reviewer.
+# Call the script directly (bypassing PATH lookup) with a PATH that excludes
+# any real `codex` binary, so only the fallback branch executes.
+_DETECT_BIN="$(cd "$(dirname "$0")/.." && pwd)"
+set +e
+_detect_out=$(PATH="$_DETECT_BIN:/usr/bin:/bin" \
+  bash "$_DETECT_BIN/pipeline-detect-reviewer" 2>/dev/null)
+set -e
+assert_eq "G4: Codex fallback agent is quality-reviewer" \
+  "quality-reviewer" \
+  "$(printf '%s' "$_detect_out" | jq -r '.agent')"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $pass"
 echo "  Failed: $fail"

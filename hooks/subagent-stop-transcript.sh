@@ -5,7 +5,7 @@
 # warnings); this one owns the orchestrator-facing hand-off.
 #
 # Matcher (in templates/settings.autonomous.json):
-#   "^(task-executor|task-reviewer|code-reviewer|security-reviewer|architecture-reviewer|scribe|spec-generator|spec-reviewer)$"
+#   "^(task-executor|implementation-reviewer|quality-reviewer|security-reviewer|architecture-reviewer|scribe|spec-generator|spec-reviewer)$"
 #
 # Stdin: JSON with agent_type, last_assistant_message, agent_transcript_path,
 # session_id, and (optionally) agent task_id in tool/context.
@@ -42,7 +42,7 @@ transcript=$(printf '%s' "$input" | jq -r '.agent_transcript_path // .transcript
 status=""
 if [[ -n "$last_msg" ]]; then
   status=$(printf '%s' "$last_msg" \
-    | { grep -oE 'STATUS:[[:space:]]+(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)' || true; } \
+    | { grep -oE 'STATUS:[[:space:]]+(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT|RED_READY)' || true; } \
     | tail -1 | awk '{print $2}')
 fi
 [[ -z "$status" ]] && status="BLOCKED"  # missing STATUS line => treat as blocked
@@ -54,7 +54,7 @@ task_id="${FACTORY_TASK_ID:-}"
 
 if [[ -z "$task_id" && -f "$transcript" ]]; then
   # Look for `<run-id>/<task-id>.<role>-prompt.md` reference in transcript.
-  task_id=$({ grep -oE "\.state/${run_id}/[a-zA-Z0-9_-]+\.(executor|executor-fix|executor-ci-fix|reviewer|holdout)-prompt\.md" "$transcript" 2>/dev/null || true; } \
+  task_id=$({ grep -oE "\.state/${run_id}/[a-zA-Z0-9_-]+\.(test-writer|executor|executor-fix|executor-ci-fix|reviewer|holdout)-prompt\.md" "$transcript" 2>/dev/null || true; } \
     | head -1 \
     | sed -E "s|.*\.state/${run_id}/([a-zA-Z0-9_-]+)\..*|\1|")
 fi
@@ -67,7 +67,7 @@ fi
 # For task-executor: scan transcript for `cwd` entries under the plugin's
 # ephemeral worktree root (.claude/worktrees/). First match wins.
 worktree=""
-if [[ "$agent_type" == "task-executor" && -f "$transcript" ]]; then
+if [[ ( "$agent_type" == "task-executor" || "$agent_type" == "test-writer" ) && -f "$transcript" ]]; then
   worktree=$({ grep -oE '"cwd":[[:space:]]*"[^"]*\.claude/worktrees/[^"]+"' "$transcript" 2>/dev/null || true; } \
     | head -1 \
     | sed -E 's/.*"cwd":[[:space:]]*"([^"]+)".*/\1/')
@@ -76,7 +76,7 @@ fi
 # --- 4. Write review file (reviewer roles) ---
 review_path=""
 case "$agent_type" in
-  task-reviewer|code-reviewer|security-reviewer|architecture-reviewer)
+  implementation-reviewer|quality-reviewer|security-reviewer|architecture-reviewer)
     if [[ -n "$task_id" && "$task_id" != "RUN" ]]; then
       mkdir -p "$run_dir/.state/$run_id"
       review_path="$run_dir/.state/$run_id/$task_id.review.$agent_type.md"
@@ -88,13 +88,19 @@ esac
 # --- 5. State writes ---
 if [[ -n "$task_id" && "$task_id" != "RUN" ]]; then
   case "$agent_type" in
+    test-writer)
+      pipeline-state task-write "$run_id" "$task_id" test_writer_status "\"$status\"" >/dev/null 2>&1 || true
+      if [[ -n "$worktree" ]]; then
+        pipeline-state task-write "$run_id" "$task_id" worktree "\"$worktree\"" >/dev/null 2>&1 || true
+      fi
+      ;;
     task-executor)
       pipeline-state task-write "$run_id" "$task_id" executor_status "\"$status\"" >/dev/null 2>&1 || true
       if [[ -n "$worktree" ]]; then
         pipeline-state task-write "$run_id" "$task_id" worktree "\"$worktree\"" >/dev/null 2>&1 || true
       fi
       ;;
-    task-reviewer|code-reviewer|security-reviewer|architecture-reviewer)
+    implementation-reviewer|quality-reviewer|security-reviewer|architecture-reviewer)
       pipeline-state task-write "$run_id" "$task_id" reviewer_status "\"$status\"" >/dev/null 2>&1 || true
       if [[ -n "$review_path" ]]; then
         cur=$(jq -c --arg t "$task_id" '.tasks[$t].review_files // []' "$state_file" 2>/dev/null || printf '[]')

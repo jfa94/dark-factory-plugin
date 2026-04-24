@@ -78,7 +78,7 @@ Test in `bin/test-phase3.sh`:
 
 ### task_07_02 — Verdict anchor
 
-Files: `bin/pipeline-parse-review`, `agents/task-reviewer.md`, `agents/code-reviewer.md`
+Files: `bin/pipeline-parse-review`, `agents/implementation-reviewer.md`, `agents/quality-reviewer.md`
 
 The reviewer agent should emit verdicts in a structured block at the end of its response:
 
@@ -90,7 +90,7 @@ CONFIDENCE: HIGH|MEDIUM|LOW
 BLOCKERS: <count>
 ```
 
-Update `agents/task-reviewer.md` and `agents/code-reviewer.md` (from plan 01 addendum) with an explicit "Output Format" section demanding this block as the final lines.
+Update `agents/implementation-reviewer.md` and `agents/quality-reviewer.md` (from plan 01 addendum) with an explicit "Output Format" section demanding this block as the final lines.
 
 `bin/pipeline-parse-review` should extract only from this anchored block:
 
@@ -232,8 +232,8 @@ For each task `$t` in the current parallel group:
      - If attempts >= 3: mark `.status = needs_human_review`, `pipeline-gh-comment --type ci-escalation`, jump to step 7
 
 4. **Spawn Reviewers**
-   - Always: spawn `task-reviewer` with `$worktree_path` and task context
-   - If `risk_level == security`: also spawn `code-reviewer` (and any user-provided security-reviewer/architecture-reviewer that exist)
+   - Always: spawn `implementation-reviewer` with `$worktree_path` and task context
+   - If `risk_level == security`: also spawn `quality-reviewer` (and any user-provided security-reviewer/architecture-reviewer that exist)
    - All reviewers run in parallel (emit one assistant message with N Agent calls)
 
 5. **Parse Verdicts**

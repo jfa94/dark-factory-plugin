@@ -55,7 +55,9 @@ Multiple entries in `agents` run in parallel — emit them in a single assistant
 ## Stage transitions
 
 ```
-preflight  → postexec
+preflight     → preexec_tests  (spawns test-writer; stage_after=preexec_tests)
+preexec_tests → postexec       (RED_READY → spawns task-executor; stage_after=postexec)
+preexec_tests → terminal       (BLOCKED → task failed)
 postexec   → postreview     (claude reviewer path)
 postexec   → postreview     (via exit 0 fall-through, codex path writes review-file inline)
 postreview → postexec       (REQUEST_CHANGES, retry loop)
@@ -65,7 +67,7 @@ ship       → terminal       (ci green → done; ci red retries → failed)
 finalize-run → terminal     (scribe spawn, final PR, cleanup, run status=done)
 ```
 
-Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already at or past the requested marker (`preflight_done`, `postexec_done`, `postreview_done`, `ship_done`), the stage short-circuits with exit 0. Resume is therefore idempotent — re-invoking `--stage preflight` after the wrapper wrote `preflight_done` is a no-op.
+Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already at or past the requested marker (`preflight_done`, `preexec_tests_done`, `postexec_done`, `postreview_done`, `ship_done`), the stage short-circuits with exit 0. Resume is therefore idempotent — re-invoking `--stage preflight` after the wrapper wrote `preflight_done` is a no-op.
 
 ## Per-stage summaries
 
@@ -75,18 +77,30 @@ Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already 
 - Deps (`pipeline-state deps-satisfied`) — unsatisfied → exit 30 (skip for now; orchestrator will return to this task at the group boundary).
 - Classify (`pipeline-classify-task`, `pipeline-classify-risk`) — writes `.tasks.<id>.classify`, `.risk`, `.risk_tier`.
 - Quota gate C (`pipeline_quota_gate "<risk_tier>" "task-<id>"`) — 0 / 2 / 3 per exit table.
-- Prompt build (`pipeline-build-prompt`) — writes `.state/<run-id>/<id>.executor-prompt.md`.
-- Transitions status to `executing`, writes `stage=preflight_done`, exit 10 with task-executor manifest.
+- Writes test-writer prompt to `.state/<run-id>/<id>.test-writer-prompt.md`.
+- Transitions status to `executing`, writes `stage=preflight_done`, exit 10 with **test-writer** manifest (`stage_after=preexec_tests`).
+
+### preexec_tests
+
+- Reads `.tasks.<id>.test_writer_status` (written by `SubagentStop` hook when test-writer completes).
+- Resume path: if `test_writer_status` is absent, checks git log for a `test(<scope>): failing tests for <task-id> [<task-id>]` commit on the task branch — if found, treats as `RED_READY`.
+- `BLOCKED` → `status=failed`, exit 30.
+- `RED_READY` → builds executor prompt (`pipeline-build-prompt`), writes `stage=preexec_tests_done`, exit 10 with **task-executor** manifest (`stage_after=postexec`). Model and maxTurns come from `.tasks.<id>.classify`.
 
 ### postexec
 
 - Reads `.tasks.<id>.worktree` (written by `SubagentStop` hook); falls back to `--worktree` arg.
 - Quality gate (`pipeline-quality-gate`) — fail → exit 30.
+- TDD gate (`pipeline-tdd-gate --task-id <id> --run-id <run-id> --base staging`) — fail → exit 30. Validates test-before-impl commit ordering (test commits must precede impl commits).
 - Coverage gate (`pipeline-coverage-gate --task-id <id>`) — fail → exit 30. Emitted metric is `task.gate.coverage task_id=<id>`.
-- Holdout (`pipeline-holdout-validate`) — if a holdout file exists and no prior reviewer output, spawns a `task-reviewer` manifest (exit 10, re-invoke `postexec`). Second pass runs `check` → fail → exit 30, pass → continue.
+- Holdout (`pipeline-holdout-validate`) — if a holdout file exists and no prior reviewer output, spawns a `implementation-reviewer` manifest (exit 10, re-invoke `postexec`). Second pass runs `check` → fail → exit 30, pass → continue.
 - Reviewer detection (`pipeline-detect-reviewer --base staging`) + provider metric.
-- Codex path: runs `pipeline-codex-review` inline, writes `.state/<run-id>/<id>.review.codex.json`, records path in `.tasks.<id>.review_files`, sets `stage=postexec_done`, exit 0.
-- Claude path: writes reviewer prompt to `.state/<run-id>/<id>.reviewer-prompt.md`, emits manifest with risk-tier fan-out (routine → 1 reviewer; feature → +architecture-reviewer; security → +code-reviewer/security-reviewer/architecture-reviewer), exit 10.
+- Always emits two parallel reviewers:
+  - Slot 1: **implementation-reviewer** (spec alignment — does the code satisfy spec intent?).
+  - Slot 2 Codex path: runs `pipeline-codex-review` inline as quality-reviewer, writes `.state/<run-id>/<id>.review.codex.json`, adds path to `.tasks.<id>.review_files`.
+  - Slot 2 Claude path: adds `quality-reviewer` agent to manifest.
+- Risk-tier fan-out: `feature` → adds `architecture-reviewer`; `security` → adds `security-reviewer` + `architecture-reviewer`.
+- Sets `stage=postexec_done`, exit 10 (spawn manifest) or exit 0 (Codex slot-2 with no additional agents).
 
 ### postreview
 
@@ -123,7 +137,8 @@ Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already 
 
 Each stage wraps its work in `log_step_begin / log_step_end` (defined in `pipeline-lib.sh`). In addition:
 
-- preflight → `task.executor_spawned`
+- preflight → `task.test_writer_spawned`
+- preexec_tests → `task.executor_spawned`
 - postexec → `task.review.provider`, `task.gate.quality`, `task.gate.coverage` (all `task_id`-scoped)
 - ship → `task.pr_created`, `task.ci` (via `emit_ci_metric`)
 - finalize-run → `run.final_pr_created`, `run.ci` (via `emit_ci_metric`)

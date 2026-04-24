@@ -14,7 +14,7 @@ dark-factory-plugin/
 ├── agents/
 │   ├── spec-generator.md        # PRD to spec conversion
 │   ├── task-executor.md         # Code generation in worktree
-│   └── task-reviewer.md         # Adversarial code review
+│   └── implementation-reviewer.md         # Adversarial code review
 ├── skills/
 │   └── review-protocol/
 │       └── SKILL.md             # Actor-Critic review methodology
@@ -135,7 +135,7 @@ Implements a single task from the spec in an isolated worktree.
 - Runs tests and auto-fixes failures (max 3 attempts)
 - Commits with task_id reference
 
-### task-reviewer
+### implementation-reviewer
 
 Fresh-context adversarial code review with structured verdicts.
 
@@ -244,7 +244,7 @@ Validates spec output before task execution begins.
 - Returns structured PASS/NEEDS_REVISION verdict (score >= 54/60 required)
 - Spawned by spec-generator; failure triggers regeneration (max 5 iterations)
 
-### code-reviewer
+### quality-reviewer
 
 Fresh-context code review with semi-formal reasoning and structured findings.
 
@@ -261,7 +261,7 @@ Fresh-context code review with semi-formal reasoning and structured findings.
 - Uses evidence-first grounding: every finding quotes the code
 - Signal-over-noise filtering: scores likelihood × impact, drops low-signal findings
 - Output is structured and parseable by `pipeline-parse-review`
-- Spawned for security-tier tasks alongside task-reviewer
+- Spawned for security-tier tasks alongside implementation-reviewer
 
 ---
 

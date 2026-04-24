@@ -1,6 +1,6 @@
-# task-reviewer prompt template
+# implementation-reviewer prompt template
 
-Canonical prompt template for `task-reviewer`, `code-reviewer`, `security-reviewer`, `architecture-reviewer` spawns. Every reviewer reads its role-specific instructions from its agent card (`agents/<role>.md`); this template is the **invocation wrapper** the pipeline layers on top.
+Canonical prompt template for `implementation-reviewer`, `quality-reviewer`, `security-reviewer`, `architecture-reviewer` spawns. Every reviewer reads its role-specific instructions from its agent card (`agents/<role>.md`); this template is the **invocation wrapper** the pipeline layers on top.
 
 ## Your job
 
@@ -10,7 +10,7 @@ Review the diff in the worktree for task `<task-id>`. Return a strict verdict th
 
 - Worktree path containing the committed task changes.
 - `task_id` + acceptance_criteria + tests_to_write (from the spec).
-- Role-specific focus: task-reviewer (general), code-reviewer (injection/auth/crypto/input-validation), security-reviewer (OWASP + supply chain), architecture-reviewer (module boundaries, coupling, AI anti-patterns).
+- Role-specific focus: implementation-reviewer (general), quality-reviewer (injection/auth/crypto/input-validation), security-reviewer (OWASP + supply chain), architecture-reviewer (module boundaries, coupling, AI anti-patterns).
 
 ## Process
 

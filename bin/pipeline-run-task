@@ -340,10 +340,14 @@ _stage_postexec() {
   if [[ -f "$cov_before" && -f "$cov_after" ]]; then
     if ! pipeline-coverage-gate "$cov_before" "$cov_after" --task-id "$task_id" >/dev/null; then
       log_warn "coverage gate failed for $task_id"
+      _task_write quality_gates.coverage '"fail"'
       t1=$(_now_ms)
       log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"coverage\""
       return 30
     fi
+    _task_write quality_gates.coverage '"ok"'
+  else
+    _task_write quality_gates.coverage '"skipped"'
   fi
 
   local holdout_file="$run_dir/holdouts/$task_id.json"
@@ -520,6 +524,83 @@ _stage_postreview() {
   return 0
 }
 
+# Write a ship checklist JSON to .tasks/<task_id>.ship_checklist.json inside
+# the run directory. Reads gate results already stored in state.
+_write_ship_checklist() {
+  local checklist_dir="$run_dir/.tasks"
+  mkdir -p "$checklist_dir"
+  local checklist_file="$checklist_dir/${task_id}.ship_checklist.json"
+
+  # tdd_gate: read from quality_gates.tdd.ok (true/false/null) + exempt flag.
+  local tdd_ok tdd_exempt tdd_gate
+  tdd_ok=$(jq -r --arg t "$task_id" '.tasks[$t].quality_gates.tdd.ok // "null"' "$state_file" 2>/dev/null || printf 'null')
+  tdd_exempt=$(jq -r --arg t "$task_id" '.tasks[$t].quality_gates.tdd.exempt // false' "$state_file" 2>/dev/null || printf 'false')
+  if [[ "$tdd_exempt" == "true" ]]; then
+    tdd_gate="skipped"
+  elif [[ "$tdd_ok" == "true" ]]; then
+    tdd_gate="ok"
+  elif [[ "$tdd_ok" == "false" ]]; then
+    tdd_gate="fail"
+  else
+    # tdd_gate result absent — treat as skipped (task may be tdd_exempt at tasks.json level)
+    tdd_gate="skipped"
+  fi
+
+  # coverage_gate: read from quality_gates.coverage (ok|fail|skipped).
+  local cov_raw coverage_gate
+  cov_raw=$(_task_field 'quality_gates.coverage' 2>/dev/null || printf '')
+  cov_raw=$(printf '%s' "$cov_raw" | tr -d '"')
+  case "$cov_raw" in
+    ok|fail|skipped) coverage_gate="$cov_raw" ;;
+    *) coverage_gate="skipped" ;;
+  esac
+
+  # quality_gate: from quality_gate.ok (true/false).
+  local qok quality_gate
+  qok=$(jq -r --arg t "$task_id" '.tasks[$t].quality_gate.ok // false' "$state_file" 2>/dev/null || printf 'false')
+  quality_gate=$([[ "$qok" == "true" ]] && printf 'ok' || printf 'fail')
+
+  # review_blockers_resolved: true if postreview_done (no pending blockers).
+  local stage_cur review_blockers_resolved
+  stage_cur=$(_task_field stage 2>/dev/null || printf '')
+  stage_cur=$(printf '%s' "$stage_cur" | tr -d '"')
+  review_blockers_resolved=$([[ "$stage_cur" == "postreview_done" ]] && printf 'true' || printf 'false')
+
+  # ci_status: from task state (green|pending|red). Map to checklist values.
+  local ci_raw ci_status
+  ci_raw=$(_task_field ci_status 2>/dev/null || printf '')
+  ci_raw=$(printf '%s' "$ci_raw" | tr -d '"')
+  case "$ci_raw" in
+    green) ci_status="green" ;;
+    red)   ci_status="red"   ;;
+    *)     ci_status="pending" ;;
+  esac
+
+  local iso_now
+  iso_now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
+
+  jq -n \
+    --arg task_id        "$task_id" \
+    --arg tdd_gate       "$tdd_gate" \
+    --arg coverage_gate  "$coverage_gate" \
+    --arg quality_gate   "$quality_gate" \
+    --argjson review_blockers_resolved "$review_blockers_resolved" \
+    --arg ci_status      "$ci_status" \
+    --arg generated_at   "$iso_now" \
+    '{
+      task_id:                  $task_id,
+      tdd_gate:                 $tdd_gate,
+      coverage_gate:            $coverage_gate,
+      quality_gate:             $quality_gate,
+      review_blockers_resolved: $review_blockers_resolved,
+      ci_status:                $ci_status,
+      generated_at:             $generated_at
+    }' > "$checklist_file"
+
+  log_metric "task.ship_checklist_written" "task_id=\"$task_id\"" "tdd=\"$tdd_gate\"" \
+    "coverage=\"$coverage_gate\"" "quality=\"$quality_gate\"" "ci=\"$ci_status\""
+}
+
 # --- ship -------------------------------------------------------------------
 _stage_ship() {
   local t0 t1
@@ -599,6 +680,8 @@ _stage_ship() {
     log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\""
     return 30
   fi
+
+  _write_ship_checklist
 
   local pr_url pr_number pr_title
   pr_title=$(pipeline-branch task-pr-title "$task_id" --run-id "$run_id")

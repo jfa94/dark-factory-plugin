@@ -1320,6 +1320,77 @@ assert_eq "executor_status=BLOCKED written to state after 2nd block" "BLOCKED" "
 rm -rf "$retry_stubs"
 
 # ============================================================
+# Ship checklist guard tests
+# ============================================================
+
+echo ""
+echo "=== pretooluse-pipeline-guards: ship checklist — PR allowed when full checklist ok ==="
+
+_seed_run "run-checklist-ok" '{"status":"running","tasks":{"task-sc":{"status":"reviewing","stage":"postreview_done","quality_gate":{"ok":true},"quality_gates":{"tdd":{"ok":true,"exempt":false},"coverage":"ok"}}}}'
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/run-checklist-ok/.tasks"
+jq -n '{
+  task_id:"task-sc", tdd_gate:"ok", coverage_gate:"ok",
+  quality_gate:"ok", review_blockers_resolved:true,
+  ci_status:"pending", generated_at:"2026-04-24T00:00:00Z"
+}' > "$CLAUDE_PLUGIN_DATA/runs/run-checklist-ok/.tasks/task-sc.ship_checklist.json"
+input='{"tool_input":{"command":"gh pr create --base staging --title foo"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_TASK_ID=task-sc bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "checklist-ok exit 0" "0" "$rc"
+assert_eq "checklist-ok no deny" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: ship checklist — PR blocked when tdd_gate=fail ==="
+
+_seed_run "run-checklist-tdd-fail" '{"status":"running","tasks":{"task-sc":{"status":"reviewing","quality_gate":{"ok":true}}}}'
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/run-checklist-tdd-fail/.tasks"
+jq -n '{
+  task_id:"task-sc", tdd_gate:"fail", coverage_gate:"ok",
+  quality_gate:"ok", review_blockers_resolved:true,
+  ci_status:"pending", generated_at:"2026-04-24T00:00:00Z"
+}' > "$CLAUDE_PLUGIN_DATA/runs/run-checklist-tdd-fail/.tasks/task-sc.ship_checklist.json"
+input='{"tool_input":{"command":"gh pr create --base staging --title foo"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_TASK_ID=task-sc bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "checklist-tdd-fail exit 0" "0" "$rc"
+decision=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // empty')
+assert_eq "checklist-tdd-fail denies" "deny" "$decision"
+reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+assert_eq "checklist-tdd-fail reason mentions tdd_gate" "true" \
+  "$(printf '%s' "$reason" | grep -q 'tdd_gate' && echo true || echo false)"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: ship checklist — PR blocked when checklist missing + quality_gate not ok ==="
+
+_seed_run "run-checklist-missing-bad" '{"status":"running","tasks":{"task-sc":{"status":"reviewing","quality_gate":{"ok":false}}}}'
+# No checklist file — backwards compat path
+input='{"tool_input":{"command":"gh pr create --base staging --title foo"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_TASK_ID=task-sc bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "checklist-missing-bad exit 0" "0" "$rc"
+decision=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // empty')
+assert_eq "checklist-missing-bad denies" "deny" "$decision"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: ship checklist — PR allowed when checklist missing but quality_gate ok ==="
+
+_seed_run "run-checklist-missing-ok" '{"status":"running","tasks":{"task-sc":{"status":"reviewing","quality_gate":{"ok":true}}}}'
+# No checklist file — backwards compat: falls through to quality_gate check
+input='{"tool_input":{"command":"gh pr create --base staging --title foo"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_TASK_ID=task-sc bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "checklist-missing-ok exit 0" "0" "$rc"
+assert_eq "checklist-missing-ok no deny" "" "$out"
+
+# ============================================================
 echo ""
 echo "=== All hook scripts are executable ==="
 

@@ -12,7 +12,10 @@
 #     "permissionDecision":"deny","permissionDecisionReason":"..."}}
 #
 # Invariants enforced:
-#   1. `gh pr create` for task $t requires .tasks.$t.quality_gate.ok == true.
+#   1. `gh pr create` for task $t — if .tasks/<t>.ship_checklist.json exists,
+#      checks tdd_gate (ok|skipped), coverage_gate (ok|skipped), quality_gate (ok),
+#      and review_blockers_resolved (true). Falls back to quality_gate.ok only if
+#      no checklist file exists (backwards compat).
 #   2. `gh pr merge` for task $t requires .tasks.$t.pr_number and
 #      .tasks.$t.ci_status == "green".
 #   3. `pipeline-state task-status <run> <task> done` requires .worktree,
@@ -121,9 +124,35 @@ fi
 # --- 1. gh pr create ---
 if [[ "$cmd" =~ ^[[:space:]]*gh[[:space:]]+pr[[:space:]]+create ]]; then
   [[ -z "$task_id" ]] && exit 0  # can't attribute — let it through
-  qok=$(jq -r --arg t "$task_id" '.tasks[$t].quality_gate.ok // false' "$state_file")
-  if [[ "$qok" != "true" ]]; then
-    deny "pipeline invariant: gh pr create for task $task_id requires .tasks.$task_id.quality_gate.ok == true (current: $qok). Run pipeline-run-task \"$run_id\" $task_id --stage postexec first."
+
+  checklist_file="$run_dir/.tasks/${task_id}.ship_checklist.json"
+  if [[ -f "$checklist_file" ]]; then
+    # Full checklist check.
+    cl_tdd=$(jq -r '.tdd_gate // "fail"' "$checklist_file" 2>/dev/null)
+    cl_cov=$(jq -r '.coverage_gate // "fail"' "$checklist_file" 2>/dev/null)
+    cl_qok=$(jq -r '.quality_gate // "fail"' "$checklist_file" 2>/dev/null)
+    cl_rbr=$(jq -r '.review_blockers_resolved // false' "$checklist_file" 2>/dev/null)
+
+    deny_reasons=()
+    [[ "$cl_tdd" != "ok" && "$cl_tdd" != "skipped" ]] && \
+      deny_reasons+=("tdd_gate=$cl_tdd (must be ok or skipped)")
+    [[ "$cl_cov" != "ok" && "$cl_cov" != "skipped" ]] && \
+      deny_reasons+=("coverage_gate=$cl_cov (must be ok or skipped)")
+    [[ "$cl_qok" != "ok" ]] && \
+      deny_reasons+=("quality_gate=$cl_qok (must be ok)")
+    [[ "$cl_rbr" != "true" ]] && \
+      deny_reasons+=("review_blockers_resolved=false")
+
+    if (( ${#deny_reasons[@]} > 0 )); then
+      reason_str=$(printf ', %s' "${deny_reasons[@]}"); reason_str="${reason_str:2}"
+      deny "pipeline invariant: gh pr create for task $task_id blocked by ship checklist: $reason_str"
+    fi
+  else
+    # Backwards compat: checklist absent — fall back to quality_gate.ok only.
+    qok=$(jq -r --arg t "$task_id" '.tasks[$t].quality_gate.ok // false' "$state_file")
+    if [[ "$qok" != "true" ]]; then
+      deny "pipeline invariant: gh pr create for task $task_id requires .tasks.$task_id.quality_gate.ok == true (current: $qok). Run pipeline-run-task \"$run_id\" $task_id --stage postexec first."
+    fi
   fi
 fi
 

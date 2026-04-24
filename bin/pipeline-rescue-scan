@@ -146,6 +146,26 @@ if [[ -n "$issue" ]]; then
   done < <(jq -r '.[] | [.number, .title, .url] | @tsv' <<<"$search_json")
 fi
 
+# I-16: every task with status=failed is flagged for investigation
+while IFS= read -r task_id; do
+  [[ -z "$task_id" ]] && continue
+  investigation+=("$(jq -n --arg id I-16 --arg task "$task_id" '{id: $id, task_id: $task, reason: "task status=failed"}')")
+done < <(jq -r '.tasks // {} | to_entries[] | select(.value.status == "failed") | .key' "$state")
+
+# I-14: orphan task branches in the local repo with no matching state entry
+if [[ -n "$issue" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+  while IFS= read -r branch; do
+    [[ -z "$branch" ]] && continue
+    slug="${branch##*/}"
+    found=$(jq -r --arg s "$slug" '.tasks // {} | to_entries[] | select((.value.task_id // "") | ascii_downcase | test($s; "i")) | .key' "$state" | head -n1)
+    if [[ -z "$found" ]]; then
+      investigation+=("$(jq -n --arg id I-14 --arg branch "$branch" '{id: $id, task_id: null, branch: $branch, reason: "orphan branch, no state entry"}')")
+    fi
+  done < <(git branch --list "dark-factory/$issue/*" --format='%(refname:short)' 2>/dev/null)
+fi
+
+# I-13 is emitted by pipeline-rescue-apply when a rebase attempt fails; not scan's responsibility.
+
 # Emit
 mech_json='[]'
 [[ ${#mechanical[@]} -gt 0 ]] && mech_json=$(printf '%s\n' "${mechanical[@]}" | jq -s '.')

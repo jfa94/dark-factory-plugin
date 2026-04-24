@@ -170,6 +170,25 @@ PATH="$CLAUDE_PLUGIN_DATA/mock3:$PATH" pipeline-rescue-scan R1 > "$CLAUDE_PLUGIN
 i15=$(jq '[.mechanical_issues[] | select(.id == "I-15")] | length' "$CLAUDE_PLUGIN_DATA/scan.json")
 assert_eq "I-15 detected" "1" "$i15"
 
+echo "=== I-16: failed task is flagged for investigation ==="
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/R1"
+cat > "$CLAUDE_PLUGIN_DATA/runs/R1/state.json" <<'JSON'
+{
+  "run_id": "R1",
+  "status": "running",
+  "input": {"issue_numbers": [112]},
+  "tasks": {
+    "T1": {"task_id": "T1", "status": "failed", "failure_reason": "something"}
+  }
+}
+JSON
+ln -sfn "$CLAUDE_PLUGIN_DATA/runs/R1" "$CLAUDE_PLUGIN_DATA/runs/current"
+PATH="$CLAUDE_PLUGIN_DATA/mock:$PATH" pipeline-rescue-scan R1 > "$CLAUDE_PLUGIN_DATA/scan.json"
+i16=$(jq '[.investigation_flags[] | select(.id == "I-16")] | length' "$CLAUDE_PLUGIN_DATA/scan.json")
+assert_eq "I-16 flagged" "1" "$i16"
+i16_task=$(jq -r '[.investigation_flags[] | select(.id == "I-16")][0].task_id' "$CLAUDE_PLUGIN_DATA/scan.json")
+assert_eq "I-16 task_id" "T1" "$i16_task"
+
 echo
 echo "Passed: $pass | Failed: $fail"
 [[ $fail -eq 0 ]]

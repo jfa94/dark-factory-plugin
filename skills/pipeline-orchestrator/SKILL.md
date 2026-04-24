@@ -54,11 +54,17 @@ case $rc in
 esac
 ```
 
-`_next_stage` is a local helper: `preflight → postexec → postreview → ship → done`.
+`_next_stage` is a local helper: `preflight → preexec_tests → postexec → postreview → ship → done`.
 
 On exit 10, read `out.agents`, and emit one assistant message with one `Agent()` call per manifest entry, preserving `subagent_type`, `isolation`, `model`, `maxTurns`, and loading the prompt from `prompt_file`. The `SubagentStop` hook writes worktree + STATUS back to state; you do not forward anything.
 
 After the fan-out returns, re-invoke `pipeline-run-task` with `--stage $(jq -r '.stage_after' <<<"$out")`. For `postreview`, collect the review files the hook wrote (`.state/<run-id>/<task-id>.review.<agent>.md`) and pass each via `--review-file`.
+
+The two-phase TDD flow is fully handled by the wrapper:
+
+1. `preflight` spawns the **test-writer** (`stage_after=preexec_tests`).
+2. `preexec_tests` checks that the test-writer wrote failing tests (`RED_READY`), then spawns the **task-executor** (`stage_after=postexec`).
+3. `postexec` runs `pipeline-tdd-gate` (among other gates) to verify test-before-impl commit ordering before spawning reviewers.
 
 ## Startup
 

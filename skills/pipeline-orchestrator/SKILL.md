@@ -35,6 +35,45 @@ Thoughts that mean STOP — you are rationalizing:
 | "I'll skip `pipeline-human-gate` when `humanReviewLevel == 0`"   | The wrapper checks the level. Call the gate wrapper and react to exit 20.                                                                                     |
 | "CI is still pending; I'll just wait here"                       | The asyncRewake hook wakes you when CI terminalizes. If it is unavailable, the wrapper falls back to `FACTORY_ASYNC_CI=off`. Do not poll manually.            |
 
+## Decision Flow
+
+```dot
+digraph orchestrator_loop {
+  rankdir=TB;
+  "Message received" [shape=doublecircle];
+  "Active run?" [shape=diamond];
+  "Pending task?" [shape=diamond];
+  "Preflight ok? (exit 0)" [shape=diamond];
+  "Spawn phase\n(read out.agents, emit Agent())" [shape=box];
+  "Start new run\n(pipeline-init)" [shape=box];
+  "All tasks done?" [shape=diamond];
+  "Finalize run" [shape=box];
+  "STOP (all complete)" [shape=doublecircle];
+
+  "Message received" -> "Active run?" ;
+  "Active run?" -> "Pending task?" [label="yes"];
+  "Active run?" -> "Start new run\n(pipeline-init)" [label="no"];
+  "Start new run\n(pipeline-init)" -> "Pending task?";
+  "Pending task?" -> "Preflight ok? (exit 0)" [label="yes"];
+  "Pending task?" -> "All tasks done?" [label="no"];
+  "Preflight ok? (exit 0)" -> "Spawn phase\n(read out.agents, emit Agent())" [label="yes → exit 10"];
+  "Preflight ok? (exit 0)" -> "Pending task?" [label="no → exit 2 (quota/stop) or exit 3 (retry)"];
+  "Spawn phase\n(read out.agents, emit Agent())" -> "Pending task?" [label="loop"];
+  "All tasks done?" -> "Finalize run" [label="yes"];
+  "All tasks done?" -> "Pending task?" [label="no (waiting)"];
+  "Finalize run" -> "STOP (all complete)";
+}
+```
+
+## Commitment Protocol
+
+Before spawning any phase, the orchestrator MUST:
+
+1. **Announce:** Output "Spawning `<stage>` for task `<task_id>`" as plain text before the Agent() call.
+2. **TodoWrite:** Write one TodoWrite item per task × phase being spawned. Mark it `in_progress` immediately, `completed` when the subagent returns.
+
+These are not optional. They create an audit trail and prevent silent skips.
+
 ## Per-Task Loop (the entire orchestrator body)
 
 For each task `$t` in the current parallel group, repeat this block until the wrapper returns 0, 2, 20, or 30:

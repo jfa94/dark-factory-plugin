@@ -236,6 +236,168 @@ assert_eq "codex invalid JSON exits 1" "1" "$exit_code"
 
 # ============================================================
 echo ""
+echo "=== pipeline-parse-review (JSON schema — APPROVED) ==="
+
+json_approve_input='Some prose before the block.
+
+```json
+{
+  "verdict": "APPROVED",
+  "summary": "All criteria satisfied",
+  "findings": [],
+  "notes": "LGTM"
+}
+```
+
+STATUS: DONE'
+
+output=$(printf '%s' "$json_approve_input" | pipeline-parse-review 2>/dev/null)
+assert_eq "json APPROVED → normalized APPROVE" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
+assert_eq "json summary extracted" "All criteria satisfied" "$(echo "$output" | jq -r '.summary')"
+assert_eq "json findings empty array" "0" "$(echo "$output" | jq '.findings | length')"
+assert_eq "json reviewer tag" "claude-code" "$(echo "$output" | jq -r '.reviewer')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON schema — REQUEST_CHANGES) ==="
+
+json_changes_input='Review prose.
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "summary": "SQL injection found",
+  "findings": [
+    {
+      "file": "src/db.ts",
+      "line": 23,
+      "evidence": "query = \"SELECT * FROM users WHERE id=\" + userId",
+      "severity": "critical",
+      "description": "Unparameterized query allows SQL injection"
+    },
+    {
+      "file": "src/handler.ts",
+      "line": 15,
+      "evidence": "req.body.email",
+      "severity": "important",
+      "description": "email used without validation"
+    }
+  ]
+}
+```
+
+STATUS: DONE'
+
+output=$(printf '%s' "$json_changes_input" | pipeline-parse-review 2>/dev/null)
+assert_eq "json REQUEST_CHANGES verdict" "REQUEST_CHANGES" "$(echo "$output" | jq -r '.verdict')"
+assert_eq "json findings count 2" "2" "$(echo "$output" | jq '.findings | length')"
+assert_eq "json first finding file" "src/db.ts" "$(echo "$output" | jq -r '.findings[0].file')"
+assert_eq "json first finding evidence present" "true" \
+  "$(echo "$output" | jq -r '(.findings[0].evidence | length) > 0' )"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON schema — evidence stripped when too short) ==="
+
+json_strip_input='Review.
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "summary": "issues found",
+  "findings": [
+    {
+      "file": "src/a.ts",
+      "line": 1,
+      "evidence": "val",
+      "severity": "critical",
+      "description": "evidence too short, must be stripped"
+    },
+    {
+      "file": "src/b.ts",
+      "line": 2,
+      "evidence": "const x = null; // unguarded",
+      "severity": "critical",
+      "description": "valid evidence, kept"
+    }
+  ]
+}
+```'
+
+output=$(printf '%s' "$json_strip_input" | pipeline-parse-review 2>/dev/null)
+assert_eq "json stripped short-evidence finding" "1" "$(echo "$output" | jq '.findings | length')"
+assert_eq "json kept valid-evidence finding" "src/b.ts" "$(echo "$output" | jq -r '.findings[0].file')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON schema — NEEDS_DISCUSSION) ==="
+
+json_discuss_input='```json
+{
+  "verdict": "NEEDS_DISCUSSION",
+  "summary": "ambiguous auth boundary",
+  "findings": []
+}
+```'
+
+output=$(printf '%s' "$json_discuss_input" | pipeline-parse-review 2>/dev/null)
+assert_eq "json NEEDS_DISCUSSION verdict" "NEEDS_DISCUSSION" "$(echo "$output" | jq -r '.verdict')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON schema — invalid verdict rejected) ==="
+
+json_invalid_verdict='```json
+{"verdict": "MAYBE", "summary": "x", "findings": []}
+```'
+
+set +e
+printf '%s' "$json_invalid_verdict" | pipeline-parse-review >/dev/null 2>&1
+exit_code=$?
+set -e
+assert_eq "json invalid verdict exits 1" "1" "$exit_code"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON schema — falls back to prose when no JSON block) ==="
+
+# Prose-only input with no ```json block should still parse via legacy path
+prose_fallback_input='## Findings
+
+## Summary
+All good.
+
+## Verdict
+
+VERDICT: APPROVE
+CONFIDENCE: HIGH
+BLOCKERS: 0
+ROUND: 1'
+
+output=$(printf '%s' "$prose_fallback_input" | pipeline-parse-review 2>/dev/null)
+assert_eq "prose fallback verdict APPROVE" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
+assert_eq "prose fallback confidence HIGH" "HIGH" "$(echo "$output" | jq -r '.confidence')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON schema — last block wins when multiple present) ==="
+
+json_multi_block='```json
+{"verdict": "REQUEST_CHANGES", "summary": "first block", "findings": [{"file":"a.ts","line":1,"evidence":"bad code here","severity":"critical","description":"old"}]}
+```
+
+More analysis...
+
+```json
+{"verdict": "APPROVED", "summary": "second block wins", "findings": []}
+```'
+
+output=$(printf '%s' "$json_multi_block" | pipeline-parse-review 2>/dev/null)
+assert_eq "last json block wins" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
+assert_eq "last json block summary" "second block wins" "$(echo "$output" | jq -r '.summary')"
+
+# ============================================================
+echo ""
 echo "=== pipeline-coverage-gate (coverage increase) ==="
 
 before_file="$CLAUDE_PLUGIN_DATA/before.json"

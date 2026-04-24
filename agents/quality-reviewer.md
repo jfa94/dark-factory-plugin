@@ -129,13 +129,15 @@ For each test file in the diff:
 
 ### Phase 6: Self-verification pass
 
-Before producing the verdict, walk back through every finding you plan to report and check:
+Before emitting the JSON verdict block, walk back through every finding you plan to include and check:
 
-- [ ] Does each finding have a direct code quote (file:line + verbatim lines)?
-- [ ] Does each non-trivial finding follow the PREMISE → EVIDENCE → TRACE → CONCLUSION structure?
+- [ ] Does each finding have a non-empty `evidence` field — an exact verbatim quote (>= 5 chars) from the diff? If not, drop it — the parser will reject evidence-less findings.
+- [ ] Does each non-trivial finding follow the PREMISE → EVIDENCE → TRACE → CONCLUSION structure in its `description`?
 - [ ] Have you explained WHY the code looks correct where it is? (Avoid rubber-stamping — cite specific verification you performed.)
 - [ ] Are any findings from general knowledge rather than the code in front of you? If so, drop them.
 - [ ] Total findings ≤ 7? If more, rank by (likelihood × impact) and drop the tail.
+- [ ] Is `verdict` exactly one of `APPROVED`, `REQUEST_CHANGES`, or `NEEDS_DISCUSSION`?
+- [ ] When `verdict` is `APPROVED`, is `findings` an empty array `[]`?
 
 ## Hard Rules
 
@@ -146,43 +148,35 @@ Before producing the verdict, walk back through every finding you plan to report
 - **NEVER report a finding without a code quote as evidence.**
 - **NEVER use knowledge outside the code + provided criteria** to judge bugs. If you haven't traced it, you haven't found it.
 
-## Output
+## Output Format
 
-Produce your review in the exact structured format from the `review-protocol` skill. This output will be parsed by `pipeline-parse-review` — deviating from the format will cause parse failures.
+Emit a single JSON code block as your final output:
 
-### Required final block
-
-The LAST section of your response MUST be a `## Verdict` block with this exact shape:
-
-```
-## Verdict
-
-VERDICT: APPROVE|REQUEST_CHANGES|NEEDS_DISCUSSION
-CONFIDENCE: HIGH|MEDIUM|LOW
-BLOCKERS: <integer count of BLOCKING findings, 0 if none>
-ROUND: <round number>
-```
-
-`pipeline-parse-review` extracts verdict/confidence/blockers ONLY from inside this block. Mentioning the words VERDICT/CONFIDENCE/BLOCKERS anywhere else (including phrases like "I would not approve") does not satisfy the requirement. Omitting the block fails parsing.
-
-Severity taxonomy for findings:
-
-- **[BLOCKING]** — CRITICAL: security vulnerability, data loss, or logic error that will misbehave in production. Triggers REQUEST_CHANGES.
-- **[NON-BLOCKING]** — WARNING/NOTE: lower-confidence or lower-impact improvements. Noted only.
-
-Each finding must include:
-
-```
-### [BLOCKING|NON-BLOCKING] <short title>
-- **File:** <path>:<line>
-- **Severity:** critical|major|minor
-- **Category:** security|correctness|performance|tests|style
-- **Description:** <one sentence of what's wrong>
-- **Evidence:** <verbatim code quote — required>
-- **Trace:** <for BLOCKING findings, the PREMISE → EVIDENCE → TRACE → CONCLUSION chain>
-- **Suggestion:** <concrete fix>
+```json
+{
+  "verdict": "APPROVED" | "REQUEST_CHANGES" | "NEEDS_DISCUSSION",
+  "summary": "one sentence",
+  "findings": [
+    {
+      "file": "path/to/file.ts",
+      "line": 42,
+      "evidence": "<exact quote from diff>",
+      "severity": "critical" | "important" | "minor",
+      "description": "what is wrong and why"
+    }
+  ],
+  "notes": "optional free-form observations"
+}
 ```
 
-Final verdict: **APPROVE**, **REQUEST_CHANGES** (any BLOCKING finding), or **NEEDS_DISCUSSION** (unresolvable UNCERTAIN items that need human judgment).
+Rules:
+
+- `verdict` must be one of the three exact strings above
+- `findings` required when verdict is REQUEST_CHANGES; must be empty array [] when APPROVED
+- Each finding MUST include `evidence` — an exact quote (>= 5 chars) from the diff being reviewed
+- Findings without evidence are invalid and will be rejected by the parser
+- `line` is the line number in the file where the issue occurs (0 if unknown)
+
+Final verdict: **APPROVED**, **REQUEST_CHANGES** (any finding with evidence), or **NEEDS_DISCUSSION** (unresolvable UNCERTAIN items that need human judgment).
 
 Keep total findings to 3–7. If you have more, prioritize by (likelihood × impact) and drop the rest.

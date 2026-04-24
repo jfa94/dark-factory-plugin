@@ -32,12 +32,110 @@ if [[ "$reviewer" == "codex" ]]; then
   exit 1
 fi
 
-# --- Claude Code structured text parsing ---
-
 # Save raw to temp file for multi-pass parsing
 tmpfile=$(mktemp)
 printf '%s' "$raw" > "$tmpfile"
 trap 'rm -f "$tmpfile"' EXIT
+
+# =============================================================================
+# --- JSON schema path: extract last ```json ... ``` block ---
+# =============================================================================
+
+# Extract the last JSON code block from the review text
+json_block=$(awk '
+  /^```json/ { in_block=1; buf=""; next }
+  /^```/ && in_block { last=buf; in_block=0; next }
+  in_block { buf = buf $0 "\n" }
+  END { printf "%s", last }
+' "$tmpfile")
+
+if [[ -n "$json_block" ]] && printf '%s' "$json_block" | jq empty 2>/dev/null; then
+  # Validate required keys
+  has_verdict=$(printf '%s' "$json_block" | jq 'has("verdict")' 2>/dev/null)
+  has_findings=$(printf '%s' "$json_block" | jq 'has("findings")' 2>/dev/null)
+
+  if [[ "$has_verdict" == "true" && "$has_findings" == "true" ]]; then
+    # Validate verdict value
+    json_verdict=$(printf '%s' "$json_block" | jq -r '.verdict // ""')
+    case "$json_verdict" in
+      APPROVED|REQUEST_CHANGES|NEEDS_DISCUSSION) ;;
+      *)
+        log_error "invalid verdict in JSON block (got: '${json_verdict:-<empty>}')"
+        exit 1
+        ;;
+    esac
+
+    # Validate findings is array
+    findings_type=$(printf '%s' "$json_block" | jq -r '.findings | type' 2>/dev/null)
+    if [[ "$findings_type" != "array" ]]; then
+      log_error "findings must be an array in JSON block"
+      exit 1
+    fi
+
+    # Strip findings missing evidence (length < 5), log warnings
+    valid_findings=$(printf '%s' "$json_block" | jq '[
+      .findings[] |
+      if (.evidence // "" | length) >= 5 then . else empty end
+    ]')
+
+    # Count stripped findings and warn
+    total_findings=$(printf '%s' "$json_block" | jq '.findings | length')
+    valid_count=$(printf '%s' "$valid_findings" | jq 'length')
+    if (( valid_count < total_findings )); then
+      stripped=$(( total_findings - valid_count ))
+      log_warn "stripped $stripped finding(s) missing required evidence (>= 5 chars)"
+    fi
+
+    # Normalize verdict: map APPROVED -> APPROVE for pipeline-run-task compat
+    # pipeline-run-task reads .verdict and expects APPROVE|REQUEST_CHANGES|NEEDS_DISCUSSION
+    normalized_verdict="$json_verdict"
+    if [[ "$json_verdict" == "APPROVED" ]]; then
+      normalized_verdict="APPROVE"
+    fi
+
+    # Extract summary
+    json_summary=$(printf '%s' "$json_block" | jq -r '.summary // ""')
+
+    # Build normalized output matching the prose parser's schema
+    blocking_count=$(printf '%s' "$valid_findings" | jq '[.[] | select(.severity == "critical")] | length')
+    non_blocking_count=$(printf '%s' "$valid_findings" | jq "[.[] | select(.severity != \"critical\")] | length")
+
+    jq -n \
+      --arg verdict "$normalized_verdict" \
+      --argjson round 1 \
+      --arg confidence "HIGH" \
+      --argjson findings "$valid_findings" \
+      --argjson blocking_count "$blocking_count" \
+      --argjson non_blocking_count "$non_blocking_count" \
+      --argjson declared_blockers "$valid_count" \
+      --argjson criteria_passed 0 \
+      --argjson criteria_failed 0 \
+      --argjson holdout_passed 0 \
+      --argjson holdout_failed 0 \
+      --arg summary "$json_summary" \
+      --arg reviewer "$reviewer" \
+      '{
+        verdict: $verdict,
+        round: $round,
+        confidence: $confidence,
+        findings: $findings,
+        blocking_count: $blocking_count,
+        non_blocking_count: $non_blocking_count,
+        declared_blockers: $declared_blockers,
+        criteria_passed: $criteria_passed,
+        criteria_failed: $criteria_failed,
+        holdout_passed: $holdout_passed,
+        holdout_failed: $holdout_failed,
+        summary: $summary,
+        reviewer: $reviewer
+      }'
+    exit 0
+  fi
+fi
+
+# =============================================================================
+# --- Prose fallback: legacy ## Verdict block parser ---
+# =============================================================================
 
 # Extract the anchored Verdict block (everything between `## Verdict` and the
 # next top-level `## ` heading). The block is the *only* place where verdict,

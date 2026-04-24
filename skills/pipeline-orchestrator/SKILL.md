@@ -246,6 +246,8 @@ pipeline-branch worktree-remove "$orchestrator_wt"
 3. Per-task loop is idempotent: the wrapper's `_already_past` check short-circuits any stage whose terminal marker (`.tasks.$t.stage`) is already at or past the requested stage.
 4. Step 6 (orchestrator worktree) reuses `.orchestrator.worktree` from state.
 
+Before entering the per-task loop, run a preflight scan (see `reference/resume-protocol.md` "Preflight scan" section). Halt if any tier-2/3 issue or investigation flag is present and instruct the user to run `/factory:rescue`.
+
 See `reference/resume-protocol.md` for full details.
 
 ## Human review levels

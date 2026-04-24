@@ -62,3 +62,15 @@ If the session died after `pipeline-init` but before the first task entered the 
 - Do not delete `$CLAUDE_PLUGIN_DATA/runs/<run-id>/` to "start fresh" — it discards all spec/task/review state. Use `pipeline-cleanup "$run_id"` instead.
 - Do not hand-edit `state.json`. Every state write goes through `pipeline-state` for atomicity.
 - Do not assume the orchestrator remembers anything across sessions. Treat every resume as cold — state is the source of truth.
+
+## Preflight scan (resume)
+
+Starting with the rescue feature, resume runs a preflight check before entering the per-task loop:
+
+1. Orchestrator invokes `pipeline-rescue-scan "$run_id"`.
+2. If the report's `mechanical_issues` contains any entry with `tier >= 2` OR `investigation_flags` is non-empty:
+   - Halt with exit 2 and print `"Complex issues detected. Run /factory:rescue first."`
+   - Do not enter the per-task loop.
+3. Otherwise, tier-1 issues (if any) are auto-applied via `pipeline-rescue-apply --tier=safe`, and the resume continues as before.
+
+Rationale: resume is for trivial resumption. Complex recovery lives in `/factory:rescue`, which produces a clean state and then invokes resume itself.

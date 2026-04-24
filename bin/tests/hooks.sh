@@ -1069,6 +1069,112 @@ ARW_STALL_COUNT=$(printf '%s' "$ARW_ERR" | grep -c "stalled" || true)
 rm -rf "$ARW_DATA" "$ARW_STUBS"
 
 # ============================================================
+# subagent-stop-gate: autonomous blocking tests
+# ============================================================
+
+echo ""
+echo "=== subagent-stop-gate: non-autonomous mode passes even with missing STATUS ==="
+
+_seed_run "run-ssg-noauto" '{"status":"running","tasks":{"t1":{"status":"executing","branch":"feat/t1"}}}'
+set +e
+out=$(printf '{"agent_type":"task-executor","last_assistant_message":"I did some work."}' \
+  | bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "non-autonomous missing STATUS exit 0" "0" "$rc"
+assert_eq "non-autonomous no block output" "" "$out"
+
+echo ""
+echo "=== subagent-stop-gate: autonomous mode blocks on missing STATUS ==="
+
+_seed_run "run-ssg-block-status" '{"status":"running","tasks":{"t1":{"status":"executing","branch":"feat/t1"}}}'
+set +e
+out=$(printf '{"agent_type":"task-executor","last_assistant_message":"I finished the work but forgot the status line."}' \
+  | FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "autonomous missing STATUS exit 1" "1" "$rc"
+assert_eq "autonomous missing STATUS decision=block" "block" "$(printf '%s' "$out" | jq -r '.decision // empty')"
+assert_eq "autonomous missing STATUS reason mentions STATUS" "true" \
+  "$(printf '%s' "$out" | jq -r '.reason' | grep -q 'STATUS' && echo true || echo false)"
+
+echo ""
+echo "=== subagent-stop-gate: autonomous mode passes on STATUS: DONE ==="
+
+# Use implementation-reviewer which doesn't check commits, to isolate STATUS parsing
+_seed_run "run-ssg-reviewer-done" '{"status":"running","tasks":{}}'
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/run-ssg-reviewer-done/reviews"
+set +e
+out=$(jq -cn '{agent_type:"implementation-reviewer", last_assistant_message:"Looks good.\nSTATUS: DONE"}' \
+  | FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "autonomous STATUS: DONE reviewer exit 0" "0" "$rc"
+assert_eq "autonomous STATUS: DONE no block output" "" "$out"
+
+echo ""
+echo "=== subagent-stop-gate: autonomous mode passes on STATUS: NO_WORK ==="
+
+_seed_run "run-ssg-nowork" '{"status":"running","tasks":{}}'
+set +e
+out=$(jq -cn '{agent_type:"task-executor", last_assistant_message:"Nothing to do.\nSTATUS: NO_WORK"}' \
+  | FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "autonomous STATUS: NO_WORK exit 0" "0" "$rc"
+assert_eq "autonomous STATUS: NO_WORK no block" "" "$out"
+
+echo ""
+echo "=== subagent-stop-gate: autonomous mode passes on STATUS: SKIP ==="
+
+_seed_run "run-ssg-skip" '{"status":"running","tasks":{}}'
+set +e
+out=$(jq -cn '{agent_type:"task-executor", last_assistant_message:"Skipping.\nSTATUS: SKIP"}' \
+  | FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "autonomous STATUS: SKIP exit 0" "0" "$rc"
+assert_eq "autonomous STATUS: SKIP no block" "" "$out"
+
+echo ""
+echo "=== subagent-stop-gate: autonomous mode blocks on zero commits for executor ==="
+
+# Seed a run with a task that has a branch, but no commits on it vs staging
+# Use a branch name that won't exist so git log returns empty
+_seed_run "run-ssg-nocommit" '{"status":"running","tasks":{"t2":{"status":"executing","branch":"dark-factory/test-nonexistent-branch-xyz"}}}'
+set +e
+out=$(jq -cn '{agent_type:"task-executor", last_assistant_message:"Done!\nSTATUS: DONE"}' \
+  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t2 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+assert_eq "autonomous zero-commits exit 1" "1" "$rc"
+assert_eq "autonomous zero-commits decision=block" "block" "$(printf '%s' "$out" | jq -r '.decision // empty')"
+assert_eq "autonomous zero-commits reason mentions commits" "true" \
+  "$(printf '%s' "$out" | jq -r '.reason' | grep -qi 'commit' && echo true || echo false)"
+
+echo ""
+echo "=== subagent-stop-gate: retry counter increments and writes BLOCKED on 2nd block ==="
+
+_seed_run "run-ssg-retry" '{"status":"running","tasks":{"t3":{"status":"executing","branch":"dark-factory/test-nonexistent-branch-xyz"}}}'
+retry_dir="$CLAUDE_PLUGIN_DATA/runs/run-ssg-retry"
+
+# First block attempt
+set +e
+jq -cn '{agent_type:"task-executor", last_assistant_message:"No status."}' \
+  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t3 bash "$HOOKS_DIR/subagent-stop-gate.sh" >/dev/null 2>/dev/null
+set -e
+retry_count=$(cat "$retry_dir/.subagent_retries.t3" 2>/dev/null || echo 0)
+assert_eq "retry file = 1 after first block" "1" "$retry_count"
+
+# Second block attempt — should write BLOCKED to state
+set +e
+jq -cn '{agent_type:"task-executor", last_assistant_message:"No status."}' \
+  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t3 bash "$HOOKS_DIR/subagent-stop-gate.sh" >/dev/null 2>/dev/null
+set -e
+retry_count=$(cat "$retry_dir/.subagent_retries.t3" 2>/dev/null || echo 0)
+assert_eq "retry file = 2 after second block" "2" "$retry_count"
+
+# ============================================================
 echo ""
 echo "=== All hook scripts are executable ==="
 

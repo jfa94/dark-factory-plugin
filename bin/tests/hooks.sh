@@ -1158,10 +1158,25 @@ echo "=== subagent-stop-gate: retry counter increments and writes BLOCKED on 2nd
 _seed_run "run-ssg-retry" '{"status":"running","tasks":{"t3":{"status":"executing","branch":"dark-factory/test-nonexistent-branch-xyz"}}}'
 retry_dir="$CLAUDE_PLUGIN_DATA/runs/run-ssg-retry"
 
+# Stub pipeline-state so the BLOCKED write inside the hook succeeds in the test harness
+retry_stubs=$(mktemp -d)
+cat > "$retry_stubs/pipeline-state" <<'SH'
+#!/usr/bin/env bash
+# Stub: pipeline-state task-write <run_id> <task_id> <field> <value>
+# Writes the field directly to state.json via jq.
+run_id="$2"; task_id="$3"; field="$4"; value="$5"
+state="$CLAUDE_PLUGIN_DATA/runs/$run_id/state.json"
+[[ -f "$state" ]] || exit 0
+tmp=$(mktemp)
+jq --arg t "$task_id" --arg f "$field" --argjson v "$value" \
+  '.tasks[$t][$f] = $v' "$state" > "$tmp" && mv "$tmp" "$state"
+SH
+chmod +x "$retry_stubs/pipeline-state"
+
 # First block attempt
 set +e
 jq -cn '{agent_type:"task-executor", last_assistant_message:"No status."}' \
-  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t3 bash "$HOOKS_DIR/subagent-stop-gate.sh" >/dev/null 2>/dev/null
+  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t3 PATH="$retry_stubs:$PATH" bash "$HOOKS_DIR/subagent-stop-gate.sh" >/dev/null 2>/dev/null
 set -e
 retry_count=$(cat "$retry_dir/.subagent_retries.t3" 2>/dev/null || echo 0)
 assert_eq "retry file = 1 after first block" "1" "$retry_count"
@@ -1169,14 +1184,15 @@ assert_eq "retry file = 1 after first block" "1" "$retry_count"
 # Second block attempt — should write BLOCKED to state
 set +e
 jq -cn '{agent_type:"task-executor", last_assistant_message:"No status."}' \
-  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t3 bash "$HOOKS_DIR/subagent-stop-gate.sh" >/dev/null 2>/dev/null
+  | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t3 PATH="$retry_stubs:$PATH" bash "$HOOKS_DIR/subagent-stop-gate.sh" >/dev/null 2>/dev/null
 set -e
 retry_count=$(cat "$retry_dir/.subagent_retries.t3" 2>/dev/null || echo 0)
 assert_eq "retry file = 2 after second block" "2" "$retry_count"
 
-# Verify BLOCKED written to state.json after 2nd block (pipeline-state may not be available in test harness)
+# Verify BLOCKED written to state.json after 2nd block
 executor_status_after=$(jq -r '.tasks.t3.executor_status // empty' "$retry_dir/state.json" 2>/dev/null || true)
 assert_eq "executor_status=BLOCKED written to state after 2nd block" "BLOCKED" "$executor_status_after"
+rm -rf "$retry_stubs"
 
 # ============================================================
 echo ""

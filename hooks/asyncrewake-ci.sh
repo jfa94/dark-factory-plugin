@@ -85,7 +85,9 @@ for _ in $(seq 1 $max_iter); do
 done
 
 # Phase 2: If CI passed, wait for auto-merge to land. max 5m @ 10s = 30 polls.
-state="$ci_conclusion"
+# ci_status always reflects the check outcome (green/red/timeout).
+# merge_status is separate: merged|stalled|n/a (n/a when ci not green).
+merge_status="n/a"
 if [[ "$ci_conclusion" == "green" ]]; then
   merge_max=${ASYNCREWAKE_MERGE_MAX:-30}
   merge_sleep=${ASYNCREWAKE_MERGE_SLEEP:-10}
@@ -99,25 +101,28 @@ if [[ "$ci_conclusion" == "green" ]]; then
       break
     fi
   done
-  if [[ "$merged" != "true" ]]; then
-    state="red"
-    printf '[asyncrewake-ci] CI green but auto-merge stalled on PR %s after %ss — treating as red\n' \
+  if [[ "$merged" == "true" ]]; then
+    merge_status="merged"
+  else
+    merge_status="stalled"
+    printf '[asyncrewake-ci] CI green but auto-merge stalled on PR %s after %ss\n' \
       "$pr_number" "$((merge_max * merge_sleep))" >&2
   fi
 fi
 
 # Write to state + emit metric.
-pipeline-state task-write "$run_id" "$task_id" ci_status "\"$state\"" >/dev/null 2>&1 || true
+pipeline-state task-write "$run_id" "$task_id" ci_status "\"$ci_conclusion\"" >/dev/null 2>&1 || true
+pipeline-state task-write "$run_id" "$task_id" merge_status "\"$merge_status\"" >/dev/null 2>&1 || true
 lib="${CLAUDE_PLUGIN_ROOT:-}/bin/pipeline-lib.sh"
 if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "$lib" ]]; then
   # shellcheck disable=SC1090
   source "$lib" 2>/dev/null || true
   if command -v emit_ci_metric >/dev/null 2>&1; then
-    emit_ci_metric task "$pr_number" "$state" 2>/dev/null || true
+    emit_ci_metric task "$pr_number" "$ci_conclusion" 2>/dev/null || true
   fi
 fi
 
 # Wake Claude via exit 2 + stderr reminder.
-printf 'CI terminal for task %s (pr %s): %s — call pipeline-run-task %s %s --stage ship --ci-status %s to finalize.\n' \
-  "$task_id" "$pr_number" "$state" "$run_id" "$task_id" "$state" >&2
+printf 'CI terminal for task %s (pr %s): ci=%s merge=%s — call pipeline-run-task %s %s --stage ship --ci-status %s --merge-status %s to finalize.\n' \
+  "$task_id" "$pr_number" "$ci_conclusion" "$merge_status" "$run_id" "$task_id" "$ci_conclusion" "$merge_status" >&2
 exit 2

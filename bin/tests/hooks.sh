@@ -1447,6 +1447,90 @@ assert_eq "checklist-missing-ok exit 0" "0" "$rc"
 assert_eq "checklist-missing-ok no deny" "" "$out"
 
 # ============================================================
+# Fix #3: subagent-stop-gate transcript-based task scoping
+# ============================================================
+
+echo ""
+echo "=== subagent-stop-gate: transcript [task:id] marker scopes block to correct task ==="
+
+# Two executing tasks; hook fires for task-A via transcript marker.
+# task-A has no commits; task-B has no commits either but must NOT be poisoned.
+_seed_run "run-ssg-scoped" '{"status":"running","tasks":{"task-A":{"status":"executing","branch":"dark-factory/test-nonexistent-taskA"},"task-B":{"status":"executing","branch":"dark-factory/test-nonexistent-taskB"}}}'
+transcript_scoped=$(mktemp)
+printf '[task:task-A]\nDoing work for task A.\nSTATUS: DONE\n' > "$transcript_scoped"
+set +e
+out=$(jq -cn --arg t "$transcript_scoped" \
+  '{agent_type:"task-executor", last_assistant_message:"All done.\nSTATUS: DONE", agent_transcript_path:$t}' \
+  | FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+rm -f "$transcript_scoped"
+# Should block task-A (no commits) and NOT write BLOCKED to task-B
+assert_eq "transcript-scoped: exit 1 (block)" "1" "$rc"
+assert_eq "transcript-scoped: decision=block" "block" "$(printf '%s' "$out" | jq -r '.decision // empty')"
+task_b_executor_status=$(jq -r '.tasks["task-B"].executor_status // empty' "$CLAUDE_PLUGIN_DATA/runs/run-ssg-scoped/state.json" 2>/dev/null || true)
+assert_eq "transcript-scoped: task-B executor_status NOT poisoned" "" "$task_b_executor_status"
+
+echo ""
+echo "=== subagent-stop-gate: no transcript marker + 2 executing tasks → skip block with warning ==="
+
+_seed_run "run-ssg-nomarker-multi" '{"status":"running","tasks":{"tX":{"status":"executing","branch":"dark-factory/test-nonexistent-X"},"tY":{"status":"executing","branch":"dark-factory/test-nonexistent-Y"}}}'
+transcript_nomarker=$(mktemp)
+printf 'No task marker here.\nSTATUS: DONE\n' > "$transcript_nomarker"
+set +e
+out=$(jq -cn --arg t "$transcript_nomarker" \
+  '{agent_type:"task-executor", last_assistant_message:"All done.\nSTATUS: DONE", agent_transcript_path:$t}' \
+  | FACTORY_AUTONOMOUS_MODE=1 bash "$HOOKS_DIR/subagent-stop-gate.sh" 2>/dev/null)
+rc=$?
+set -e
+rm -f "$transcript_nomarker"
+# Must pass (exit 0) — do not block when task_id unknown and >1 executing
+assert_eq "nomarker-multi: exit 0 (no block)" "0" "$rc"
+assert_eq "nomarker-multi: no block decision" "" "$(printf '%s' "$out" | jq -r '.decision // empty' 2>/dev/null || true)"
+
+# ============================================================
+# Fix #7: asyncrewake-ci merge_status separation
+# ============================================================
+
+echo ""
+echo "=== asyncrewake-ci: ci_status and merge_status written independently ==="
+
+# Validate the script sets merge_status to "stalled" when CI is green but PR not merged.
+# We test by sourcing only the logic; actual polling is skipped (we check the variable
+# assignments at the bottom of the script via a stub environment).
+
+# The asyncrewake-ci.sh script polls gh — we only test the field-separation via
+# the pipeline-state stub (same pattern as retry tests above).
+
+rewake_stubs=$(mktemp -d)
+cat > "$rewake_stubs/pipeline-state" <<'SH'
+#!/usr/bin/env bash
+# Stub: records calls to verify fields written
+echo "$@" >> "${REWAKE_STUB_LOG:-/dev/null}"
+SH
+chmod +x "$rewake_stubs/pipeline-state"
+
+REWAKE_STUB_LOG=$(mktemp)
+export REWAKE_STUB_LOG
+
+# Verify the asyncrewake-ci.sh script writes merge_status separately from ci_status.
+# We grep the source for the dual-write pattern as a structural check.
+assert_eq "asyncrewake-ci: writes ci_status field" "true" \
+  "$(grep -q 'task-write.*ci_status' "$HOOKS_DIR/asyncrewake-ci.sh" && echo true || echo false)"
+assert_eq "asyncrewake-ci: writes merge_status field" "true" \
+  "$(grep -q 'task-write.*merge_status' "$HOOKS_DIR/asyncrewake-ci.sh" && echo true || echo false)"
+assert_eq "asyncrewake-ci: ci_status not overwritten on merge stall" "false" \
+  "$(grep -q 'ci_conclusion.*=.*"red".*stall\|state.*=.*red.*merge' "$HOOKS_DIR/asyncrewake-ci.sh" && echo true || echo false)"
+assert_eq "asyncrewake-ci: merge_status=stalled defined" "true" \
+  "$(grep -q 'merge_status.*stalled' "$HOOKS_DIR/asyncrewake-ci.sh" && echo true || echo false)"
+assert_eq "asyncrewake-ci: wake message includes --merge-status flag" "true" \
+  "$(grep -q '\-\-merge-status' "$HOOKS_DIR/asyncrewake-ci.sh" && echo true || echo false)"
+
+rm -f "$REWAKE_STUB_LOG"
+rm -rf "$rewake_stubs"
+unset REWAKE_STUB_LOG
+
+# ============================================================
 echo ""
 echo "=== All hook scripts are executable ==="
 

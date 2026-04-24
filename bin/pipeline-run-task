@@ -38,12 +38,14 @@ stage=""
 worktree=""
 review_files=()
 ci_status=""
+merge_status=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --stage)       stage="$2"; shift 2 ;;
-    --worktree)    worktree="$2"; shift 2 ;;
-    --review-file) review_files+=("$2"); shift 2 ;;
-    --ci-status)   ci_status="$2"; shift 2 ;;
+    --stage)        stage="$2"; shift 2 ;;
+    --worktree)     worktree="$2"; shift 2 ;;
+    --review-file)  review_files+=("$2"); shift 2 ;;
+    --ci-status)    ci_status="$2"; shift 2 ;;
+    --merge-status) merge_status="$2"; shift 2 ;;
     *) log_error "unknown flag: $1"; exit 1 ;;
   esac
 done
@@ -80,7 +82,7 @@ _already_past() {
   local cur
   cur=$(_task_field stage 2>/dev/null || printf '')
   case "$cur" in null|"") return 1 ;; esac
-  local order=(preflight_done preexec_tests_done postexec_done postreview_done ship_done)
+  local order=(preflight_done preexec_tests_done postexec_spawn_pending postexec_done postreview_done ship_done)
   local cur_rank=-1 want_rank=-1 i
   for i in "${!order[@]}"; do
     [[ "${order[$i]}" == "$cur"  ]] && cur_rank=$i
@@ -158,6 +160,7 @@ _stage_preflight() {
   spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
   prompt_file=$(_prompt_path test-writer)
   {
+    printf '[task:%s]\n' "$task_id"
     printf 'mode: pre-impl\n'
     printf 'task_id: %s\n' "$task_id"
     [[ -n "$spec_path" ]] && printf 'spec_path: %s\n' "$spec_path"
@@ -234,12 +237,12 @@ _verify_red_tests() {
     return 0
   fi
 
-  # Find new test files added by test-writer
+  # Find new test files added by test-writer (expanded pattern covers major ecosystems)
   local new_tests=()
   while IFS= read -r f; do
     [[ -n "$f" ]] && new_tests+=("$f")
   done < <(cd "$tw_wt" && git diff staging..HEAD --name-only --diff-filter=A 2>/dev/null \
-    | grep -E '\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs)$' || true)
+    | grep -E '\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs)$|_test\.(go|py|rb)$|Test\.(php|java)$|_spec\.rb$' || true)
 
   if [[ ${#new_tests[@]} -eq 0 ]]; then
     log_error "red-test verification: no new test files found task_id=\"$task_id\""
@@ -258,23 +261,61 @@ _verify_red_tests() {
   local pkg_mgr
   pkg_mgr=$(detect_pkg_manager "$tw_wt")
 
-  # Build scoped command
+  # Build scoped command. Cargo: scope to the specific test target derived from path to
+  # avoid running the entire workspace and conflating unrelated failures.
   local cmd=()
   case "$runner" in
     vitest) cmd=("$pkg_mgr" exec vitest run "${new_tests[@]}") ;;
     jest)   cmd=("$pkg_mgr" exec jest -- "${new_tests[@]}") ;;
     pytest) cmd=(pytest "${new_tests[@]}") ;;
-    cargo)  cmd=(cargo test) ;;
+    cargo)
+      # Derive test target from the first new test file.
+      # tests/<name>.rs → --test <name>; src/**/*_test.rs → --lib (best effort)
+      local first_test="${new_tests[0]}"
+      local cargo_target=""
+      if [[ "$first_test" =~ ^tests/([^/]+)\.rs$ ]]; then
+        cargo_target="--test ${BASH_REMATCH[1]}"
+      elif [[ "$first_test" =~ src/ ]]; then
+        cargo_target="--lib"
+      fi
+      if [[ -z "$cargo_target" ]]; then
+        log_warn "red-test verification: cannot scope cargo test for '$first_test'; failing closed task_id=\"$task_id\""
+        _task_write quality_gates.red_test '{"ok":false,"reason":"cargo_unscopable"}'
+        return 1
+      fi
+      # shellcheck disable=SC2086
+      cmd=(cargo test $cargo_target)
+      ;;
     *)      log_warn "red-test verification: unknown runner '$runner'; skipping"; return 0 ;;
   esac
 
-  # Run tests; expect failure (non-zero = good)
+  # Capture output to apply rc taxonomy — infra failures must not masquerade as red tests.
+  local out_log
+  out_log=$(mktemp)
   local rc=0
-  (cd "$tw_wt" && "${cmd[@]}" >/dev/null 2>&1) || rc=$?
+  (cd "$tw_wt" && "${cmd[@]}" >"$out_log" 2>&1) || rc=$?
+  local out
+  out=$(cat "$out_log" 2>/dev/null || printf '')
+  rm -f "$out_log"
 
+  # rc taxonomy: fail closed on infra signals so only genuine assertion failures count.
   if [[ $rc -eq 0 ]]; then
     log_error "red-test verification failed: new tests passed (no-op assertions?) task_id=\"$task_id\""
     _task_write quality_gates.red_test '{"ok":false,"reason":"tests_passed"}'
+    return 1
+  fi
+
+  if [[ $rc -eq 127 ]]; then
+    log_error "red-test verification: command not found (rc=127) — infra failure task_id=\"$task_id\""
+    _task_write quality_gates.red_test '{"ok":false,"reason":"command_not_found"}'
+    return 1
+  fi
+
+  # Detect infra-level failure patterns in output regardless of rc
+  if printf '%s' "$out" | grep -qE \
+    'ModuleNotFoundError|ImportError|SyntaxError|collection error|compile error|error\[E[0-9]+\]|^panic:|no tests ran|ran 0 tests|0 passed.*0 failed|0 tests collected|FAILED TO COLLECT'; then
+    log_error "red-test verification: infra/compile failure detected in output task_id=\"$task_id\""
+    _task_write quality_gates.red_test '{"ok":false,"reason":"infra_failure"}'
     return 1
   fi
 
@@ -318,6 +359,7 @@ _stage_preexec_tests() {
     spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
     pf=$(_prompt_path test-writer)
     {
+      printf '[task:%s]\n' "$task_id"
       printf 'mode: pre-impl\n'
       printf 'task_id: %s\n' "$task_id"
       [[ -n "$spec_path" ]] && printf 'spec_path: %s\n' "$spec_path"
@@ -366,12 +408,16 @@ _stage_preexec_tests() {
   local args=()
   [[ -n "$spec_path" ]] && args+=(--spec-path "$spec_path")
   args+=(--holdout "$holdout_pct")
-  if ! pipeline-build-prompt "$task_json" "${args[@]}" > "$prompt_file"; then
+  local _tmp_prompt; _tmp_prompt=$(mktemp)
+  if ! pipeline-build-prompt "$task_json" "${args[@]}" > "$_tmp_prompt"; then
+    rm -f "$_tmp_prompt"
     log_error "build-prompt failed"
     t1=$(_now_ms)
     log_step_end "preexec_tests" "failed" "$((t1-t0))" "task_id=\"$task_id\""
     return 30
   fi
+  { printf '[task:%s]\n' "$task_id"; cat "$_tmp_prompt"; } > "$prompt_file"
+  rm -f "$_tmp_prompt"
 
   _task_write stage '"preexec_tests_done"'
 
@@ -404,7 +450,10 @@ _stage_postexec() {
   t0=$(_now_ms)
   log_step_begin "postexec" "task_id=\"$task_id\""
 
-  local skip_gates=false
+  # REQUEST_CHANGES re-entry: postreview set reviewer_only=true and spawned an
+  # executor-fix. Executor has now committed fixes; gates MUST re-run regardless
+  # of current stage rank. Check this BEFORE the spawn-pending crash-recovery
+  # guard so stale review_files from the prior round don't trigger a spurious skip.
   if _already_past postexec_done; then
     local reviewer_only
     reviewer_only=$(_task_field postexec_reviewer_only)
@@ -414,9 +463,35 @@ _stage_postexec() {
       log_step_end "postexec" "skipped" "$((t1-t0))" "task_id=\"$task_id\""
       return 0
     fi
-    # Clear the flag before re-spawning — prevents infinite loops
+    # Clear flag and stale review_files so the new review round starts fresh.
     _task_write postexec_reviewer_only 'null'
-    skip_gates=true
+    _task_write review_files '[]'
+    # Reset stage to preexec_tests_done so _emit_postexec_manifest can advance it.
+    _task_write stage '"preexec_tests_done"'
+  fi
+
+  # postexec_spawn_pending: gates passed + manifest emitted last run but
+  # postreview hasn't written postexec_done yet (crash window).
+  # Only reached when reviewer_only was false/absent (handled above).
+  # Re-check review_files: populated means Codex ran sync — resume into postreview.
+  # Empty means agent path — re-emit manifest (idempotent).
+  if _already_past postexec_spawn_pending; then
+    local existing_rf
+    existing_rf=$(_task_field review_files 2>/dev/null || printf 'null')
+    local rf_count
+    rf_count=$(printf '%s' "$existing_rf" | jq 'if type=="array" then length else 0 end' 2>/dev/null || printf '0')
+    if (( rf_count > 0 )); then
+      t1=$(_now_ms)
+      log_step_end "postexec" "skipped_resume_codex" "$((t1-t0))" "task_id=\"$task_id\""
+      return 0
+    fi
+    local wt_resume
+    wt_resume=$(_task_field worktree)
+    wt_resume=$(printf '%s' "$wt_resume" | sed -e 's/^"//' -e 's/"$//')
+    _emit_postexec_manifest "$wt_resume"
+    t1=$(_now_ms)
+    log_step_end "postexec" "re_emit_manifest" "$((t1-t0))" "task_id=\"$task_id\""
+    return 10
   fi
 
   local wt
@@ -431,63 +506,80 @@ _stage_postexec() {
   fi
   _task_write worktree "\"$wt\""
 
-  if ! $skip_gates; then
-    if ! pipeline-quality-gate "$run_id" "$task_id" "$wt" >/dev/null; then
-      log_warn "quality gate failed for $task_id"
+  if ! pipeline-quality-gate "$run_id" "$task_id" "$wt" >/dev/null; then
+    log_warn "quality gate failed for $task_id"
+    t1=$(_now_ms)
+    log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"quality\""
+    return 30
+  fi
+
+  if ! ( cd "$wt" && pipeline-tdd-gate --task-id "$task_id" --run-id "$run_id" --base staging ) >/dev/null; then
+    _task_write quality_gates.tdd '{"ok":false}'
+    log_warn "tdd gate failed for $task_id"
+    t1=$(_now_ms)
+    log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"tdd\""
+    return 30
+  fi
+  _task_write quality_gates.tdd '{"ok":true}'
+
+  local cov_before="$run_dir/.state/$run_id/$task_id.coverage-before.json"
+  local cov_after="$wt/coverage/coverage-summary.json"
+  if [[ -f "$cov_before" && -f "$cov_after" ]]; then
+    if ! pipeline-coverage-gate "$cov_before" "$cov_after" --task-id "$task_id" >/dev/null; then
+      log_warn "coverage gate failed for $task_id"
+      _task_write quality_gates.coverage '"fail"'
       t1=$(_now_ms)
-      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"quality\""
+      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"coverage\""
       return 30
     fi
+    _task_write quality_gates.coverage '"ok"'
+  else
+    _task_write quality_gates.coverage '"skipped"'
+  fi
 
-    if ! ( cd "$wt" && pipeline-tdd-gate --task-id "$task_id" --run-id "$run_id" --base staging ) >/dev/null; then
-      _task_write quality_gates.tdd '{"ok":false}'
-      log_warn "tdd gate failed for $task_id"
-      t1=$(_now_ms)
-      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"tdd\""
-      return 30
-    fi
-    _task_write quality_gates.tdd '{"ok":true}'
-
-    local cov_before="$run_dir/.state/$run_id/$task_id.coverage-before.json"
-    local cov_after="$wt/coverage/coverage-summary.json"
-    if [[ -f "$cov_before" && -f "$cov_after" ]]; then
-      if ! pipeline-coverage-gate "$cov_before" "$cov_after" --task-id "$task_id" >/dev/null; then
-        log_warn "coverage gate failed for $task_id"
-        _task_write quality_gates.coverage '"fail"'
+  local holdout_file="$run_dir/holdouts/$task_id.json"
+  if [[ -f "$holdout_file" ]]; then
+    local reviewer_output
+    reviewer_output=$(_task_field holdout_review_file)
+    reviewer_output=$(printf '%s' "$reviewer_output" | sed -e 's/^"//' -e 's/"$//')
+    if [[ -n "$reviewer_output" && -f "$reviewer_output" ]]; then
+      if pipeline-holdout-validate check "$run_id" "$task_id" "$reviewer_output" >/dev/null; then
+        _task_write quality_gates.holdout '"pass"'
+      else
+        _task_write quality_gates.holdout '"fail"'
+        log_warn "holdout failed for $task_id"
         t1=$(_now_ms)
-        log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"coverage\""
+        log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"holdout\""
         return 30
       fi
-      _task_write quality_gates.coverage '"ok"'
     else
-      _task_write quality_gates.coverage '"skipped"'
-    fi
-
-    local holdout_file="$run_dir/holdouts/$task_id.json"
-    if [[ -f "$holdout_file" ]]; then
-      local reviewer_output
-      reviewer_output=$(_task_field holdout_review_file)
-      reviewer_output=$(printf '%s' "$reviewer_output" | sed -e 's/^"//' -e 's/"$//')
-      if [[ -n "$reviewer_output" && -f "$reviewer_output" ]]; then
-        if pipeline-holdout-validate check "$run_id" "$task_id" "$reviewer_output" >/dev/null; then
-          _task_write quality_gates.holdout '"pass"'
-        else
-          _task_write quality_gates.holdout '"fail"'
-          log_warn "holdout failed for $task_id"
-          t1=$(_now_ms)
-          log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"holdout\""
-          return 30
-        fi
-      else
-        # holdout_review_file not wired by SubagentStop yet — record skip so the
-        # scorer can distinguish "not configured" from "passed". Do not spawn a
-        # dedicated holdout reviewer here; infinite re-entry risk.
-        _task_write quality_gates.holdout '"skipped"'
-        log_warn "holdout file present but reviewer output not wired for $task_id; skipping Layer 4"
-      fi
+      # holdout_review_file not wired by SubagentStop yet — record skip so the
+      # scorer can distinguish "not configured" from "passed". Do not spawn a
+      # dedicated holdout reviewer here; infinite re-entry risk.
+      _task_write quality_gates.holdout '"skipped"'
+      log_warn "holdout file present but reviewer output not wired for $task_id; skipping Layer 4"
     fi
   fi
 
+  local _manifest_rc
+  _emit_postexec_manifest "$wt" && _manifest_rc=$? || _manifest_rc=$?
+  if (( _manifest_rc == 30 )); then
+    t1=$(_now_ms)
+    log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"manifest\""
+    return 30
+  fi
+  t1=$(_now_ms)
+  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=\"implementation+quality\""
+  return 10
+}
+
+# Helper: build + emit reviewer manifest. Writes postexec_spawn_pending before
+# any asynchronous work so a crash leaves a recoverable intermediate stage.
+# Returns 0 for Codex (sync, caller falls through to postreview).
+# Returns 10 for agent path (caller should exit 10 to yield to subagent).
+# Returns 30 on failure.
+_emit_postexec_manifest() {
+  local wt="$1"
   local detect provider
   detect=$(pipeline-detect-reviewer --base staging)
   provider=$(printf '%s' "$detect" | jq -r '.reviewer')
@@ -502,12 +594,12 @@ _stage_postexec() {
   local pf
   pf=$(_prompt_path reviewer)
   {
+    printf '[task:%s]\n' "$task_id"
     printf 'Review task %s in the worktree at %s.\n' "$task_id" "$wt"
     printf 'End your response with exactly one of:\n'
     printf '  STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT\n'
   } > "$pf"
 
-  # If prior blockers exist, instruct reviewer to include prior_blocker_map
   local prior_blockers
   prior_blockers=$(_task_field postreview_prior_blockers 2>/dev/null || printf 'null')
   local pb_len
@@ -522,12 +614,6 @@ _stage_postexec() {
     } >> "$pf"
   fi
 
-  # Slot 1: implementation-reviewer (spec alignment, always present)
-  local agents_json
-  agents_json=$(jq -cn --arg pf "$pf" \
-    '[{subagent_type:"implementation-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
-
-  # Slot 2: quality reviewer — Codex preferred, agent fallback
   if [[ "$provider" == "codex" ]]; then
     local review_file="$run_dir/.state/$run_id/$task_id.review.codex.json"
     local spec_path
@@ -536,17 +622,26 @@ _stage_postexec() {
     [[ -n "$spec_path" ]] && cargs+=(--spec-dir "$spec_path")
     if ! pipeline-codex-review "${cargs[@]}" > "$review_file"; then
       log_warn "codex review failed for $task_id"
-      t1=$(_now_ms)
-      log_step_end "postexec" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"codex\""
       return 30
     fi
     _task_write review_files "$(jq -n --arg f "$review_file" '[$f]')"
-  else
-    agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
-      '. + [{subagent_type:"quality-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
+    # Codex review is synchronous — no crash window, advance directly to postexec_done.
+    _task_write stage '"postexec_done"'
+    local codex_agents_json
+    codex_agents_json=$(jq -cn --arg pf "$pf" \
+      '[{subagent_type:"implementation-reviewer", isolation:"worktree", model:"sonnet", maxTurns:1, prompt_file:$pf}]')
+    _emit_manifest postreview "$codex_agents_json"
+    return 10
   fi
 
-  # Risk-tier additions
+  # Agent path: write stage before manifest emission — crash between means
+  # resume re-enters postexec_spawn_pending and re-emits (idempotent).
+  _task_write stage '"postexec_spawn_pending"'
+
+  local agents_json
+  agents_json=$(jq -cn --arg pf "$pf" \
+    '[{subagent_type:"implementation-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
+
   case "$tier" in
     feature)
       agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
@@ -557,10 +652,10 @@ _stage_postexec() {
               {subagent_type:"architecture-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]') ;;
   esac
 
-  _task_write stage '"postexec_done"'
+  agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+    '. + [{subagent_type:"quality-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
+
   _emit_manifest postreview "$agents_json"
-  t1=$(_now_ms)
-  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=\"implementation+quality\""
   return 10
 }
 
@@ -592,6 +687,9 @@ _stage_postreview() {
     log_step_end "postreview" "failed" "$((t1-t0))" "task_id=\"$task_id\""
     return 30
   fi
+
+  # Durable commit point: review_files validated, now safe to advance past postexec.
+  _task_write stage '"postexec_done"'
 
   local any_changes=false any_discuss=false f verdict decision raw_json still_count
   for f in "${files[@]}"; do
@@ -680,6 +778,7 @@ _stage_postreview() {
     local pf
     pf=$(_prompt_path executor-fix)
     {
+      printf '[task:%s]\n' "$task_id"
       printf 'Fix reviewer-reported blockers for task %s.\n' "$task_id"
       printf 'Review files:\n'
       for f in "${files[@]}"; do printf '  - %s\n' "$f"; done
@@ -799,8 +898,16 @@ _stage_ship() {
 
   if [[ -n "$ci_status" ]]; then
     _task_write ci_status "\"$ci_status\""
+    [[ -n "$merge_status" ]] && _task_write merge_status "\"$merge_status\""
     case "$ci_status" in
       green)
+        if [[ "$merge_status" == "stalled" ]]; then
+          pipeline-state task-status "$run_id" "$task_id" failed >/dev/null || true
+          _task_write failure_reason '"auto-merge stalled despite green CI; manual investigation required"'
+          t1=$(_now_ms)
+          log_step_end "ship" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"merge_stalled\""
+          return 30
+        fi
         pipeline-state task-status "$run_id" "$task_id" done >/dev/null || true
         _task_write stage '"ship_done"'
         t1=$(_now_ms)
@@ -821,7 +928,7 @@ _stage_ship() {
         pipeline-state task-status "$run_id" "$task_id" ci_fixing >/dev/null || true
         _ensure_prompt_dir
         local pf; pf=$(_prompt_path executor-ci-fix)
-        printf 'Fix failing CI on PR for task %s.\nSTATUS: DONE|...\n' "$task_id" > "$pf"
+        printf '[task:%s]\nFix failing CI on PR for task %s.\nSTATUS: DONE|...\n' "$task_id" "$task_id" > "$pf"
         local agents_json
         agents_json=$(jq -cn --arg pf "$pf" \
           '[{subagent_type:"task-executor", isolation:"worktree", model:"sonnet", maxTurns:60, prompt_file:$pf}]')

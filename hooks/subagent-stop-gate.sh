@@ -28,6 +28,34 @@ if [[ -z "$agent_type" ]]; then
   exit 0
 fi
 
+# Derive the task_id that owns this stopped subagent.
+# Prompt preambles always start with [task:<id>] for executor/test-writer/reviewer agents.
+# This is the only reliable per-agent identity: env vars don't propagate across Task boundaries.
+_derive_task_id_from_transcript() {
+  local transcript_path="$1"
+  local state_file="$2"
+  local tid=""
+  if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
+    tid=$(grep -oE '\[task:[^]]+\]' "$transcript_path" 2>/dev/null | head -1 | grep -oE '[^[task:][^]]+' || true)
+  fi
+  # grep pattern above extracts the id from [task:<id>]; use sed for clarity
+  if [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
+    tid=$(grep -oE '\[task:[^]]+\]' "$transcript_path" 2>/dev/null | head -1 | sed 's/\[task:\([^]]*\)\]/\1/' || true)
+  fi
+  if [[ -z "$tid" ]]; then
+    # Fallback: use FACTORY_TASK_ID if set, or first executing task only when exactly 1 is executing
+    tid="${FACTORY_TASK_ID:-}"
+    if [[ -z "$tid" && -f "${state_file:-}" ]]; then
+      local executing_count
+      executing_count=$(jq -r '[.tasks | to_entries[] | select(.value.status == "executing")] | length' "$state_file" 2>/dev/null || printf '0')
+      if (( executing_count == 1 )); then
+        tid=$(jq -r '[.tasks | to_entries[] | select(.value.status == "executing") | .key] | first // empty' "$state_file" 2>/dev/null || true)
+      fi
+    fi
+  fi
+  printf '%s' "$tid"
+}
+
 autonomous="${FACTORY_AUTONOMOUS_MODE:-0}"
 warnings=()
 block_reason=""
@@ -56,17 +84,18 @@ if [[ "$autonomous" == "1" ]]; then
   fi
 
   # --- 2. Zero-commits check (task-executor and test-writer only) ---
+  # Scoped to the stopping subagent's own task via transcript marker.
   if [[ -z "$block_reason" ]] && \
      [[ "$agent_type" == "task-executor" || "$agent_type" == "test-writer" ]]; then
     state_file="$run_dir/state.json"
-    if [[ -f "$state_file" ]]; then
-      while IFS= read -r tid; do
-        [[ -z "$tid" ]] && continue
-        branch=$(jq -r --arg t "$tid" '.tasks[$t].branch // empty' "$state_file" 2>/dev/null)
-        worktree=$(jq -r --arg t "$tid" '.tasks[$t].worktree // empty' "$state_file" 2>/dev/null)
-        if [[ -z "$branch" ]]; then
-          continue
-        fi
+    transcript_path=$(printf '%s' "$input" | jq -r '.agent_transcript_path // empty' 2>/dev/null)
+    scoped_task_id=$(_derive_task_id_from_transcript "$transcript_path" "$state_file")
+    if [[ -z "$scoped_task_id" ]]; then
+      echo "[subagent-stop-gate] Warning: cannot identify stopping agent's task_id; skipping zero-commit block to avoid poisoning unrelated tasks" >&2
+    elif [[ -f "$state_file" ]]; then
+      branch=$(jq -r --arg t "$scoped_task_id" '.tasks[$t].branch // empty' "$state_file" 2>/dev/null)
+      worktree=$(jq -r --arg t "$scoped_task_id" '.tasks[$t].worktree // empty' "$state_file" 2>/dev/null)
+      if [[ -n "$branch" ]]; then
         log_output=""
         git_dir="${worktree:-}"
         if [[ -n "$git_dir" && -d "$git_dir" ]]; then
@@ -79,12 +108,7 @@ if [[ "$autonomous" == "1" ]]; then
           if [[ -n "$base_ref" ]]; then
             log_output=$(git -C "$git_dir" log --oneline "$base_ref..$branch" 2>/dev/null || true)
           elif git -C "$git_dir" rev-parse --verify "$branch" >/dev/null 2>&1; then
-            # Branch exists but no staging ref — can't compare; skip to avoid false positive
             echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found in $git_dir; skipping commit check" >&2
-            continue
-          else
-            # Branch itself doesn't exist — zero commits is certain
-            log_output=""
           fi
         else
           base_ref=""
@@ -96,37 +120,21 @@ if [[ "$autonomous" == "1" ]]; then
           if [[ -n "$base_ref" ]]; then
             log_output=$(git log --oneline "$base_ref..$branch" 2>/dev/null || true)
           elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
-            # Branch exists but no staging ref — skip to avoid false positive
             echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found; skipping commit check" >&2
-            continue
-          else
-            # Branch itself doesn't exist — zero commits is certain
-            log_output=""
           fi
         fi
         if [[ -z "$log_output" ]]; then
           block_reason="No commits detected — complete the implementation and commit before finishing the turn."
-          break
         fi
-      done < <(jq -r '
-        [.tasks | to_entries[] | select(.value.status == "executing") | .key] | .[]
-      ' "$state_file" 2>/dev/null)
+      fi
     fi
   fi
 
   # --- 3. Retry budget & block/BLOCKED logic ---
   if [[ -n "$block_reason" ]]; then
-    # Identify task_id for the retry counter sidecar
-    task_id="${FACTORY_TASK_ID:-}"
-    if [[ -z "$task_id" ]]; then
-      # Derive task_id from first executing task in state
-      state_file="${state_file:-$run_dir/state.json}"
-      if [[ -f "${state_file:-}" ]]; then
-        task_id=$(jq -r '
-          [.tasks | to_entries[] | select(.value.status == "executing") | .key] | first // empty
-        ' "$state_file" 2>/dev/null || true)
-      fi
-    fi
+    state_file="${state_file:-$run_dir/state.json}"
+    transcript_path="${transcript_path:-$(printf '%s' "$input" | jq -r '.agent_transcript_path // empty' 2>/dev/null)}"
+    task_id=$(_derive_task_id_from_transcript "$transcript_path" "$state_file")
 
     retry_file="$run_dir/.subagent_retries.${task_id:-unknown}"
     retries=0
@@ -138,7 +146,6 @@ if [[ "$autonomous" == "1" ]]; then
 
     # Budget: 1 retry (2 attempts total). On 2nd block, write BLOCKED to state.
     if (( retries >= 2 )); then
-      # Write BLOCKED status to task state so pipeline-run-task picks it up
       if [[ -n "$task_id" ]] && [[ -f "$run_dir/state.json" ]] && command -v pipeline-state >/dev/null 2>&1; then
         run_id=$(basename "$run_dir")
         pipeline-state task-write "$run_id" "$task_id" executor_status '"BLOCKED"' >/dev/null 2>&1 || true
@@ -150,16 +157,10 @@ if [[ "$autonomous" == "1" ]]; then
     exit 1
   fi
 
-  # No block — clean up the retry sidecar if it exists
-  task_id_for_cleanup="${FACTORY_TASK_ID:-}"
-  if [[ -z "$task_id_for_cleanup" ]]; then
-    state_file_for_cleanup="${state_file:-$run_dir/state.json}"
-    if [[ -f "${state_file_for_cleanup:-}" ]]; then
-      task_id_for_cleanup=$(jq -r '
-        [.tasks | to_entries[] | select(.value.status == "executing") | .key] | first // empty
-      ' "$state_file_for_cleanup" 2>/dev/null || true)
-    fi
-  fi
+  # No block — clean up the retry sidecar for this agent's task
+  state_file="${state_file:-$run_dir/state.json}"
+  transcript_path="${transcript_path:-$(printf '%s' "$input" | jq -r '.agent_transcript_path // empty' 2>/dev/null)}"
+  task_id_for_cleanup=$(_derive_task_id_from_transcript "$transcript_path" "$state_file")
   if [[ -n "$task_id_for_cleanup" ]]; then
     retry_file_cleanup="$run_dir/.subagent_retries.${task_id_for_cleanup}"
     [[ -f "$retry_file_cleanup" ]] && rm -f "$retry_file_cleanup"

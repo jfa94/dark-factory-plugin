@@ -494,5 +494,58 @@ pb_after=$(pipeline-state task-read "$RUN_ID" alpha-001 postreview_prior_blocker
 assert_eq "postreview-resolved: prior_blockers cleared" "null" "$pb_after"
 write_stub pipeline-parse-review 'cat'
 
+# --- 24: Fix #1+4 — reviewer-only re-entry runs gates; gate failure blocks ----
+# Simulates: executor-fix committed, postexec re-entered with reviewer_only=true.
+# A quality gate now fails → must block (exit 30), NOT bypass and spawn reviewers.
+new_run postexec-reviewer-only-gate-fail
+run_wrapper alpha-001 --stage preflight
+wt="$ROOT_TMP/$current-wt-gateFail"; mkdir -p "$wt"
+pipeline-state task-write "$RUN_ID" alpha-001 worktree "\"$wt\"" >/dev/null
+pipeline-state task-write "$RUN_ID" alpha-001 stage '"postexec_done"' >/dev/null
+pipeline-state task-write "$RUN_ID" alpha-001 postexec_reviewer_only '"true"' >/dev/null
+# Override quality gate stub to fail
+write_stub pipeline-quality-gate 'exit 1'
+run_wrapper alpha-001 --stage postexec
+assert_eq "postexec-reviewer-only-gate-fail: exit 30 (blocked by gate)" "30" "$RC"
+# Restore gate stub
+write_stub pipeline-quality-gate 'exit 0'
+
+# --- 25: Fix #2 — parse-review: APPROVED with critical finding → REQUEST_CHANGES ---
+rm -f "$STUB_DIR/pipeline-parse-review"
+new_run parse-review-downgrade
+pipeline-state task-write "$RUN_ID" alpha-001 stage '"postexec_done"' >/dev/null
+rf="$ROOT_TMP/$current-review-critical.md"
+cat > "$rf" <<'MDEOF'
+## Findings
+
+Critical null-pointer on startup.
+
+## Summary
+
+Reviewer found critical issue but marked APPROVED by mistake.
+
+## Verdict
+
+VERDICT: APPROVED
+CONFIDENCE: HIGH
+BLOCKERS: 0
+ROUND: 1
+
+```json
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {"severity": "critical", "description": "Null pointer on startup", "evidence": "src/main.ts line 42 throws when config is null", "file": "src/main.ts", "line": 42}
+  ]
+}
+```
+MDEOF
+run_wrapper alpha-001 --stage postreview --review-file "$rf"
+# Parser must downgrade APPROVED+critical → REQUEST_CHANGES → any_changes=true → spawn executor-fix
+assert_eq "parse-review-downgrade: exit 10 (REQUEST_CHANGES path)" "10" "$RC"
+assert_eq "parse-review-downgrade: stage_after=postexec" "postexec" \
+  "$(printf '%s' "$OUT" | jq -r '.stage_after')"
+write_stub pipeline-parse-review 'cat'
+
 printf '\n=== RESULTS: %d passed, %d failed ===\n' "$passed" "$failed"
 exit $(( failed > 0 ? 1 : 0 ))

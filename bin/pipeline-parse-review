@@ -96,6 +96,24 @@ if [[ -n "$json_block" ]] && printf '%s' "$json_block" | jq empty 2>/dev/null; t
     # Extract summary
     json_summary=$(printf '%s' "$json_block" | jq -r '.summary // ""')
 
+    # Cross-field consistency: APPROVED with critical/blocking findings is a
+    # trust-boundary violation — downgrade rather than discard the findings.
+    if [[ "$normalized_verdict" == "APPROVE" ]]; then
+      critical_count=$(printf '%s' "$valid_findings" | \
+        jq '[.[] | select(.severity == "critical" or .severity == "blocking")] | length' 2>/dev/null || printf '0')
+      if (( critical_count > 0 )); then
+        log_warn "parser-downgrade: APPROVED verdict with $critical_count critical/blocking finding(s) — downgrading to REQUEST_CHANGES"
+        normalized_verdict="REQUEST_CHANGES"
+        json_summary="[parser-downgrade: APPROVED with critical findings] ${json_summary}"
+      fi
+    fi
+
+    # REQUEST_CHANGES with no valid findings is an inverse hallucination — reject.
+    if [[ "$normalized_verdict" == "REQUEST_CHANGES" && "$valid_count" -eq 0 ]]; then
+      log_error "REQUEST_CHANGES verdict with no valid findings (all stripped or empty)"
+      exit 1
+    fi
+
     # Build normalized output matching the prose parser's schema
     blocking_count=$(printf '%s' "$valid_findings" | jq '[.[] | select(.severity == "critical")] | length')
     non_blocking_count=$(printf '%s' "$valid_findings" | jq "[.[] | select(.severity != \"critical\")] | length")

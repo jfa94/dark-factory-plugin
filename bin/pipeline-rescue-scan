@@ -65,7 +65,7 @@ fi
 while IFS=$'\t' read -r task_id pr_number status stage ci_status; do
   [[ -z "$task_id" ]] && continue
   [[ -z "$pr_number" || "$pr_number" == "null" ]] && continue
-  if ! pr_json=$(gh pr view "$pr_number" --json state,mergedAt,mergeable,statusCheckRollup 2>/dev/null); then
+  if ! pr_json=$(gh pr view "$pr_number" --json state,mergedAt,mergeable,statusCheckRollup,baseRefName 2>/dev/null); then
     log_error "GitHub unavailable: gh pr view $pr_number failed"
     exit 1
   fi
@@ -84,10 +84,11 @@ while IFS=$'\t' read -r task_id pr_number status stage ci_status; do
 
   mergeable=$(jq -r '.mergeable // ""' <<<"$pr_json")
   merged_at=$(jq -r '.mergedAt // ""' <<<"$pr_json")
+  base_ref=$(jq -r '.baseRefName // ""' <<<"$pr_json")
 
   # I-07: PR merge conflict with base
   if [[ "$mergeable" == "CONFLICTING" ]]; then
-    mechanical+=("$(jq -n --arg id I-07 --argjson tier 2 --arg task "$task_id" --arg desc "PR #$pr_number has merge conflict with base" '{id: $id, tier: $tier, task_id: $task, description: $desc}')")
+    mechanical+=("$(jq -n --arg id I-07 --argjson tier 2 --arg task "$task_id" --arg desc "PR #$pr_number has merge conflict with base" --arg base "$base_ref" '{id: $id, tier: $tier, task_id: $task, description: $desc, base: $base}')")
   fi
 
   # I-08: PR closed unmerged

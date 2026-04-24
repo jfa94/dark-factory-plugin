@@ -132,7 +132,7 @@ _apply_I_06() {
 }
 
 _apply_I_07() {
-  local run_id="$1" task_id="$2"
+  local run_id="$1" task_id="$2" base="${3:-}"
   # Attempt rebase in task worktree; on failure, leave for investigation.
   local wt
   wt=$(pipeline-state read "$run_id" ".tasks.${task_id}.worktree" 2>/dev/null | tr -d '"')
@@ -140,8 +140,11 @@ _apply_I_07() {
     rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr skipped "worktree missing"
     return 0
   fi
+  if [[ -z "$base" ]]; then
+    rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr skipped "base branch unknown (missing from scan action)"
+    return 0
+  fi
   if (( dry_run )); then rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr dry_run ""; return 0; fi
-  local base="${FACTORY_BASE_BRANCH:-develop}"
   if (cd "$wt" && git fetch origin "$base" && git rebase "origin/$base") >/dev/null 2>&1; then
     (cd "$wt" && git push --force-with-lease) >/dev/null 2>&1 || true
     rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr ok ""
@@ -287,10 +290,10 @@ _dispatch_plans() {
 
 _dispatch_risky() {
   local run_id="$1" plan_file="$2"
-  while IFS=$'\t' read -r id task_id; do
+  while IFS=$'\t' read -r id task_id base; do
     case "$id" in
       I-06) _apply_I_06 "$run_id" "$task_id" ;;
-      I-07) _apply_I_07 "$run_id" "$task_id" ;;
+      I-07) _apply_I_07 "$run_id" "$task_id" "$base" ;;
       I-08) _apply_I_08 "$run_id" "$task_id" ;;
       I-09) _apply_I_09 "$run_id" "$task_id" ;;
       I-10) _apply_I_10 "$run_id" "$task_id" ;;
@@ -298,7 +301,7 @@ _dispatch_risky() {
       I-12) _apply_I_12 "$run_id" ;;
       I-15) _apply_I_15 "$run_id" "$task_id" "$plan_file" ;;
     esac
-  done < <(jq -r '.mechanical_issues[] | select(.tier == 2 or .tier == 3) | [.id, (.task_id // "")] | @tsv' "$plan_file")
+  done < <(jq -r '.mechanical_issues[] | select(.tier == 2 or .tier == 3) | [.id, (.task_id // ""), (.base // "")] | @tsv' "$plan_file")
 }
 
 _dispatch_safe() {

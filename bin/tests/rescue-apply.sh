@@ -144,13 +144,33 @@ mkdir -p "$fake_wt"
 pipeline-state task-write R1 T1 worktree "\"$fake_wt\"" >/dev/null
 report_i07="$CLAUDE_PLUGIN_DATA/report_i07.json"
 cat > "$report_i07" <<JSON
-{"run_id":"R1","mechanical_issues":[{"id":"I-07","tier":2,"task_id":"T1","description":"PR has merge conflict"}]}
+{"run_id":"R1","mechanical_issues":[{"id":"I-07","tier":2,"task_id":"T1","description":"PR has merge conflict","base":"staging"}]}
 JSON
 pipeline-rescue-apply --tier=risky --plan="$report_i07" >/dev/null 2>&1 || true
 status=$(pipeline-state read R1 '.tasks.T1.status' | tr -d '"')
 assert_eq "I-07 rebase failure marks failed" "failed" "$status"
 reason=$(pipeline-state read R1 '.tasks.T1.failure_reason' | tr -d '"')
 assert_eq "I-07 writes failure_reason" "unresolvable merge conflict (I-13)" "$reason"
+
+echo "=== Fix #6: I-07 without base field in action → skipped, no wrong-branch rebase ==="
+seed_run
+fake_wt2="$CLAUDE_PLUGIN_DATA/fake_wt2"
+mkdir -p "$fake_wt2"
+pipeline-state task-write R1 T1 worktree "\"$fake_wt2\"" >/dev/null
+# I-07 action with NO base field — apply must skip (audit), not rebase onto hardcoded develop
+report_i07_nobase="$CLAUDE_PLUGIN_DATA/report_i07_nobase.json"
+cat > "$report_i07_nobase" <<JSON
+{"run_id":"R1","mechanical_issues":[{"id":"I-07","tier":2,"task_id":"T1","description":"PR has merge conflict"}]}
+JSON
+pipeline-rescue-apply --tier=risky --plan="$report_i07_nobase" >/dev/null 2>&1 || true
+# Without a base, apply should skip the rebase; task must NOT transition to failed via wrong base
+status_nobase=$(pipeline-state read R1 '.tasks.T1.status' | tr -d '"')
+assert_eq "I-07 no-base: status unchanged (skipped)" "executing" "$status_nobase"
+
+echo "=== Fix #6: rescue-apply has no hardcoded develop fallback for I-07 ==="
+BIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+assert_eq "rescue-apply: no FACTORY_BASE_BRANCH:-develop in rebase path" "false" \
+  "$(grep -E 'FACTORY_BASE_BRANCH.*develop|:-develop' "$BIN_DIR/pipeline-rescue-apply" 2>/dev/null | grep -qi 'rebase\|base\|I-07' && echo true || echo false)"
 
 echo
 echo "Passed: $pass | Failed: $fail"

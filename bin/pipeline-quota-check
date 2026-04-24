@@ -92,6 +92,18 @@ age=$(( now_epoch - captured_at ))
 if (( age > 120 )); then
   log_warn "usage-cache.json is ${age}s old (>120s) — data may be stale"
 fi
+# Hard ceiling: a cache older than 1h is from a previous session, not a paused
+# statusline tick. Treat it as unavailable so gates fail-closed rather than
+# proceeding on stale 0% data.
+if (( age > 3600 )); then
+  if $strict; then
+    log_error "usage-cache.json is ${age}s old (>3600s) — too stale to use"
+    exit 1
+  fi
+  log_warn "usage-cache.json is ${age}s old (>3600s) — treating as unavailable; pipeline will halt"
+  _sentinel "usage-cache-too-stale"
+  exit 0
+fi
 
 # --- Parse utilization and resets_at ---
 

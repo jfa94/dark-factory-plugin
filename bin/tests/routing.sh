@@ -206,6 +206,28 @@ set -e
 assert_eq "stale cache still returns detection_method" "statusline" \
   "$(printf '%s' "$stale_output" | jq -r '.detection_method')"
 
+# Ancient cache (>3600s): emits unavailable sentinel (fail-closed).
+_run_ancient_check() (
+  test_data=$(mktemp -d)
+  trap '[[ "$test_data" == /tmp/* ]] && rm -rf "$test_data"' EXIT
+  ancient_captured=$(( $(date +%s) - 3601 ))
+  printf '{"five_hour":{"used_percentage":0,"resets_at":9999999999},"seven_day":{"used_percentage":0,"resets_at":9999999999},"captured_at":'"$ancient_captured"'}' \
+    > "$test_data/usage-cache.json"
+  env CLAUDE_PLUGIN_DATA="$test_data" pipeline-quota-check
+)
+
+assert_exit "ancient cache (>3600s) exits 0 (sentinel emitted)" 0 _run_ancient_check
+
+set +e
+ancient_output=$(_run_ancient_check 2>/dev/null)
+set -e
+assert_eq "ancient cache returns detection_method unavailable" "unavailable" \
+  "$(printf '%s' "$ancient_output" | jq -r '.detection_method')"
+assert_eq "ancient cache reason is usage-cache-too-stale" "usage-cache-too-stale" \
+  "$(printf '%s' "$ancient_output" | jq -r '.reason')"
+assert_eq "ancient cache 5h over_threshold true" "true" \
+  "$(printf '%s' "$ancient_output" | jq -r '.five_hour.over_threshold')"
+
 # ============================================================
 echo ""
 echo "=== pipeline-model-router (within limits) ==="

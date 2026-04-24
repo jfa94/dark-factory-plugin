@@ -69,6 +69,15 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Restore Stryker incremental cache (task PRs only)
+        if: github.base_ref != 'develop'
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a # v4
+        with:
+          path: reports/mutation/.stryker-incremental.json
+          key: ${{ runner.os }}-stryker-${{ github.base_ref }}-${{ github.head_ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-stryker-${{ github.base_ref }}-${{ github.head_ref }}-
+            ${{ runner.os }}-stryker-${{ github.base_ref }}-
       - name: Mutation testing (incremental for task PRs, full for staging→develop)
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -78,7 +87,6 @@ jobs:
               pnpm test:mutation
           else
               echo "Incremental mutation run (task PR → $BASE_REF)"
-              git fetch origin "$BASE_REF" --depth=1
               pnpm test:mutation -- --since "origin/$BASE_REF"
           fi
 

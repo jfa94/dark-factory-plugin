@@ -118,6 +118,45 @@ if [[ "${FACTORY_AUTONOMOUS_MODE:-}" == "1" ]]; then
   esac
 fi
 
+# --- 0b. path-scope guard: scribe agent ---
+# When FACTORY_SUBAGENT_ROLE=scribe, Edit/Write/MultiEdit are restricted to:
+#   - docs/** or /docs/**
+#   - Version-bump files: package.json, plugin.json, pyproject.toml, Cargo.toml,
+#     VERSION, .version
+#   - Root README.md (scribe keeps it as a short intro + link to /docs)
+if [[ "${FACTORY_SUBAGENT_ROLE:-}" == "scribe" ]]; then
+  case "$tool_name" in
+    Edit|Write|MultiEdit)
+      _is_scribe_allowed_path() {
+        local p="$1"
+        [[ -z "$p" ]] && return 0
+        # Strip any leading absolute prefix to get a repo-relative path for matching.
+        local rel="$p"
+        # Allow /docs/** or docs/**
+        if [[ "$rel" =~ ^/docs/ || "$rel" =~ ^docs/ || "$rel" == "/docs" || "$rel" == "docs" ]]; then return 0; fi
+        # Allow version-bump root files (basename only, anywhere in path — but
+        # scribe only touches these at repo root, so basename match is sufficient
+        # and avoids false negatives from absolute paths).
+        local base
+        base=$(basename "$rel")
+        case "$base" in
+          package.json|plugin.json|pyproject.toml|Cargo.toml|VERSION|.version|README.md) return 0 ;;
+        esac
+        # Blocked
+        deny "Scribe is restricted to /docs/** and run manifest. Attempted write to $p."
+      }
+
+      scribe_fp=$(printf '%s' "$input" | jq -r '.tool_input.file_path // ""' 2>/dev/null || true)
+      _is_scribe_allowed_path "$scribe_fp"
+      # MultiEdit may have edits[].file_path
+      while IFS= read -r ep; do
+        [[ -z "$ep" ]] && continue
+        _is_scribe_allowed_path "$ep"
+      done < <(printf '%s' "$input" | jq -r '.tool_input.edits[]?.file_path // empty' 2>/dev/null || true)
+      ;;
+  esac
+fi
+
 # Remaining guards only apply to Bash commands.
 [[ -z "$cmd" ]] && exit 0
 

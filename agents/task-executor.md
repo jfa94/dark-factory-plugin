@@ -11,7 +11,6 @@ tools:
   - Edit
   - Grep
   - Glob
-  - Agent
 ---
 
 # Task Executor — GREEN Phase

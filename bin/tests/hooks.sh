@@ -1320,6 +1320,62 @@ assert_eq "executor_status=BLOCKED written to state after 2nd block" "BLOCKED" "
 rm -rf "$retry_stubs"
 
 # ============================================================
+# Scribe path-scope guard tests
+# ============================================================
+
+echo ""
+echo "=== pretooluse-pipeline-guards: scribe — blocks write to src/foo.ts ==="
+
+_seed_run "run-scribe-block" '{"status":"running","tasks":{}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"src/foo.ts"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_SUBAGENT_ROLE=scribe bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "scribe block src/foo.ts exit 0" "0" "$rc"
+decision=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // empty')
+assert_eq "scribe block src/foo.ts denies" "deny" "$decision"
+reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+assert_eq "scribe block src/foo.ts reason mentions path" "true" \
+  "$(printf '%s' "$reason" | grep -q 'src/foo.ts' && echo true || echo false)"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: scribe — allows write to docs/api.md ==="
+
+_seed_run "run-scribe-allow-docs" '{"status":"running","tasks":{}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"docs/api.md"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_SUBAGENT_ROLE=scribe bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "scribe allow docs/api.md exit 0" "0" "$rc"
+assert_eq "scribe allow docs/api.md no deny" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: scribe — allows write to docs/foo/bar.md ==="
+
+_seed_run "run-scribe-allow-nested" '{"status":"running","tasks":{}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"docs/foo/bar.md"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_SUBAGENT_ROLE=scribe bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "scribe allow docs/foo/bar.md exit 0" "0" "$rc"
+assert_eq "scribe allow docs/foo/bar.md no deny" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: scribe guard skipped for non-scribe role ==="
+
+_seed_run "run-scribe-nonscribe" '{"status":"running","tasks":{"t1":{"status":"executing","stage":"postexec"}}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"src/foo.ts"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_SUBAGENT_ROLE=task-executor bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "non-scribe src/foo.ts exit 0" "0" "$rc"
+assert_eq "non-scribe src/foo.ts no deny" "" "$out"
+
+# ============================================================
 # Ship checklist guard tests
 # ============================================================
 

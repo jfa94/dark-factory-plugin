@@ -424,6 +424,7 @@ _stage_postexec() {
               {subagent_type:"architecture-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]') ;;
   esac
 
+  _task_write stage '"postexec_done"'
   _emit_manifest postreview "$agents_json"
   t1=$(_now_ms)
   log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=\"implementation+quality\""

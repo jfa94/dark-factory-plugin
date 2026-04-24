@@ -50,7 +50,7 @@ For each task `$t` in the current parallel group, walk these seven steps in orde
 
 - Skip when `holdoutPercent == 0` or no holdout file.
 - Build focused reviewer prompt via `pipeline-holdout-validate prompt`.
-- Spawn `task-reviewer` cold against diff.
+- Spawn `implementation-reviewer` cold against diff.
 - Capture output; run `pipeline-holdout-validate check`.
 - Exit 0 pass → continue. Exit 1 fail → increment `holdout_attempts`; `< 2` re-spawn with failed criteria; `>= 2` `needs_human_review`.
 - Exit 2 parse error → warn, continue.
@@ -66,7 +66,7 @@ For each task `$t` in the current parallel group, walk these seven steps in orde
 - `pipeline-detect-reviewer --base staging` → `{reviewer, command}`.
 - Emit `task.review.provider` metric.
 - Codex path: run command inline, `pipeline-parse-review --reviewer codex`.
-- Claude path: spawn `task-reviewer` + risk-tier fan-out (feature → +architecture-reviewer; security → +code-reviewer/security-reviewer/architecture-reviewer).
+- Claude path: spawn `implementation-reviewer` + risk-tier fan-out (feature → +architecture-reviewer; security → +code-reviewer/security-reviewer/architecture-reviewer).
 
 ### 5. Parse Verdicts
 

@@ -83,7 +83,7 @@ Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already 
 - Reads `.tasks.<id>.worktree` (written by `SubagentStop` hook); falls back to `--worktree` arg.
 - Quality gate (`pipeline-quality-gate`) — fail → exit 30.
 - Coverage gate (`pipeline-coverage-gate --task-id <id>`) — fail → exit 30. Emitted metric is `task.gate.coverage task_id=<id>`.
-- Holdout (`pipeline-holdout-validate`) — if a holdout file exists and no prior reviewer output, spawns a `task-reviewer` manifest (exit 10, re-invoke `postexec`). Second pass runs `check` → fail → exit 30, pass → continue.
+- Holdout (`pipeline-holdout-validate`) — if a holdout file exists and no prior reviewer output, spawns a `implementation-reviewer` manifest (exit 10, re-invoke `postexec`). Second pass runs `check` → fail → exit 30, pass → continue.
 - Reviewer detection (`pipeline-detect-reviewer --base staging`) + provider metric.
 - Codex path: runs `pipeline-codex-review` inline, writes `.state/<run-id>/<id>.review.codex.json`, records path in `.tasks.<id>.review_files`, sets `stage=postexec_done`, exit 0.
 - Claude path: writes reviewer prompt to `.state/<run-id>/<id>.reviewer-prompt.md`, emits manifest with risk-tier fan-out (routine → 1 reviewer; feature → +architecture-reviewer; security → +code-reviewer/security-reviewer/architecture-reviewer), exit 10.

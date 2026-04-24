@@ -59,16 +59,16 @@ The orchestrator creates a dedicated worktree at `.claude/worktrees/orchestrator
 
 ---
 
-## Decision 4: Separate task-reviewer from code-reviewer
+## Decision 4: Separate implementation-reviewer from code-reviewer
 
-**Choice:** Create a new `task-reviewer` agent in the plugin rather than reusing the existing `code-reviewer` directly.
+**Choice:** Create a new `implementation-reviewer` agent in the plugin rather than reusing the existing `code-reviewer` directly.
 
 **Why:**
 
-- `task-reviewer` adds acceptance-criteria validation
-- `task-reviewer` validates holdout criteria (criteria the executor never saw)
-- `task-reviewer` outputs machine-parseable structured format
-- `task-reviewer` is round-aware (tracks review iteration)
+- `implementation-reviewer` adds acceptance-criteria validation
+- `implementation-reviewer` validates holdout criteria (criteria the executor never saw)
+- `implementation-reviewer` outputs machine-parseable structured format
+- `implementation-reviewer` is round-aware (tracks review iteration)
 
 The existing `code-reviewer` is still used as a fallback when Codex is unavailable.
 
@@ -140,7 +140,7 @@ The lock (`pipeline-lock`) exists only to prevent two orchestrator instances fro
 
 ## Decision 9: Adversarial Review with Vendor Fallback
 
-**Choice:** Use OpenAI Codex's adversarial review mode as primary reviewer when available; fall back to Claude Code's task-reviewer.
+**Choice:** Use OpenAI Codex's adversarial review mode as primary reviewer when available; fall back to Claude Code's implementation-reviewer.
 
 **Why Codex as primary:**
 

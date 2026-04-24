@@ -224,7 +224,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "^(task-executor|task-reviewer|code-reviewer|security-reviewer|architecture-reviewer|scribe|spec-generator|spec-reviewer)$",
+        "matcher": "^(task-executor|implementation-reviewer|code-reviewer|security-reviewer|architecture-reviewer|scribe|spec-generator|spec-reviewer)$",
         "hooks": [
           {
             "type": "command",

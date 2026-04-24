@@ -270,4 +270,4 @@ After exhausting retries, the wrapper has already posted the escalation via `pip
 - `reference/human-gate-levels.md` — `humanReviewLevel` 0–4 semantics.
 - `reference/resume-protocol.md` — SessionStart hook + wrapper cooperation on `source=resume`.
 - `reference/legacy-per-task-protocol.md` — archive of the 280-line prose protocol the wrapper replaced. Human-readable; never linked from this SKILL.md.
-- `prompts/spec-generator.md`, `spec-reviewer.md`, `task-executor.md`, `task-reviewer.md`, `scribe.md` — externalized agent prompts. The wrapper writes per-task prompts into `.state/<run-id>/` from these templates; you do not edit them at runtime.
+- `prompts/spec-generator.md`, `spec-reviewer.md`, `task-executor.md`, `implementation-reviewer.md`, `scribe.md` — externalized agent prompts. The wrapper writes per-task prompts into `.state/<run-id>/` from these templates; you do not edit them at runtime.

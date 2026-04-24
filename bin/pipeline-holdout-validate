@@ -5,7 +5,7 @@
 #   prompt <run-id> <task-id>
 #     Read the holdout file written by `pipeline-build-prompt --holdout` and
 #     emit a focused reviewer prompt asking for criterion-by-criterion
-#     verification. Stdout is the prompt body, ready to feed task-reviewer
+#     verification. Stdout is the prompt body, ready to feed implementation-reviewer
 #     (or the dedicated holdout-validator) via Agent({prompt: ...}).
 #
 #   check <run-id> <task-id> <reviewer-output-file>

@@ -511,7 +511,7 @@ pipeline-detect-reviewer [--base <ref>]
 ```json
 {
   "reviewer": "claude-code",
-  "agent": "task-reviewer"
+  "agent": "implementation-reviewer"
 }
 ```
 

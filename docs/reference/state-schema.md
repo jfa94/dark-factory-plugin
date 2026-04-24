@@ -180,7 +180,7 @@ The orchestrator worktree is created at Step 6a of `commands/run.md` to isolate 
 | -------------------- | ------------------------ |
 | `pending`            | Not started              |
 | `executing`          | task-executor running    |
-| `reviewing`          | task-reviewer running    |
+| `reviewing`          | implementation-reviewer running    |
 | `done`               | Completed successfully   |
 | `failed`             | Failed after max retries |
 | `interrupted`        | Stopped mid-execution    |

@@ -299,7 +299,7 @@ _stage_postexec() {
   tier=$(_task_field risk_tier)
   tier=$(printf '%s' "$tier" | sed -e 's/^"//' -e 's/"$//')
   [[ -z "$tier" ]] && tier="routine"
-  local reviewers=("task-reviewer")
+  local reviewers=("implementation-reviewer")
   case "$tier" in
     feature)  reviewers+=("architecture-reviewer") ;;
     security) reviewers+=("code-reviewer" "security-reviewer" "architecture-reviewer") ;;

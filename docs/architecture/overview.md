@@ -76,7 +76,7 @@ For each task in execution order:
 ### Stage F: Adversarial Review
 
 - Detect reviewer via `pipeline-detect-reviewer` (Codex preferred, Claude Code fallback)
-- Spawn `task-reviewer` agent with `review-protocol` skill
+- Spawn `implementation-reviewer` agent with `review-protocol` skill
 - Multi-round loop: REQUEST_CHANGES triggers fix and re-review
 - Security tier adds `security-reviewer` and `architecture-reviewer`
 - Parse verdicts via `pipeline-parse-review`
@@ -121,7 +121,7 @@ For each task in execution order:
 ├─────────────────┤      ├─────────────────┤      ├─────────────────┤
 │ pipeline-*      │      │ spec-generator  │      │ branch-protection│
 │ (21 scripts)    │      │ task-executor   │      │ run-tracker     │
-│                 │      │ task-reviewer   │      │ stop-gate       │
+│                 │      │ implementation-reviewer   │      │ stop-gate       │
 │ Validation      │      │ code-reviewer   │      │ subagent-stop   │
 │ State mgmt      │      │ security-       │      │                 │
 │ Classification  │      │   reviewer      │      │                 │

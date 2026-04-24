@@ -5,7 +5,7 @@
 # warnings); this one owns the orchestrator-facing hand-off.
 #
 # Matcher (in templates/settings.autonomous.json):
-#   "^(task-executor|task-reviewer|code-reviewer|security-reviewer|architecture-reviewer|scribe|spec-generator|spec-reviewer)$"
+#   "^(task-executor|implementation-reviewer|code-reviewer|security-reviewer|architecture-reviewer|scribe|spec-generator|spec-reviewer)$"
 #
 # Stdin: JSON with agent_type, last_assistant_message, agent_transcript_path,
 # session_id, and (optionally) agent task_id in tool/context.
@@ -76,7 +76,7 @@ fi
 # --- 4. Write review file (reviewer roles) ---
 review_path=""
 case "$agent_type" in
-  task-reviewer|code-reviewer|security-reviewer|architecture-reviewer)
+  implementation-reviewer|code-reviewer|security-reviewer|architecture-reviewer)
     if [[ -n "$task_id" && "$task_id" != "RUN" ]]; then
       mkdir -p "$run_dir/.state/$run_id"
       review_path="$run_dir/.state/$run_id/$task_id.review.$agent_type.md"
@@ -94,7 +94,7 @@ if [[ -n "$task_id" && "$task_id" != "RUN" ]]; then
         pipeline-state task-write "$run_id" "$task_id" worktree "\"$worktree\"" >/dev/null 2>&1 || true
       fi
       ;;
-    task-reviewer|code-reviewer|security-reviewer|architecture-reviewer)
+    implementation-reviewer|code-reviewer|security-reviewer|architecture-reviewer)
       pipeline-state task-write "$run_id" "$task_id" reviewer_status "\"$status\"" >/dev/null 2>&1 || true
       if [[ -n "$review_path" ]]; then
         cur=$(jq -c --arg t "$task_id" '.tasks[$t].review_files // []' "$state_file" 2>/dev/null || printf '[]')

@@ -27,8 +27,8 @@ if command -v codex &>/dev/null; then
   fi
 fi
 
-# Fallback to Claude Code task-reviewer agent
+# Fallback to Claude Code implementation-reviewer agent
 jq -n \
   --arg reviewer "claude-code" \
-  --arg agent "task-reviewer" \
+  --arg agent "implementation-reviewer" \
   '{reviewer: $reviewer, agent: $agent}'

@@ -31,7 +31,7 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse-pipeline-guards.sh",
             "timeout": 10,
-            "statusMessage": "Checking pipeline path-scope (test-writer phase)"
+            "statusMessage": "Checking pipeline path-scope guards"
           }
         ]
       }

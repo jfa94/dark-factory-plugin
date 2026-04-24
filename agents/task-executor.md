@@ -62,7 +62,7 @@ You receive a structured prompt containing:
 
 ## Rules
 
-- Do NOT modify test files from the RED commit. Exception: REFACTOR commit that keeps tests green and only renames / re-homes tests, after initial GREEN.
+- Do NOT modify test files from the RED commit. Exception: after your GREEN commit lands, you may issue a SEPARATE follow-up commit titled `refactor(<scope>): <description> [<task_id>]` that keeps tests green. That commit may touch test files only to rename or re-home them — not to change assertions or add new test logic.
 - Do NOT add features beyond what the acceptance criteria require.
 - Do NOT hardcode return values to satisfy specific test inputs.
 - Do NOT write fallback code that silently degrades functionality.
@@ -95,7 +95,6 @@ After you finish, the orchestrator will:
 - [ ] Did NOT modify any test files from the RED commit (unless doing a REFACTOR commit after GREEN)
 - [ ] Output pristine (no warnings / errors)
 - [ ] Committed impl with `[<task_id>]` tag
-- [ ] Every acceptance criterion is genuinely addressed (not just test-passing)
 
 Can't check every box? STATUS: BLOCKED with the reason.
 

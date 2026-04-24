@@ -136,6 +136,22 @@ pipeline-rescue-apply --plans="$plans3" >/dev/null
 status=$(pipeline-state read R1 '.tasks.T1.status' | tr -d '"')
 assert_eq "malformed decision leaves status" "executing" "$status"
 
+echo "=== I-07: rebase failure marks task failed with failure_reason ==="
+seed_run
+# Create a temp dir that exists but is NOT a git repo, so git rebase will fail.
+fake_wt="$CLAUDE_PLUGIN_DATA/fake_wt"
+mkdir -p "$fake_wt"
+pipeline-state task-write R1 T1 worktree "\"$fake_wt\"" >/dev/null
+report_i07="$CLAUDE_PLUGIN_DATA/report_i07.json"
+cat > "$report_i07" <<JSON
+{"run_id":"R1","mechanical_issues":[{"id":"I-07","tier":2,"task_id":"T1","description":"PR has merge conflict"}]}
+JSON
+pipeline-rescue-apply --tier=risky --plan="$report_i07" >/dev/null 2>&1 || true
+status=$(pipeline-state read R1 '.tasks.T1.status' | tr -d '"')
+assert_eq "I-07 rebase failure marks failed" "failed" "$status"
+reason=$(pipeline-state read R1 '.tasks.T1.failure_reason' | tr -d '"')
+assert_eq "I-07 writes failure_reason" "unresolvable merge conflict (I-13)" "$reason"
+
 echo
 echo "Passed: $pass | Failed: $fail"
 [[ $fail -eq 0 ]]

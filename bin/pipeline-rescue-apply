@@ -147,7 +147,9 @@ _apply_I_07() {
     rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr ok ""
   else
     (cd "$wt" && git rebase --abort) >/dev/null 2>&1 || true
-    rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr error "rebase failed; escalated to I-13"
+    pipeline-state task-status "$run_id" "$task_id" failed >/dev/null
+    pipeline-state task-write "$run_id" "$task_id" failure_reason '"unresolvable merge conflict (I-13)"' >/dev/null
+    rescue_audit "$run_id" mechanical I-07 "$task_id" rebase_pr error "rebase failed; escalated to investigation (I-13)"
   fi
 }
 
@@ -301,15 +303,15 @@ _dispatch_risky() {
 
 _dispatch_safe() {
   local run_id="$1" plan_file="$2"
-  while IFS=$'\t' read -r id task_id detail; do
+  while IFS=$'\t' read -r id task_id detail pr_url; do
     case "$id" in
       I-01) _apply_I_01 "$run_id" ;;
       I-02) _apply_I_02 "$run_id" "$task_id" ;;
       I-03) _apply_I_03 "$run_id" "$task_id" ;;
-      I-04) _apply_I_04 "$run_id" "$task_id" "$detail" ;;
+      I-04) _apply_I_04 "$run_id" "$task_id" "$pr_url" ;;
       I-05) _apply_I_05 "$run_id" "$task_id" "$detail" ;;
     esac
-  done < <(jq -r '.mechanical_issues[] | select(.tier == 1) | [.id, (.task_id // ""), (.description // "")] | @tsv' "$plan_file")
+  done < <(jq -r '.mechanical_issues[] | select(.tier == 1) | [.id, (.task_id // ""), (.description // ""), (.pr_url // "")] | @tsv' "$plan_file")
 }
 
 if [[ -n "$plans" ]]; then

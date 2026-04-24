@@ -189,6 +189,20 @@ assert_eq "I-16 flagged" "1" "$i16"
 i16_task=$(jq -r '[.investigation_flags[] | select(.id == "I-16")][0].task_id' "$CLAUDE_PLUGIN_DATA/scan.json")
 assert_eq "I-16 task_id" "T1" "$i16_task"
 
+echo "=== I-12: malformed state.json exits 0 with I-12 in report ==="
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/R_BAD"
+echo 'NOT { valid JSON' > "$CLAUDE_PLUGIN_DATA/runs/R_BAD/state.json"
+scan_out=$(pipeline-rescue-scan R_BAD 2>/dev/null)
+i12=$(jq '[.mechanical_issues[] | select(.id == "I-12")] | length' <<<"$scan_out")
+assert_eq "I-12 detected on malformed state" "1" "$i12"
+null_summary=$(jq '.state_summary == null' <<<"$scan_out")
+assert_eq "state_summary is null on malformed state" "true" "$null_summary"
+
+echo "=== I-04 scan: pr_url field contains GitHub URL (not description prose) ==="
+PATH="$mock_dir:$PATH" pipeline-rescue-scan R2 > "$CLAUDE_PLUGIN_DATA/scan_i04b.json"
+i04_url=$(jq -r '.mechanical_issues[] | select(.id == "I-04") | .pr_url' "$CLAUDE_PLUGIN_DATA/scan_i04b.json")
+assert_eq "I-04 pr_url is GitHub URL" "https://github.com/x/y/pull/42" "$i04_url"
+
 echo
 echo "Passed: $pass | Failed: $fail"
 [[ $fail -eq 0 ]]

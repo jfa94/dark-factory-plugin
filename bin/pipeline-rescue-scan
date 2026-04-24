@@ -14,6 +14,13 @@ run_id="${1:?missing run-id}"
 state="$CLAUDE_PLUGIN_DATA/runs/$run_id/state.json"
 [[ -f "$state" ]] || { log_error "no state for run $run_id"; exit 1; }
 
+# I-12: detect malformed state.json before any other jq reads
+if ! jq . "$state" >/dev/null 2>&1; then
+  jq -n --arg run_id "$run_id" \
+    '{run_id: $run_id, state_summary: null, mechanical_issues: [{"id":"I-12","tier":2,"task_id":null,"description":"state.json malformed"}], investigation_flags: []}'
+  exit 0
+fi
+
 mechanical=()
 investigation=()
 state_summary=$(jq '{status: .status, tasks: (.tasks // {} | to_entries | map({task_id: .key, status: .value.status, stage: .value.stage, pr_number: .value.pr_number}))}' "$state")
@@ -48,14 +55,20 @@ issue=$(rescue_issue_for_run "$run_id")
 # GitHub search results (used for I-04 and I-15)
 search_json='[]'
 if [[ -n "$issue" ]]; then
-  search_json=$(gh pr list --search "[$issue] task( in:title" --state all --json number,title,state,mergedAt,mergeable,headRefName,url 2>/dev/null || echo '[]')
+  if ! search_json=$(gh pr list --search "[$issue] task( in:title" --state all --json number,title,state,mergedAt,mergeable,headRefName,url 2>/dev/null); then
+    log_error "GitHub unavailable: gh pr list failed"
+    exit 1
+  fi
 fi
 
 # For each task with a PR, fetch PR state via gh
 while IFS=$'\t' read -r task_id pr_number status stage ci_status; do
   [[ -z "$task_id" ]] && continue
   [[ -z "$pr_number" || "$pr_number" == "null" ]] && continue
-  pr_json=$(gh pr view "$pr_number" --json state,mergedAt,mergeable,statusCheckRollup 2>/dev/null || echo '{}')
+  if ! pr_json=$(gh pr view "$pr_number" --json state,mergedAt,mergeable,statusCheckRollup 2>/dev/null); then
+    log_error "GitHub unavailable: gh pr view $pr_number failed"
+    exit 1
+  fi
   pr_state=$(jq -r '.state // ""' <<<"$pr_json")
 
   # I-03: PR merged, state not updated
@@ -113,11 +126,6 @@ if [[ "$spec_status" != "pending" && "$spec_status" != "" && "$tasks_count" -eq 
   fi
 fi
 
-# I-12: malformed state.json
-if ! jq . "$state" >/dev/null 2>&1; then
-  mechanical+=("$(jq -n --arg id I-12 --argjson tier 2 --arg desc "state.json malformed" '{id: $id, tier: $tier, task_id: null, description: $desc}')")
-fi
-
 # I-15: duplicate PRs for same branch
 if [[ -n "$issue" && -n "${search_json:-}" ]]; then
   dup_json=$(jq -r '[group_by(.headRefName)[] | select(length > 1) | {branch: .[0].headRefName, prs: map({number: .number, url: .url})}]' <<<"$search_json")
@@ -140,7 +148,7 @@ if [[ -n "$issue" ]]; then
     if [[ -z "$state_pr" ]]; then
       exists=$(jq -r --arg t "$tid" '.tasks | has($t) | tostring' "$state")
       if [[ "$exists" == "true" ]]; then
-        mechanical+=("$(jq -n --arg id I-04 --argjson tier 1 --arg task "$tid" --arg desc "PR #$pr_num exists on GitHub but state.pr_url empty" '{id: $id, tier: $tier, task_id: $task, description: $desc}')")
+        mechanical+=("$(jq -n --arg id I-04 --argjson tier 1 --arg task "$tid" --arg desc "PR #$pr_num exists on GitHub but state.pr_url empty" --arg url "$pr_url_gh" '{id: $id, tier: $tier, task_id: $task, description: $desc, pr_url: $url}')")
       fi
     fi
   done < <(jq -r '.[] | [.number, .title, .url] | @tsv' <<<"$search_json")

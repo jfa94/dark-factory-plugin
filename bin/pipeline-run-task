@@ -375,9 +375,28 @@ _stage_postexec() {
   provider=$(printf '%s' "$detect" | jq -r '.reviewer')
   log_metric "task.review.provider" "task_id=\"$task_id\"" "reviewer=\"$provider\""
 
+  local tier
+  tier=$(_task_field risk_tier)
+  tier=$(printf '%s' "$tier" | sed -e 's/^"//' -e 's/"$//')
+  [[ -z "$tier" ]] && tier="routine"
+
+  _ensure_prompt_dir
+  local pf
+  pf=$(_prompt_path reviewer)
+  {
+    printf 'Review task %s in the worktree at %s.\n' "$task_id" "$wt"
+    printf 'End your response with exactly one of:\n'
+    printf '  STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT\n'
+  } > "$pf"
+
+  # Slot 1: implementation-reviewer (spec alignment, always present)
+  local agents_json
+  agents_json=$(jq -cn --arg pf "$pf" \
+    '[{subagent_type:"implementation-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
+
+  # Slot 2: quality reviewer — Codex preferred, agent fallback
   if [[ "$provider" == "codex" ]]; then
     local review_file="$run_dir/.state/$run_id/$task_id.review.codex.json"
-    _ensure_prompt_dir
     local spec_path
     spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
     local cargs=(--base staging --task-id "$task_id")
@@ -389,41 +408,25 @@ _stage_postexec() {
       return 30
     fi
     _task_write review_files "$(jq -n --arg f "$review_file" '[$f]')"
-    _task_write stage '"postexec_done"'
-    t1=$(_now_ms)
-    log_step_end "postexec" "ok" "$((t1-t0))" "task_id=\"$task_id\"" "reviewer=\"codex\""
-    return 0
+  else
+    agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+      '. + [{subagent_type:"quality-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
   fi
 
-  local tier
-  tier=$(_task_field risk_tier)
-  tier=$(printf '%s' "$tier" | sed -e 's/^"//' -e 's/"$//')
-  [[ -z "$tier" ]] && tier="routine"
-  local reviewers=("implementation-reviewer")
+  # Risk-tier additions
   case "$tier" in
-    feature)  reviewers+=("architecture-reviewer") ;;
-    security) reviewers+=("quality-reviewer" "security-reviewer" "architecture-reviewer") ;;
+    feature)
+      agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+        '. + [{subagent_type:"architecture-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]') ;;
+    security)
+      agents_json=$(printf '%s' "$agents_json" | jq -c --arg pf "$pf" \
+        '. + [{subagent_type:"security-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf},
+              {subagent_type:"architecture-reviewer", isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]') ;;
   esac
 
-  _ensure_prompt_dir
-  local pf
-  pf=$(_prompt_path reviewer)
-  {
-    printf 'Review task %s in the worktree at %s.\n' "$task_id" "$wt"
-    printf 'End your response with exactly one of:\n'
-    printf '  STATUS: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT\n'
-  } > "$pf"
-
-  local agents_json='[]' r
-  for r in "${reviewers[@]}"; do
-    agents_json=$(printf '%s' "$agents_json" | jq -c \
-      --arg role "$r" --arg pf "$pf" \
-      '. + [{subagent_type:$role, isolation:"worktree", model:"sonnet", maxTurns:30, prompt_file:$pf}]')
-  done
   _emit_manifest postreview "$agents_json"
-
   t1=$(_now_ms)
-  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=$(printf '%s' "${reviewers[*]}" | jq -R .)"
+  log_step_end "postexec" "spawn" "$((t1-t0))" "task_id=\"$task_id\"" "reviewers=\"implementation+quality\""
   return 10
 }
 

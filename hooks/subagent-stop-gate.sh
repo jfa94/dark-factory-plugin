@@ -75,7 +75,7 @@ case "$agent_type" in
     fi
     ;;
 
-  implementation-reviewer)
+  implementation-reviewer|quality-reviewer)
     # Expect a review verdict file
     state_file="$run_dir/state.json"
     if [[ -f "$state_file" ]]; then

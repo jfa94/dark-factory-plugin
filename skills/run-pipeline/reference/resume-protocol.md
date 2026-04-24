@@ -55,7 +55,7 @@ If the session died after `pipeline-init` but before the first task entered the 
 - `.tasks.<id>.review_files` — codex path; Claude path uses files at `.state/<run-id>/<id>.review.<agent>.md` written by SubagentStop.
 - `.orchestrator.worktree` — reuse across sessions.
 - `.scribe.status` — `spawned` / `done`; finalize-run uses this to avoid double-spawning scribe.
-- `.rollup.pr_url` — finalize-run uses this to avoid double-opening the rollup PR.
+- `.final_pr.pr_url` — finalize-run uses this to avoid double-opening the final PR.
 
 ## Do NOT
 

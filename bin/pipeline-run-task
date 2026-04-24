@@ -547,6 +547,35 @@ _stage_finalize_run() {
     return 3
   fi
 
+  # Verify every task PR is actually merged into origin/staging before proceeding.
+  # Tasks reach status=done on CI-green (async path) but auto-merge may still be
+  # in-flight. This guard prevents the final PR opening against a stale staging.
+  git fetch origin staging --quiet 2>/dev/null || true
+  local staging_sha_missing=false
+  while IFS= read -r pr_num; do
+    [[ -z "$pr_num" || "$pr_num" == "null" ]] && continue
+    local pr_data merge_sha
+    pr_data=$(gh pr view "$pr_num" --json state,mergeCommit,headRefOid 2>/dev/null || printf '{}')
+    local pr_state
+    pr_state=$(printf '%s' "$pr_data" | jq -r '.state // "OPEN"')
+    if [[ "$pr_state" != "MERGED" ]]; then
+      log_warn "finalize-run: task PR #$pr_num not yet merged (state=$pr_state)"
+      staging_sha_missing=true
+      continue
+    fi
+    merge_sha=$(printf '%s' "$pr_data" | jq -r '.mergeCommit.oid // .headRefOid // ""')
+    if [[ -n "$merge_sha" ]] && ! git merge-base --is-ancestor "$merge_sha" origin/staging 2>/dev/null; then
+      log_warn "finalize-run: task PR #$pr_num merge SHA $merge_sha not yet visible on origin/staging"
+      staging_sha_missing=true
+    fi
+  done < <(jq -r '.tasks[].pr_number // empty' "$state_file" 2>/dev/null)
+
+  if [[ "$staging_sha_missing" == "true" ]]; then
+    t1=$(_now_ms)
+    log_step_end "finalize-run" "wait_retry" "$((t1-t0))" "reason=\"staging_not_settled\""
+    return 3
+  fi
+
   local scribe_done
   scribe_done=$(pipeline-state read "$run_id" '.scribe.status // ""' 2>/dev/null || printf '')
   if [[ "$scribe_done" != "done" ]]; then
@@ -563,18 +592,21 @@ _stage_finalize_run() {
     return 10
   fi
 
-  local rollup_url
-  rollup_url=$(pipeline-state read "$run_id" '.rollup.pr_url // ""' 2>/dev/null || printf '')
-  if [[ -z "$rollup_url" ]]; then
-    rollup_url=$(gh pr create --base develop --head staging --title "Rollup: $run_id" --body "Rollup PR for pipeline run $run_id" 2>/dev/null || true)
-    if [[ -n "$rollup_url" ]]; then
-      pipeline-state write "$run_id" '.rollup.pr_url' "\"$rollup_url\"" >/dev/null || true
-      local rollup_num
-      rollup_num=$(printf '%s' "$rollup_url" | grep -oE '[0-9]+$' || printf '')
-      [[ -n "$rollup_num" ]] && pipeline-state write "$run_id" '.rollup.pr_number' "$rollup_num" >/dev/null || true
-      log_metric "run.rollup_pr_created" "url=\"$rollup_url\""
+  local final_pr_url
+  final_pr_url=$(pipeline-state read "$run_id" '.final_pr.pr_url // ""' 2>/dev/null || printf '')
+  if [[ -z "$final_pr_url" ]]; then
+    final_pr_url=$(gh pr create --base develop --head staging \
+      --title "Final: $run_id" \
+      --body "Final PR merging staging into develop for run $run_id." \
+      2>/dev/null || true)
+    if [[ -n "$final_pr_url" ]]; then
+      pipeline-state write "$run_id" '.final_pr.pr_url' "\"$final_pr_url\"" >/dev/null || true
+      local final_pr_num
+      final_pr_num=$(printf '%s' "$final_pr_url" | grep -oE '[0-9]+$' || printf '')
+      [[ -n "$final_pr_num" ]] && pipeline-state write "$run_id" '.final_pr.pr_number' "$final_pr_num" >/dev/null || true
+      log_metric "run.final_pr_created" "url=\"$final_pr_url\""
     else
-      log_warn "rollup PR create failed"
+      log_warn "final PR create failed"
     fi
   fi
 

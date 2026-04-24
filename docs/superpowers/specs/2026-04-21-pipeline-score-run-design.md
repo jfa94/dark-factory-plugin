@@ -129,9 +129,9 @@ evaluate(run, task?) -> pass | fail | unknown
 | R5  | `no_circuit_trip`        | required                                          | no `circuit_breaker` metric event                                                                      |
 | R6  | `no_human_gate_pause`    | required                                          | no state transition to `awaiting_human` in audit log                                                   |
 | R7  | `scribe_ran`             | required if all tasks reached terminal done state | metric event `agent.scribe.end` OR scribe commit on staging                                            |
-| R8  | `rollup_pr_opened`       | required if R7 required                           | `.final_pr_number != null`                                                                             |
-| R9  | `rollup_pr_merged`       | required if R8 applies                            | `gh pr view <final_pr_number> --json merged` → true                                                    |
-| R10 | `rollup_ci_green`        | required if R8 applies                            | `run.ci` metric event `status=green` (fallback: `gh pr view --json statusCheckRollup`)                 |
+| R8  | `final_pr_opened`        | required if R7 required                           | `.final_pr.pr_number != null` (fallback: `.rollup.pr_number`)                                          |
+| R9  | `final_pr_merged`        | required if R8 applies                            | `gh pr view <final_pr.pr_number> --json state` → MERGED                                                |
+| R10 | `final_pr_ci_green`      | required if R8 applies                            | `run.ci` metric event `status=green` (fallback: `gh pr view --json statusCheckRollup`)                 |
 | R11 | `no_escalation_comments` | required                                          | zero `pipeline-gh-comment` events of type `ci-escalation` / `review-escalation` / `conflict-escalated` |
 | R12 | `terminal_status_done`   | required                                          | `.status == done`                                                                                      |
 

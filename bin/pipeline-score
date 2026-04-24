@@ -92,12 +92,12 @@ run_steps=$(jq -n \
   --argjson R5 "$(_score_run_step R5_no_circuit_trip      no_circuit_trip      eval_R5_no_circuit_trip)" \
   --argjson R6 "$(_score_run_step R6_no_human_gate_pause  no_human_gate_pause  eval_R6_no_human_gate_pause)" \
   --argjson R7 "$(_score_run_step R7_scribe_ran           scribe_ran           eval_R7_scribe_ran)" \
-  --argjson R8 "$(_score_run_step R8_rollup_pr_opened     rollup_pr_opened     eval_R8_rollup_pr_opened)" \
-  --argjson R9 "$(_score_run_step R9_rollup_pr_merged     rollup_pr_merged     eval_R9_rollup_pr_merged)" \
-  --argjson R10 "$(_score_run_step R10_rollup_ci_green    rollup_ci_green      eval_R10_rollup_ci_green)" \
+  --argjson R8 "$(_score_run_step R8_final_pr_opened      final_pr_opened      eval_R8_final_pr_opened)" \
+  --argjson R9 "$(_score_run_step R9_final_pr_merged      final_pr_merged      eval_R9_final_pr_merged)" \
+  --argjson R10 "$(_score_run_step R10_final_pr_ci_green  final_pr_ci_green    eval_R10_final_pr_ci_green)" \
   --argjson R11 "$(_score_run_step R11_no_escalation_comments no_escalation_comments eval_R11_no_escalation_comments)" \
   --argjson R12 "$(_score_run_step R12_terminal_status_done   terminal_status_done   eval_R12_terminal_status_done)" \
-  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4, R5_no_circuit_trip: $R5, R6_no_human_gate_pause: $R6, R7_scribe_ran: $R7, R8_rollup_pr_opened: $R8, R9_rollup_pr_merged: $R9, R10_rollup_ci_green: $R10, R11_no_escalation_comments: $R11, R12_terminal_status_done: $R12}')
+  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4, R5_no_circuit_trip: $R5, R6_no_human_gate_pause: $R6, R7_scribe_ran: $R7, R8_final_pr_opened: $R8, R9_final_pr_merged: $R9, R10_final_pr_ci_green: $R10, R11_no_escalation_comments: $R11, R12_terminal_status_done: $R12}')
 
 _task_ids() {
   printf '%s' "$state" | jq -r '.tasks // {} | keys[]'

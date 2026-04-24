@@ -240,7 +240,7 @@ _gh_pr_ci_color() {
 }
 ```
 
-- [ ] **Step 4: Replace inline jq in `eval_R10_rollup_ci_green`**
+- [ ] **Step 4: Replace inline jq in `eval_R10_final_pr_ci_green`**
 
 In `bin/pipeline-score-steps.sh`, replace the `gh pr view ...` block
 (around lines 145-155) with:
@@ -399,9 +399,9 @@ Rename every `echo "skipped_ok"` in `bin/pipeline-score-steps.sh`:
   - `eval_R2_spec_generated` (task mode)
   - `eval_R3_spec_reviewer_approved` (task mode)
   - `eval_R7_scribe_ran` (tasks not all done)
-  - `eval_R8_rollup_pr_opened` (tasks not all done)
-  - `eval_R9_rollup_pr_merged` (no PR)
-  - `eval_R10_rollup_ci_green` (no PR)
+  - `eval_R8_final_pr_opened` (tasks not all done)
+  - `eval_R9_final_pr_merged` (no PR)
+  - `eval_R10_final_pr_ci_green` (no PR)
   - `eval_T6_holdout_pass` (no fixture)
   - `eval_T7_mutation_pass` (risk_tier not feature/security)
   - `eval_T10_pr_created` (task status not reviewing/done/ci_fixing)

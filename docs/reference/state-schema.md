@@ -247,23 +247,25 @@ The orchestrator worktree is created at Step 6a of `commands/run.md` to isolate 
 
 ---
 
-## Rollup Object
+## Final PR Object
 
 ```json
 {
-  "rollup": {
+  "final_pr": {
     "pr_url": "https://github.com/owner/repo/pull/456",
     "pr_number": 456
   }
 }
 ```
 
-| Field       | Type   | Description                            |
-| ----------- | ------ | -------------------------------------- |
-| `pr_url`    | string | Rollup PR URL (staging → develop)      |
-| `pr_number` | number | Rollup PR number for CI/merge tracking |
+| Field       | Type   | Description                           |
+| ----------- | ------ | ------------------------------------- |
+| `pr_url`    | string | Final PR URL (staging → develop)      |
+| `pr_number` | number | Final PR number for CI/merge tracking |
 
-Written by `pipeline-run-task` at the `finalize-run` stage.
+Written by `pipeline-run-task` at the `finalize-run` stage, only after all task PRs are verified merged into `origin/staging`.
+
+**Legacy:** Older runs wrote this under `.rollup.pr_url` / `.rollup.pr_number`. The scorer reads both keys with `.final_pr.pr_number // .rollup.pr_number` for back-compat.
 
 ---
 

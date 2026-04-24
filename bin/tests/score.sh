@@ -75,24 +75,24 @@ out=$(pipeline-score --run run-fix-001 --format json --no-gh)
 R5=$(printf '%s' "$out" | jq -r '.run_steps.R5_no_circuit_trip.state')
 R6=$(printf '%s' "$out" | jq -r '.run_steps.R6_no_human_gate_pause.state')
 R7=$(printf '%s' "$out" | jq -r '.run_steps.R7_scribe_ran.state')
-R8=$(printf '%s' "$out" | jq -r '.run_steps.R8_rollup_pr_opened.state')
+R8=$(printf '%s' "$out" | jq -r '.run_steps.R8_final_pr_opened.state')
 
 assert_eq "R5 no_circuit_trip"      "pass"        "$R5"
 assert_eq "R6 no_human_gate_pause"  "pass"        "$R6"
 # Fixture: not all tasks done (interrupted) → scribe did not need to run.
 assert_eq "R7 scribe_ran"           "skipped_na"  "$R7"
-assert_eq "R8 rollup_pr_opened"     "skipped_na"  "$R8"
+assert_eq "R8 final_pr_opened"      "skipped_na"  "$R8"
 
 echo "=== run-level steps R9-R12 ==="
 
 out=$(pipeline-score --run run-fix-001 --format json --no-gh)
-R9=$(printf '%s' "$out" | jq -r '.run_steps.R9_rollup_pr_merged.state')
-R10=$(printf '%s' "$out" | jq -r '.run_steps.R10_rollup_ci_green.state')
+R9=$(printf '%s' "$out" | jq -r '.run_steps.R9_final_pr_merged.state')
+R10=$(printf '%s' "$out" | jq -r '.run_steps.R10_final_pr_ci_green.state')
 R11=$(printf '%s' "$out" | jq -r '.run_steps.R11_no_escalation_comments.state')
 R12=$(printf '%s' "$out" | jq -r '.run_steps.R12_terminal_status_done.state')
 
-assert_eq "R9 rollup_pr_merged"           "skipped_na"  "$R9"
-assert_eq "R10 rollup_ci_green"            "skipped_na"  "$R10"
+assert_eq "R9 final_pr_merged"             "skipped_na"  "$R9"
+assert_eq "R10 final_pr_ci_green"          "skipped_na"  "$R10"
 assert_eq "R11 no_escalation_comments"     "pass"        "$R11"
 assert_eq "R12 terminal_status_done"       "fail"        "$R12"
 
@@ -318,8 +318,8 @@ cp -r "$compliant"/. "$CLAUDE_PLUGIN_DATA/runs/run-compliant-smoke/"
 smoke=$(pipeline-score --run run-compliant-smoke --format json --no-gh --no-log)
 assert_eq "compliant-smoke full_success"   "true" "$(printf '%s' "$smoke" | jq -r '.full_success')"
 for r in R1_autonomy_ok R2_spec_generated R3_spec_reviewer_approved R4_tasks_decomposed \
-         R5_no_circuit_trip R6_no_human_gate_pause R7_scribe_ran R8_rollup_pr_opened \
-         R9_rollup_pr_merged R10_rollup_ci_green R11_no_escalation_comments R12_terminal_status_done; do
+         R5_no_circuit_trip R6_no_human_gate_pause R7_scribe_ran R8_final_pr_opened \
+         R9_final_pr_merged R10_final_pr_ci_green R11_no_escalation_comments R12_terminal_status_done; do
   v=$(printf '%s' "$smoke" | jq -r --arg k "$r" '.run_steps[$k].state')
   assert_eq "compliant-smoke $r pass" "pass" "$v"
 done
@@ -340,6 +340,47 @@ done
 assert_eq "compliant-smoke observability.quota.checks"           "3" "$(printf '%s' "$smoke" | jq -r '.observability.quota.checks')"
 assert_eq "compliant-smoke observability.reviewers.claude"       "2" "$(printf '%s' "$smoke" | jq -r '.observability.reviewers.claude')"
 assert_eq "compliant-smoke observability.reviewers.codex"        "1" "$(printf '%s' "$smoke" | jq -r '.observability.reviewers.codex')"
+
+echo "=== legacy-rollup fixture: R8/R9/R10 evaluate via .rollup.* fallback ==="
+legacy_dir="$CLAUDE_PLUGIN_DATA/runs/run-legacy-rollup"
+mkdir -p "$legacy_dir"
+# Build a minimal done run with only the old .rollup.* key
+jq -n '{
+  "run_id": "run-legacy-rollup",
+  "version": "0.3.5",
+  "status": "done",
+  "mode": "prd",
+  "started_at": "2026-04-20T08:00:00Z",
+  "ended_at": "2026-04-20T10:00:00Z",
+  "updated_at": "2026-04-20T10:00:00Z",
+  "spec": {"status":"done","review_iterations":1,"review_score":55,"committed":true,"handoff_ref":"abc"},
+  "scribe": {"status":"done"},
+  "rollup": {"pr_url":"https://github.com/acme/repo/pull/8888","pr_number":8888},
+  "execution_order": [{"task_id":"t1","parallel_group":0}],
+  "tasks": {
+    "t1": {
+      "task_id":"t1","status":"done","depends_on":[],"files":["src/x.ts"],
+      "acceptance_criteria":["ok"],"tests_to_write":["t"],"risk_tier":"routine",
+      "stage":"ship_done","pr_number":77,"pr_url":"https://github.com/acme/repo/pull/77",
+      "ci_status":"green","review_attempts":0,"quality_attempts":0,"ci_fix_attempts":0,
+      "executor_status":"DONE","reviewer_status":"DONE",
+      "quality_gate":{"ok":true,"checks":[
+        {"command":"lint","status":"passed"},
+        {"command":"typecheck","status":"passed"},
+        {"command":"test","status":"passed"}
+      ]},
+      "started_at":"2026-04-20T08:05:00Z","ended_at":"2026-04-20T09:00:00Z"
+    }
+  }
+}' > "$legacy_dir/state.json"
+cp "$(dirname "$0")/fixtures/score/compliant-smoke/metrics.jsonl" "$legacy_dir/metrics.jsonl" 2>/dev/null || printf '' > "$legacy_dir/metrics.jsonl"
+cp "$(dirname "$0")/fixtures/score/compliant-smoke/audit.jsonl"   "$legacy_dir/audit.jsonl"   2>/dev/null || printf '' > "$legacy_dir/audit.jsonl"
+legacy=$(pipeline-score --run run-legacy-rollup --format json --no-gh --no-log)
+R8l=$(printf '%s' "$legacy" | jq -r '.run_steps.R8_final_pr_opened.state')
+R9l=$(printf '%s' "$legacy" | jq -r '.run_steps.R9_final_pr_merged.state')
+assert_eq "legacy-rollup R8 reads .rollup fallback (pass or skipped_na)" "pass" "$R8l"
+assert_eq "legacy-rollup R9 reads .rollup fallback (not fail)" "false" \
+  "$([ "$R9l" == "fail" ] && echo true || echo false)"
 
 echo ""
 echo "=== RESULTS: ${pass} passed, ${fail} failed ==="

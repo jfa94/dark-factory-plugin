@@ -616,14 +616,14 @@ out=$(pipeline-score --run run-fix-001 --format json --no-gh)
 R5=$(printf '%s' "$out" | jq -r '.run_steps.R5_no_circuit_trip.state')
 R6=$(printf '%s' "$out" | jq -r '.run_steps.R6_no_human_gate_pause.state')
 R7=$(printf '%s' "$out" | jq -r '.run_steps.R7_scribe_ran.state')
-R8=$(printf '%s' "$out" | jq -r '.run_steps.R8_rollup_pr_opened.state')
+R8=$(printf '%s' "$out" | jq -r '.run_steps.R8_final_pr_opened.state')
 
 assert_eq "R5 no_circuit_trip is pass"        "pass"          "$R5"
 assert_eq "R6 no_human_gate_pause"            "pass"          "$R6"
 # The outsidey fixture never finalized; scribe should not have been required.
 # Because not-all-tasks-done, R7 applies=no and should render as skipped_ok.
 assert_eq "R7 scribe_ran skipped_ok"           "skipped_ok"    "$R7"
-assert_eq "R8 rollup_pr_opened skipped_ok"    "skipped_ok"    "$R8"
+assert_eq "R8 final_pr_opened skipped_ok"     "skipped_ok"    "$R8"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -670,12 +670,12 @@ eval_R7_scribe_ran() {
   fi
 }
 
-eval_R8_rollup_pr_opened() {
+eval_R8_final_pr_opened() {
   if ! _all_tasks_done; then
     echo "skipped_ok"
     return
   fi
-  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
   if [[ -n "$pr" ]]; then echo "pass"; else echo "not_performed"; fi
 }
 ```
@@ -693,8 +693,8 @@ run_steps=$(jq -n \
   --argjson R5 "$(_score_run_step R5_no_circuit_trip no_circuit_trip eval_R5_no_circuit_trip)" \
   --argjson R6 "$(_score_run_step R6_no_human_gate_pause no_human_gate_pause eval_R6_no_human_gate_pause)" \
   --argjson R7 "$(_score_run_step R7_scribe_ran scribe_ran eval_R7_scribe_ran)" \
-  --argjson R8 "$(_score_run_step R8_rollup_pr_opened rollup_pr_opened eval_R8_rollup_pr_opened)" \
-  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4, R5_no_circuit_trip: $R5, R6_no_human_gate_pause: $R6, R7_scribe_ran: $R7, R8_rollup_pr_opened: $R8}')
+  --argjson R8 "$(_score_run_step R8_final_pr_opened final_pr_opened eval_R8_final_pr_opened)" \
+  '{R1_autonomy_ok: $R1, R2_spec_generated: $R2, R3_spec_reviewer_approved: $R3, R4_tasks_decomposed: $R4, R5_no_circuit_trip: $R5, R6_no_human_gate_pause: $R6, R7_scribe_ran: $R7, R8_final_pr_opened: $R8}')
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
@@ -711,7 +711,7 @@ git commit -m "feat(score): implement run-level evaluators R5-R8"
 
 ---
 
-## Task 8: Implement run-level evaluators R9–R12 (rollup merged, rollup CI, escalations, terminal status)
+## Task 8: Implement run-level evaluators R9–R12 (final PR merged, final PR CI, escalations, terminal status)
 
 **Files:**
 
@@ -727,13 +727,13 @@ Append to `bin/tests/score.sh`:
 echo "=== run-level steps R9-R12 ==="
 
 out=$(pipeline-score --run run-fix-001 --format json --no-gh)
-R9=$(printf '%s' "$out" | jq -r '.run_steps.R9_rollup_pr_merged.state')
-R10=$(printf '%s' "$out" | jq -r '.run_steps.R10_rollup_ci_green.state')
+R9=$(printf '%s' "$out" | jq -r '.run_steps.R9_final_pr_merged.state')
+R10=$(printf '%s' "$out" | jq -r '.run_steps.R10_final_pr_ci_green.state')
 R11=$(printf '%s' "$out" | jq -r '.run_steps.R11_no_escalation_comments.state')
 R12=$(printf '%s' "$out" | jq -r '.run_steps.R12_terminal_status_done.state')
 
-assert_eq "R9 rollup_pr_merged skipped_ok"     "skipped_ok"    "$R9"
-assert_eq "R10 rollup_ci_green skipped_ok"     "skipped_ok"    "$R10"
+assert_eq "R9 final_pr_merged skipped_ok"      "skipped_ok"    "$R9"
+assert_eq "R10 final_pr_ci_green skipped_ok"   "skipped_ok"    "$R10"
 assert_eq "R11 no_escalation_comments pass"    "pass"          "$R11"
 # outsidey fixture status == interrupted.
 assert_eq "R12 terminal_status_done fail"      "fail"          "$R12"
@@ -749,8 +749,8 @@ Expected: FAIL — evaluators not defined.
 Append to `bin/pipeline-score-steps.sh`:
 
 ```bash
-eval_R9_rollup_pr_merged() {
-  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+eval_R9_final_pr_merged() {
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
   if [[ -z "$pr" ]]; then echo "skipped_ok"; return; fi
   if [[ "${use_gh:-true}" == "true" ]]; then
     local merged
@@ -770,8 +770,8 @@ eval_R9_rollup_pr_merged() {
   fi
 }
 
-eval_R10_rollup_ci_green() {
-  local pr; pr=$(printf '%s' "$state" | jq -r '.final_pr_number // empty')
+eval_R10_final_pr_ci_green() {
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
   if [[ -z "$pr" ]]; then echo "skipped_ok"; return; fi
   # Prefer metric, fallback gh.
   local ci_status

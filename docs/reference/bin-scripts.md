@@ -187,7 +187,7 @@ pipeline-run-task <run-id> RUN --stage finalize-run
 | `postexec`     | Quality gate, coverage gate, holdout, review dispatch    |
 | `postreview`   | Parse verdicts, retry or advance                         |
 | `ship`         | Human gate, task-commit, PR create, CI wait              |
-| `finalize-run` | Scribe spawn, rollup PR, cleanup                         |
+| `finalize-run` | Scribe spawn, final PR, cleanup                          |
 
 **Exit codes:**
 

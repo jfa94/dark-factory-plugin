@@ -904,6 +904,102 @@ rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
 
 # ============================================================
 echo ""
+echo "=== asyncrewake-ci: merge polling — CI green + merged quickly → exit 2 ==="
+
+ARW_DATA=$(mktemp -d)
+ARW_STUBS=$(mktemp -d)
+ARW_PR=9876
+
+cat > "$ARW_STUBS/pipeline-state" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$ARW_STUBS/pipeline-state"
+
+# gh: statusCheckRollup → green, state,mergedAt → MERGED
+cat > "$ARW_STUBS/gh" <<'SH'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"statusCheckRollup"* ]]; then
+  printf '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS","state":null}]}'
+elif [[ "$args" == *"state,mergedAt"* ]]; then
+  printf '{"state":"MERGED","mergedAt":"2026-04-21T08:00:00Z"}'
+fi
+exit 0
+SH
+chmod +x "$ARW_STUBS/gh"
+
+mkdir -p "$ARW_DATA/runs/run-mock-merge"
+ln -sf "$ARW_DATA/runs/run-mock-merge" "$ARW_DATA/runs/current"
+printf '{"tasks":{"task-1":{"task_id":"task-1","status":"executing","pr_number":%s}}}' \
+  "$ARW_PR" > "$ARW_DATA/runs/run-mock-merge/state.json"
+
+ARW_INPUT=$(jq -n --arg pr "https://github.com/acme/repo/pull/$ARW_PR" \
+  '{"tool_input":{"command":"gh pr create"},"tool_response":{"stdout":$pr}}')
+
+set +e
+ASYNCREWAKE_CI_MAX=1 ASYNCREWAKE_CI_SLEEP=0 \
+ASYNCREWAKE_MERGE_MAX=2 ASYNCREWAKE_MERGE_SLEEP=0 \
+CLAUDE_PLUGIN_DATA="$ARW_DATA" CLAUDE_VERSION=99.0.0 \
+PATH="$ARW_STUBS:$PATH" \
+bash "$HOOKS_DIR/asyncrewake-ci.sh" <<< "$ARW_INPUT" >/dev/null 2>/dev/null
+ARW_RC=$?
+set -e
+assert_eq "asyncrewake merge poll: exit 2 (wake orchestrator)" "2" "$ARW_RC"
+rm -rf "$ARW_DATA" "$ARW_STUBS"
+
+# ============================================================
+echo ""
+echo "=== asyncrewake-ci: merge polling — CI green + stalled → exit 2 + stderr ==="
+
+ARW_DATA=$(mktemp -d)
+ARW_STUBS=$(mktemp -d)
+ARW_PR=9877
+
+cat > "$ARW_STUBS/pipeline-state" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$ARW_STUBS/pipeline-state"
+
+# gh: CI green, PR stays OPEN (stalled auto-merge)
+cat > "$ARW_STUBS/gh" <<'SH'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"statusCheckRollup"* ]]; then
+  printf '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS","state":null}]}'
+elif [[ "$args" == *"state,mergedAt"* ]]; then
+  printf '{"state":"OPEN","mergedAt":null}'
+fi
+exit 0
+SH
+chmod +x "$ARW_STUBS/gh"
+
+mkdir -p "$ARW_DATA/runs/run-mock-stall"
+ln -sf "$ARW_DATA/runs/run-mock-stall" "$ARW_DATA/runs/current"
+printf '{"tasks":{"task-1":{"task_id":"task-1","status":"executing","pr_number":%s}}}' \
+  "$ARW_PR" > "$ARW_DATA/runs/run-mock-stall/state.json"
+
+ARW_INPUT=$(jq -n --arg pr "https://github.com/acme/repo/pull/$ARW_PR" \
+  '{"tool_input":{"command":"gh pr create"},"tool_response":{"stdout":$pr}}')
+
+set +e
+ARW_ERR=$(ASYNCREWAKE_CI_MAX=1 ASYNCREWAKE_CI_SLEEP=0 \
+          ASYNCREWAKE_MERGE_MAX=2 ASYNCREWAKE_MERGE_SLEEP=0 \
+          CLAUDE_PLUGIN_DATA="$ARW_DATA" CLAUDE_VERSION=99.0.0 \
+          PATH="$ARW_STUBS:$PATH" \
+          bash "$HOOKS_DIR/asyncrewake-ci.sh" <<< "$ARW_INPUT" 2>&1 >/dev/null)
+ARW_RC=$?
+set -e
+assert_eq "asyncrewake stalled: exit 2" "2" "$ARW_RC"
+ARW_STALL_COUNT=$(printf '%s' "$ARW_ERR" | grep -c "stalled" || true)
+[[ "$ARW_STALL_COUNT" -ge 1 ]] \
+  && { echo "  PASS: asyncrewake stalled: stderr mentions stalled"; pass=$((pass+1)); } \
+  || { echo "  FAIL: asyncrewake stalled: stderr missing 'stalled' (got: $ARW_ERR)"; fail=$((fail+1)); }
+rm -rf "$ARW_DATA" "$ARW_STUBS"
+
+# ============================================================
+echo ""
 echo "=== All hook scripts are executable ==="
 
 assert_eq "branch-protection executable" "true" "$([[ -x "$HOOKS_DIR/branch-protection.sh" ]] && echo true || echo false)"

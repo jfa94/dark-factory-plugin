@@ -168,14 +168,14 @@ eval_R7_scribe_ran() {
   fi
 }
 
-eval_R8_rollup_pr_opened() {
+eval_R8_final_pr_opened() {
   if ! _all_tasks_done; then echo "skipped_na"; return; fi
-  local pr; pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
   if [[ -n "$pr" ]]; then echo "pass"; else echo "not_performed"; fi
 }
 
-eval_R9_rollup_pr_merged() {
-  local pr; pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
+eval_R9_final_pr_merged() {
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
   if [[ -z "$pr" ]]; then echo "skipped_na"; return; fi
   if [[ "${use_gh:-true}" == "true" ]]; then
     local pr_state _repo_arg=()
@@ -195,8 +195,8 @@ eval_R9_rollup_pr_merged() {
   fi
 }
 
-eval_R10_rollup_ci_green() {
-  local pr; pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
+eval_R10_final_pr_ci_green() {
+  local pr; pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
   if [[ -z "$pr" ]]; then echo "skipped_na"; return; fi
   local ci_status=""
   if [[ -f "$metrics_file" ]]; then
@@ -232,12 +232,12 @@ eval_R12_terminal_status_done() {
   local s; s=$(printf '%s' "$state" | jq -r '.status')
   [[ "$s" == "done" ]] && echo "pass" && return
   # Heuristic: orchestrator may exit before flushing status=done.
-  # Infer done when all tasks terminal, scribe done, and rollup PR exists.
+  # Infer done when all tasks terminal, scribe done, and final PR exists.
   if [[ "$s" == "running" ]] && _all_tasks_done; then
-    local scribe_s rollup_pr
+    local scribe_s final_pr
     scribe_s=$(printf '%s' "$state" | jq -r '.scribe.status // empty')
-    rollup_pr=$(printf '%s' "$state" | jq -r '(.rollup.pr_number // .final_pr_number) // empty')
-    if [[ "$scribe_s" == "done" && -n "$rollup_pr" ]]; then
+    final_pr=$(printf '%s' "$state" | jq -r '(.final_pr.pr_number // .rollup.pr_number // .final_pr_number) // empty')
+    if [[ "$scribe_s" == "done" && -n "$final_pr" ]]; then
       echo "pass"; return
     fi
   fi

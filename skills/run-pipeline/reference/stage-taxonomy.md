@@ -62,7 +62,7 @@ postreview → postexec       (REQUEST_CHANGES, retry loop)
 postreview → ship           (all APPROVE)
 ship       → ship           (async CI, re-invoke with --ci-status on wake)
 ship       → terminal       (ci green → done; ci red retries → failed)
-finalize-run → terminal     (scribe spawn, rollup PR, cleanup, run status=done)
+finalize-run → terminal     (scribe spawn, final PR, cleanup, run status=done)
 ```
 
 Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already at or past the requested marker (`preflight_done`, `postexec_done`, `postreview_done`, `ship_done`), the stage short-circuits with exit 0. Resume is therefore idempotent — re-invoking `--stage preflight` after the wrapper wrote `preflight_done` is a no-op.
@@ -112,10 +112,11 @@ Each stage starts by calling `_already_past`: if `.tasks.<id>.stage` is already 
 ### finalize-run
 
 - Scans all tasks; if any are non-terminal, exit 3 (wait_retry).
+- Verifies every task PR is merged into `origin/staging`: for each task `.pr_number`, checks GitHub PR `state=MERGED` and that the merge commit SHA is an ancestor of `origin/staging`. Any gap → exit 3 (wait_retry).
 - Reads `.scribe.status`. If not `done`:
   - Writes `RUN.scribe-prompt.md`, sets `.scribe.status="spawned"`, emits scribe manifest, exit 10.
-- Reads `.rollup.pr_url`. If empty:
-  - `gh pr create --base develop --head staging` → records `.rollup.pr_url`, `.rollup.pr_number`, emits `run.rollup_pr_created`.
+- Reads `.final_pr.pr_url`. If empty:
+  - `gh pr create --base develop --head staging` → records `.final_pr.pr_url`, `.final_pr.pr_number`, emits `run.final_pr_created`.
 - Runs `pipeline-cleanup`, sets `.status="done"`, `.ended_at`, exit 0.
 
 ## Metrics emitted
@@ -125,7 +126,7 @@ Each stage wraps its work in `log_step_begin / log_step_end` (defined in `pipeli
 - preflight → `task.executor_spawned`
 - postexec → `task.review.provider`, `task.gate.quality`, `task.gate.coverage` (all `task_id`-scoped)
 - ship → `task.pr_created`, `task.ci` (via `emit_ci_metric`)
-- finalize-run → `run.rollup_pr_created`, `run.ci` (via `emit_ci_metric`)
+- finalize-run → `run.final_pr_created`, `run.ci` (via `emit_ci_metric`)
 - every stage → `pipeline.step.begin`, `pipeline.step.end` with `status` (ok / skipped / spawn / wait_retry / end_gracefully / failed / needs_human_review / human_gate_pause / wait_ci)
 
 The scorer consumes these exclusively. Skipping a stage means its `step.begin`/`step.end` never fire — which is how the post-run scorer detects drift.

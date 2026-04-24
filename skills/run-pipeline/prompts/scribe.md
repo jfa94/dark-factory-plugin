@@ -40,4 +40,4 @@ The wrapper sets `.scribe.status = "done"` when SubagentStop parses a `STATUS: D
 
 ## Post-scribe
 
-After you return, the wrapper opens the rollup PR `staging → develop`. Do not open it yourself.
+After you return, the wrapper opens the final PR `staging → develop`. Do not open it yourself.

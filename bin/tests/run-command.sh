@@ -299,9 +299,8 @@ assert_contains "tracks holdout_attempts retry counter"  "holdout_attempts"     
 # references the counter name rather than re-implementing it inline.
 assert_contains "review_attempts tracking mentioned" "review_attempts" "$RUN_CMD"
 
-# Final-rollup PR captured in state as .rollup.pr_number (was .final_pr_number
-# before the stage-machine wrapper migration).
-assert_contains "rollup PR number captured in state" ".rollup.pr_number" "$RUN_CMD"
+# Final PR captured in state as .final_pr.pr_number.
+assert_contains "final PR number captured in state" ".final_pr.pr_number" "$RUN_CMD"
 
 # ============================================================
 echo ""

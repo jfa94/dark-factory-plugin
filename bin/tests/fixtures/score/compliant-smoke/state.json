@@ -23,7 +23,7 @@
   "scribe": {
     "status": "done"
   },
-  "rollup": {
+  "final_pr": {
     "pr_url": "https://github.com/acme/repo/pull/9999",
     "pr_number": 9999
   },

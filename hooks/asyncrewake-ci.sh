@@ -63,10 +63,10 @@ task_id=$(jq -r --arg n "$pr_number" '
 ' "$state_file")
 [[ -z "$task_id" ]] && exit 0
 
-# Poll CI. max 60m total @ 30s interval = 120 iterations.
-max_iter=120
-sleep_s=30
-state="timeout"
+# Phase 1: Poll CI checks. max 60m total @ 30s interval = 120 iterations.
+max_iter=${ASYNCREWAKE_CI_MAX:-120}
+sleep_s=${ASYNCREWAKE_CI_SLEEP:-30}
+ci_conclusion="timeout"
 for _ in $(seq 1 $max_iter); do
   sleep "$sleep_s"
   rollup=$(gh pr view "$pr_number" --json statusCheckRollup 2>/dev/null || printf '{}')
@@ -79,10 +79,32 @@ for _ in $(seq 1 $max_iter); do
       else "pending" end
   ')
   case "$decision" in
-    green|red) state="$decision"; break ;;
+    green|red) ci_conclusion="$decision"; break ;;
     pending)   continue ;;
   esac
 done
+
+# Phase 2: If CI passed, wait for auto-merge to land. max 5m @ 10s = 30 polls.
+state="$ci_conclusion"
+if [[ "$ci_conclusion" == "green" ]]; then
+  merge_max=${ASYNCREWAKE_MERGE_MAX:-30}
+  merge_sleep=${ASYNCREWAKE_MERGE_SLEEP:-10}
+  merged=false
+  for _ in $(seq 1 $merge_max); do
+    sleep "$merge_sleep"
+    pr_state=$(gh pr view "$pr_number" --json state,mergedAt 2>/dev/null \
+      | jq -r 'if .state == "MERGED" or (.mergedAt != null and .mergedAt != "") then "merged" else "open" end')
+    if [[ "$pr_state" == "merged" ]]; then
+      merged=true
+      break
+    fi
+  done
+  if [[ "$merged" != "true" ]]; then
+    state="red"
+    printf '[asyncrewake-ci] CI green but auto-merge stalled on PR %s after %ss — treating as red\n' \
+      "$pr_number" "$((merge_max * merge_sleep))" >&2
+  fi
+fi
 
 # Write to state + emit metric.
 pipeline-state task-write "$run_id" "$task_id" ci_status "\"$state\"" >/dev/null 2>&1 || true

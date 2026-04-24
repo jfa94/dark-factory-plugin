@@ -268,5 +268,55 @@ assert_eq "postreview real REQUEST_CHANGES: attempts=1" "1" "$(field_of review_a
 # Restore the stub so later tests (if added) still get the cat passthrough.
 write_stub pipeline-parse-review 'cat'
 
+# --- 14: finalize-run SHA guard — task PR not merged → exit 3 ---------------
+new_run finalize-sha-guard-open
+pipeline-state write "$RUN_ID" .tasks.alpha-001.status '"done"' >/dev/null
+pipeline-state task-write "$RUN_ID" alpha-001 pr_number '101' >/dev/null
+# gh stub returns PR state=OPEN → guard should detect not merged
+write_stub gh '
+case "$*" in
+  "pr view 101 --json state,mergeCommit,headRefOid")
+    printf '"'"'{"state":"OPEN","mergeCommit":null,"headRefOid":"abc123"}'"'"' ;;
+  "pr create"*) echo "https://github.com/acme/repo/pull/4242" ;;
+  *) exit 0 ;;
+esac'
+set +e; pipeline-run-task "$RUN_ID" RUN --stage finalize-run >/dev/null 2>&1; RC=$?; set -e
+assert_eq "finalize-run sha-guard (pr open): exit 3" "3" "$RC"
+# Restore default gh stub
+write_stub gh '
+case "$1 $2" in
+  "pr create") echo "https://github.com/acme/repo/pull/4242" ;;
+  *) exit 0 ;;
+esac'
+
+# --- 15: finalize-run SHA guard — all PRs merged, SHA on staging → proceeds -
+new_run finalize-sha-guard-merged
+pipeline-state write "$RUN_ID" .tasks.alpha-001.status '"done"' >/dev/null
+pipeline-state task-write "$RUN_ID" alpha-001 pr_number '102' >/dev/null
+pipeline-state write "$RUN_ID" .scribe.status '"done"' >/dev/null
+# gh stub returns PR state=MERGED with a sha that git will accept
+write_stub gh '
+case "$*" in
+  "pr view 102 --json state,mergeCommit,headRefOid")
+    printf '"'"'{"state":"MERGED","mergeCommit":{"oid":"deadbeef"},"headRefOid":"deadbeef"}'"'"' ;;
+  "pr create"*) echo "https://github.com/acme/repo/pull/5050" ;;
+  *) exit 0 ;;
+esac'
+# Stub git to accept merge-base --is-ancestor check
+write_stub git '
+if [[ "$1 $2" == "merge-base --is-ancestor" ]]; then exit 0; fi
+exec /usr/bin/git "$@"'
+run_wrapper RUN --stage finalize-run
+assert_eq "finalize-run sha-guard (merged): exit 0" "0" "$RC"
+final_pr_url=$(pipeline-state read "$RUN_ID" '.final_pr.pr_url // ""' 2>/dev/null || printf '')
+assert_eq "finalize-run sha-guard: final_pr.pr_url written" "https://github.com/acme/repo/pull/5050" "$final_pr_url"
+# Restore default stubs
+write_stub gh '
+case "$1 $2" in
+  "pr create") echo "https://github.com/acme/repo/pull/4242" ;;
+  *) exit 0 ;;
+esac'
+rm -f "$STUB_DIR/git"
+
 printf '\n=== RESULTS: %d passed, %d failed ===\n' "$passed" "$failed"
 exit $(( failed > 0 ? 1 : 0 ))

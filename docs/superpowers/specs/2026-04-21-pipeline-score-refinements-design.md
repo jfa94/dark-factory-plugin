@@ -68,7 +68,7 @@ Output table renders five columns: `pass`, `fail`, `skip_na`, `skip_inact`,
 
 ### D3. Fix PR CI detection
 
-In `tools/score-run-backfill.sh`, `eval_R10_rollup_ci_green`, and
+In `tools/score-run-backfill.sh`, `eval_R10_final_pr_ci_green`, and
 `eval_T11_pr_ci_green` (→ `T12_pr_ci_green` after renumber), replace the jq
 expression:
 
@@ -108,7 +108,7 @@ Aggregate:
 
 Caller mapping:
 
-- `eval_R10_rollup_ci_green` and `eval_T12_pr_ci_green`:
+- `eval_R10_final_pr_ci_green` and `eval_T12_pr_ci_green`:
   - `green` → `pass`
   - `red` → `fail`
   - `pending` → `not_performed`

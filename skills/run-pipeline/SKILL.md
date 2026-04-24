@@ -228,7 +228,8 @@ The wrapper:
 
 - Blocks (exit 3) while any task is still non-terminal.
 - Emits a `scribe` spawn manifest once, waits for `.scribe.status == "done"`.
-- Opens the rollup PR `staging → develop`, records `.rollup.pr_url` / `.rollup.pr_number`, emits `run.rollup_pr_created`.
+- Verifies all task PRs are merged into `origin/staging` (exit 3 wait_retry if any are pending).
+- Opens the final PR `staging → develop`, records `.final_pr.pr_url` / `.final_pr.pr_number`, emits `run.final_pr_created`.
 - Runs `pipeline-cleanup`, sets `.status = "done"`, `.ended_at`.
 
 After finalize-run returns 0:

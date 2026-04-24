@@ -84,7 +84,7 @@ Rename agents to accurately describe their roles:
 
 - `agents/task-reviewer.md` → `agents/implementation-reviewer.md`
   - Role: verifies the implementation satisfies the spec's intent, not merely that tests pass. Checks every acceptance criterion is genuinely addressed.
-- `agents/quality-reviewer.md` → `agents/quality-reviewer.md`
+- `agents/code-reviewer.md` → `agents/quality-reviewer.md`
   - Role: adversarial code-quality review. Logic errors, security, test quality, AI-specific anti-patterns.
 
 Restructure routing in `bin/pipeline-run-task`:
@@ -120,7 +120,7 @@ Files touched:
 
 ## Breaking Changes
 
-- Rename of agents `task-reviewer` → `implementation-reviewer` and `quality-reviewer` → `quality-reviewer` is breaking for any external config, state, or log consumer that pattern-matches the old names. Plugin is at v0.3.6 (pre-1.0); acceptable. Flag in release notes. Bump minor.
+- Rename of agents `task-reviewer` → `implementation-reviewer` and `code-reviewer` → `quality-reviewer` is breaking for any external config, state, or log consumer that pattern-matches the old names. Plugin is at v0.3.6 (pre-1.0); acceptable. Flag in release notes. Bump minor.
 - Existing pipeline runs in flight (`state.json` files) may contain old agent names under `.tasks.*.review` fields. New code should tolerate both names when reading but emit new names when writing.
 
 ## Non-Goals
@@ -132,7 +132,7 @@ Files touched:
 ## Acceptance Criteria
 
 - `skills/test-driven-development/SKILL.md` exists and is invokable.
-- `agents/implementation-reviewer.md` and `agents/quality-reviewer.md` exist; old filenames removed; all references updated. `grep -r 'task-reviewer\|quality-reviewer'` across the plugin (excluding `docs/superpowers/specs/` and release notes) returns no hits.
+- `agents/implementation-reviewer.md` and `agents/quality-reviewer.md` exist; old filenames removed; all references updated. `grep -r 'task-reviewer\|code-reviewer'` across the plugin (excluding `docs/superpowers/specs/` and release notes) returns no hits.
 - `bin/pipeline-tdd-gate` exists, is executable, and is invoked by `bin/pipeline-run-task` between quality-gate and coverage-gate.
 - `bin/pipeline-run-task` invokes test-writer in pre-impl mode before task-executor spawn; task-executor sees RED commit in history.
 - Quality reviewer (Codex or `quality-reviewer`) and implementation reviewer both run in parallel; both verdicts merged.

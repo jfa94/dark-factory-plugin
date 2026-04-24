@@ -21,7 +21,7 @@
 - `bin/pipeline-tdd-gate` — new quality gate script
 - `bin/tests/tdd-gate.sh` — bats-free shell tests for the new gate
 - `agents/implementation-reviewer.md` — rename target for `task-reviewer.md`
-- `agents/quality-reviewer.md` — rename target for `quality-reviewer.md`
+- `agents/quality-reviewer.md` — rename target for `code-reviewer.md`
 - `skills/pipeline-orchestrator/prompts/implementation-reviewer.md` — rename target
 
 ### Modified files
@@ -47,7 +47,7 @@
 ### Deleted files
 
 - `agents/task-reviewer.md` (replaced by implementation-reviewer.md)
-- `agents/quality-reviewer.md` (replaced by quality-reviewer.md)
+- `agents/code-reviewer.md` (replaced by quality-reviewer.md)
 - `skills/pipeline-orchestrator/prompts/task-reviewer.md` (replaced)
 - `skills/testing-anti-patterns.md` — if moved into TDD skill directory; else leave and have TDD skill reference it
 
@@ -465,17 +465,17 @@ git commit -m "refactor(agents): rename task-reviewer → implementation-reviewe
 
 ---
 
-## Task 5: Rename quality-reviewer → quality-reviewer
+## Task 5: Rename code-reviewer → quality-reviewer
 
 **Files:**
 
-- Move: `agents/quality-reviewer.md` → `agents/quality-reviewer.md`
+- Move: `agents/code-reviewer.md` → `agents/quality-reviewer.md`
 - Modify string refs: same file list as Task 4 minus the already-renamed ones
 
 - [ ] **Step 1: Rename the agent file**
 
 ```bash
-git mv agents/quality-reviewer.md agents/quality-reviewer.md
+git mv agents/code-reviewer.md agents/quality-reviewer.md
 ```
 
 - [ ] **Step 2: Update frontmatter**
@@ -492,23 +492,23 @@ Change H1 to `# Quality Reviewer`. Leave the body content intact.
 - [ ] **Step 3: Replace string references**
 
 ```bash
-grep -rl 'quality-reviewer' . \
+grep -rl 'code-reviewer' . \
   --exclude-dir=.git \
   --exclude-dir=node_modules \
   --exclude-dir='docs/superpowers/specs' \
   --exclude-dir='docs/superpowers/plans' \
-  | xargs sed -i '' -e 's/quality-reviewer/quality-reviewer/g'
+  | xargs sed -i '' -e 's/code-reviewer/quality-reviewer/g'
 
-grep -rln 'quality_reviewer' . \
+grep -rln 'code_reviewer' . \
   --exclude-dir=.git \
   --exclude-dir=node_modules \
-  | xargs sed -i '' -e 's/quality_reviewer/quality_reviewer/g' 2>/dev/null || true
+  | xargs sed -i '' -e 's/code_reviewer/quality_reviewer/g' 2>/dev/null || true
 ```
 
 - [ ] **Step 4: Verify nothing still references the old name**
 
 ```bash
-grep -rn 'task-reviewer\|quality-reviewer' . \
+grep -rn 'task-reviewer\|code-reviewer' . \
   --exclude-dir=.git --exclude-dir=node_modules \
   --exclude-dir='docs/superpowers/specs' \
   --exclude-dir='docs/superpowers/plans'
@@ -526,7 +526,7 @@ for t in bin/tests/*.sh; do bash "$t"; done
 
 ```bash
 git add -A
-git commit -m "refactor(agents): rename quality-reviewer → quality-reviewer"
+git commit -m "refactor(agents): rename code-reviewer → quality-reviewer"
 ```
 
 ---
@@ -1047,7 +1047,7 @@ shellcheck bin/pipeline-* bin/tests/*.sh hooks/*.sh
 - [ ] **Step 3: Final grep sanity**
 
 ```bash
-grep -rn 'task-reviewer\|quality-reviewer\|task_reviewer\|quality_reviewer' . \
+grep -rn 'task-reviewer\|code-reviewer\|task_reviewer\|code_reviewer' . \
   --exclude-dir=.git --exclude-dir=node_modules \
   --exclude-dir='docs/superpowers/specs' \
   --exclude-dir='docs/superpowers/plans'

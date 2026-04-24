@@ -20,8 +20,8 @@
 set -euo pipefail
 
 input=$(cat 2>/dev/null || printf '{}')
+tool_name=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
-[[ -z "$cmd" ]] && exit 0
 
 current_link="${CLAUDE_PLUGIN_DATA:-}/runs/current"
 if [[ -z "${CLAUDE_PLUGIN_DATA:-}" || ! -L "$current_link" ]]; then
@@ -57,6 +57,65 @@ if [[ -z "$task_id" ]]; then
     task_id="${BASH_REMATCH[1]}"
   fi
 fi
+
+# --- 0. path-scope guard: preexec_tests phase (test-writer) ---
+# Only fires in autonomous mode for Edit/Write/MultiEdit when the active task
+# stage is exactly "preexec_tests". Blocks writes to non-test paths.
+if [[ "${FACTORY_AUTONOMOUS_MODE:-}" == "1" ]]; then
+  case "$tool_name" in
+    Edit|Write|MultiEdit)
+      # Determine the active task's stage.
+      active_stage=""
+      if [[ -n "$task_id" ]]; then
+        active_stage=$(jq -r --arg t "$task_id" '.tasks[$t].stage // ""' "$state_file" 2>/dev/null || true)
+      else
+        # No explicit task id — inspect first executing task.
+        active_stage=$(jq -r '[.tasks[] | select(.stage == "preexec_tests")] | first | .stage // ""' "$state_file" 2>/dev/null || true)
+      fi
+
+      if [[ "$active_stage" == "preexec_tests" ]]; then
+        # Collect candidate paths.
+        file_path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // ""' 2>/dev/null || true)
+        # MultiEdit may have edits[].file_path too; collect all.
+        mapfile -t extra_paths < <(printf '%s' "$input" \
+          | jq -r '.tool_input.edits[]?.file_path // empty' 2>/dev/null || true)
+
+        _check_test_path() {
+          local p="$1"
+          [[ -z "$p" ]] && return 0  # nothing to check
+          local base
+          base=$(basename "$p")
+          # Allowed: *.test.* or *.spec.*
+          if [[ "$base" =~ \.(test|spec)\. ]]; then return 0; fi
+          # Allowed: *.test-helpers.* or *.test-utils.*
+          if [[ "$base" =~ \.(test-helpers|test-utils)\. ]]; then return 0; fi
+          # Allowed: paths under tests/ or __tests__/
+          if [[ "$p" =~ (^|/)tests/ || "$p" =~ (^|/)__tests__/ ]]; then return 0; fi
+          # Allowed: paths under fixtures/
+          if [[ "$p" =~ (^|/)fixtures/ ]]; then return 0; fi
+          # Allowed: config-defined fixture dirs from safety.testWriterFixtureDirs
+          config_file="${CLAUDE_PLUGIN_DATA:-}/config.json"
+          if [[ -f "$config_file" ]]; then
+            while IFS= read -r fixture_dir; do
+              [[ -z "$fixture_dir" ]] && continue
+              if [[ "$p" =~ (^|/)${fixture_dir}/ ]]; then return 0; fi
+            done < <(jq -r '.safety.testWriterFixtureDirs // [] | .[]' "$config_file" 2>/dev/null || true)
+          fi
+          # Blocked
+          deny "Test-writer phase: only test files allowed. Detected write to $p. Move implementation code to the GREEN phase."
+        }
+
+        _check_test_path "$file_path"
+        for ep in "${extra_paths[@]}"; do
+          _check_test_path "$ep"
+        done
+      fi
+      ;;
+  esac
+fi
+
+# Remaining guards only apply to Bash commands.
+[[ -z "$cmd" ]] && exit 0
 
 # --- 1. gh pr create ---
 if [[ "$cmd" =~ ^[[:space:]]*gh[[:space:]]+pr[[:space:]]+create ]]; then

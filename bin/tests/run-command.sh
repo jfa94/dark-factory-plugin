@@ -305,6 +305,17 @@ assert_contains "final PR number captured in state" ".final_pr.pr_number" "$RUN_
 
 # ============================================================
 echo ""
+echo "=== rescue command is registered ==="
+if [[ -f "$PLUGIN_ROOT/commands/rescue.md" ]]; then
+  echo "  PASS: rescue.md exists"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: rescue.md missing"
+  fail=$((fail + 1))
+fi
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $pass"
 echo "  Failed: $fail"

@@ -78,8 +78,8 @@ if [[ -n "$issue" ]]; then
     [[ -z "$tid" ]] && continue
     state_pr=$(jq -r --arg t "$tid" '.tasks[$t].pr_url // ""' "$state")
     if [[ -z "$state_pr" ]]; then
-      exists=$(jq -r --arg t "$tid" '.tasks[$t].task_id // ""' "$state")
-      if [[ -n "$exists" ]]; then
+      exists=$(jq -r --arg t "$tid" '.tasks | has($t) | tostring' "$state")
+      if [[ "$exists" == "true" ]]; then
         mechanical+=("$(jq -n --arg id I-04 --argjson tier 1 --arg task "$tid" --arg desc "PR #$pr_num exists on GitHub but state.pr_url empty" '{id: $id, tier: $tier, task_id: $task, description: $desc}')")
       fi
     fi

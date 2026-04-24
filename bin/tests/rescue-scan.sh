@@ -3,6 +3,7 @@
 set -euo pipefail
 
 export CLAUDE_PLUGIN_DATA=$(mktemp -d)
+trap 'rm -rf "$CLAUDE_PLUGIN_DATA"' EXIT
 export PATH="$(cd "$(dirname "$0")/.." && pwd):$PATH"
 
 pass=0
@@ -65,7 +66,8 @@ JSON
 echo "=== I-03: PR merged, state says executing ==="
 run_id="R1"
 seed_run "$run_id"
-mock_dir=$(mktemp -d)
+mock_dir="$CLAUDE_PLUGIN_DATA/mock"
+mkdir -p "$mock_dir"
 make_gh_mock "$mock_dir"
 PATH="$mock_dir:$PATH" pipeline-rescue-scan "$run_id" > "$CLAUDE_PLUGIN_DATA/scan.json"
 issue_count=$(jq '[.mechanical_issues[] | select(.id == "I-03")] | length' "$CLAUDE_PLUGIN_DATA/scan.json")
@@ -89,7 +91,8 @@ tier=$(jq -r '.mechanical_issues[] | select(.id == "I-03") | .tier' "$CLAUDE_PLU
 assert_eq "I-03 tier" "1" "$tier"
 
 echo "=== I-02: orphan worktree ==="
-repo=$(mktemp -d)
+repo="$CLAUDE_PLUGIN_DATA/repo"
+mkdir -p "$repo"
 (
   cd "$repo"
   git init --quiet

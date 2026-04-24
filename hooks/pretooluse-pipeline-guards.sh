@@ -98,7 +98,8 @@ if [[ "${FACTORY_AUTONOMOUS_MODE:-}" == "1" ]]; then
           if [[ -f "$config_file" ]]; then
             while IFS= read -r fixture_dir; do
               [[ -z "$fixture_dir" ]] && continue
-              if [[ "$p" =~ (^|/)${fixture_dir}/ ]]; then return 0; fi
+              # Use prefix match instead of regex to avoid metachar injection
+              if [[ "$p" == "${fixture_dir}/"* || "$p" == *"/${fixture_dir}/"* ]]; then return 0; fi
             done < <(jq -r '.safety.testWriterFixtureDirs // [] | .[]' "$config_file" 2>/dev/null || true)
           fi
           # Blocked

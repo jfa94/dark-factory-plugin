@@ -820,6 +820,54 @@ assert_eq "pathscope allow fixtures/data.json exit 0" "0" "$rc"
 assert_eq "pathscope allow fixtures/data.json no deny" "" "$out"
 
 echo ""
+echo "=== pretooluse-pipeline-guards: path-scope — allows *.spec.* during preexec_tests ==="
+
+_seed_run "run-pathscope-spec" '{"status":"running","tasks":{"t1":{"status":"executing","stage":"preexec_tests"}}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"src/foo.spec.ts"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t1 bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "pathscope allow src/foo.spec.ts exit 0" "0" "$rc"
+assert_eq "pathscope allow src/foo.spec.ts no deny" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: path-scope — allows __tests__/ dir during preexec_tests ==="
+
+_seed_run "run-pathscope-dunder-tests" '{"status":"running","tasks":{"t1":{"status":"executing","stage":"preexec_tests"}}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"__tests__/foo.ts"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t1 bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "pathscope allow __tests__/foo.ts exit 0" "0" "$rc"
+assert_eq "pathscope allow __tests__/foo.ts no deny" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: path-scope — allows *.test-helpers.* during preexec_tests ==="
+
+_seed_run "run-pathscope-test-helpers" '{"status":"running","tasks":{"t1":{"status":"executing","stage":"preexec_tests"}}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"src/foo.test-helpers.ts"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t1 bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "pathscope allow src/foo.test-helpers.ts exit 0" "0" "$rc"
+assert_eq "pathscope allow src/foo.test-helpers.ts no deny" "" "$out"
+
+echo ""
+echo "=== pretooluse-pipeline-guards: path-scope — allows *.test-utils.* during preexec_tests ==="
+
+_seed_run "run-pathscope-test-utils" '{"status":"running","tasks":{"t1":{"status":"executing","stage":"preexec_tests"}}}'
+input='{"tool_name":"Write","tool_input":{"file_path":"src/foo.test-utils.ts"}}'
+set +e
+out=$(printf '%s' "$input" | FACTORY_AUTONOMOUS_MODE=1 FACTORY_TASK_ID=t1 bash "$HOOKS_DIR/pretooluse-pipeline-guards.sh")
+rc=$?
+set -e
+assert_eq "pathscope allow src/foo.test-utils.ts exit 0" "0" "$rc"
+assert_eq "pathscope allow src/foo.test-utils.ts no deny" "" "$out"
+
+echo ""
 echo "=== pretooluse-pipeline-guards: path-scope — not triggered in postexec stage ==="
 
 _seed_run "run-pathscope-postexec" '{"status":"running","tasks":{"t1":{"status":"executing","stage":"postexec"}}}'

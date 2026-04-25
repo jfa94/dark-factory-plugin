@@ -1,0 +1,57 @@
+{
+  "verdict": "REQUEST_CHANGES",
+  "round": 1,
+  "confidence": "HIGH",
+  "findings": [
+    {
+      "title": "F-crit",
+      "file": "a.ts",
+      "line": 1,
+      "severity": "critical",
+      "verbatim_line": "let x = 1;",
+      "description": "c"
+    },
+    {
+      "title": "F-high",
+      "file": "a.ts",
+      "line": 2,
+      "severity": "high",
+      "verbatim_line": "let y = 2;",
+      "description": "h"
+    },
+    {
+      "title": "F-med",
+      "file": "a.ts",
+      "line": 3,
+      "severity": "medium",
+      "verbatim_line": "let z = 3;",
+      "description": "m"
+    },
+    {
+      "title": "F-low",
+      "file": "a.ts",
+      "line": 4,
+      "severity": "low",
+      "verbatim_line": "let w = 4;",
+      "description": "l"
+    },
+    {
+      "title": "F-imp",
+      "file": "a.ts",
+      "line": 5,
+      "severity": "important",
+      "verbatim_line": "let i = 5;",
+      "description": "i"
+    },
+    {
+      "title": "F-min",
+      "file": "a.ts",
+      "line": 6,
+      "severity": "minor",
+      "verbatim_line": "let n = 6;",
+      "description": "n"
+    }
+  ],
+  "summary": "mixed",
+  "reviewer": "codex"
+}

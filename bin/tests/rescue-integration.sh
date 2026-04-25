@@ -170,5 +170,65 @@ assert_eq "Phase 6: T4 failure_reason I-13" "unresolvable merge conflict (I-13)"
 rebase_clean=0; [[ ! -d "$wt_b/.git/rebase-merge" && ! -d "$wt_b/.git/rebase-apply" ]] && rebase_clean=1
 assert_eq "Phase 6: rebase --abort cleaned up" "1" "$rebase_clean"
 
+# Phase 7: rehydrate-archived-run restores archived state into runs/
+mkdir -p "$CLAUDE_PLUGIN_DATA/archive/R4"
+cat > "$CLAUDE_PLUGIN_DATA/archive/R4/state.json" <<'JSON'
+{
+  "run_id": "R4",
+  "status": "running",
+  "input": {"issue_numbers": [200]},
+  "tasks": {
+    "T5": {"task_id": "T5", "status": "done", "stage": "ship_done", "pr_number": 50}
+  }
+}
+JSON
+
+# Pre-existing current symlink should be left intact (only restored if absent)
+rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
+ln -sfn "$CLAUDE_PLUGIN_DATA/runs/R1" "$CLAUDE_PLUGIN_DATA/runs/current"
+
+pipeline-rescue-apply --action=rehydrate-archived-run --run-id=R4 >/dev/null
+exists=0; [[ -f "$CLAUDE_PLUGIN_DATA/runs/R4/state.json" ]] && exists=1
+assert_eq "Phase 7: runs/R4 rehydrated" "1" "$exists"
+archive_intact=0; [[ -f "$CLAUDE_PLUGIN_DATA/archive/R4/state.json" ]] && archive_intact=1
+assert_eq "Phase 7: archive copy preserved" "1" "$archive_intact"
+current_target=$(readlink "$CLAUDE_PLUGIN_DATA/runs/current")
+assert_eq "Phase 7: existing current symlink not clobbered" "$CLAUDE_PLUGIN_DATA/runs/R1" "$current_target"
+audit_ok=$(pipeline-state read R4 '.rescue.applied_actions // []' | jq '[.[] | select(.action == "rehydrate_archived_run" and .result == "ok")] | length')
+assert_eq "Phase 7: rehydrate audit entry present" "1" "$audit_ok"
+
+# Idempotency: second call refuses (run dir exists)
+set +e
+pipeline-rescue-apply --action=rehydrate-archived-run --run-id=R4 2>/dev/null
+rc=$?
+set -e
+assert_eq "Phase 7: re-rehydrate refuses (exit 1)" "1" "$rc"
+
+# current symlink restored when absent
+rm -f "$CLAUDE_PLUGIN_DATA/runs/current"
+mkdir -p "$CLAUDE_PLUGIN_DATA/archive/R5"
+cat > "$CLAUDE_PLUGIN_DATA/archive/R5/state.json" <<'JSON'
+{"run_id":"R5","status":"running","input":{},"tasks":{}}
+JSON
+pipeline-rescue-apply --action=rehydrate-archived-run --run-id=R5 >/dev/null
+restored=$(readlink "$CLAUDE_PLUGIN_DATA/runs/current" 2>/dev/null || echo "")
+assert_eq "Phase 7: current symlink restored when absent" "$CLAUDE_PLUGIN_DATA/runs/R5" "$restored"
+
+# Phase 8: I-12 emitted for non-numeric pr_number (no gh call)
+mkdir -p "$CLAUDE_PLUGIN_DATA/runs/R6"
+cat > "$CLAUDE_PLUGIN_DATA/runs/R6/state.json" <<'JSON'
+{
+  "run_id": "R6",
+  "status": "running",
+  "input": {},
+  "tasks": {
+    "T6": {"task_id": "T6", "status": "executing", "stage": "ship", "pr_number": "interrupted"}
+  }
+}
+JSON
+PATH="$mock_dir:$PATH" pipeline-rescue-scan R6 > "$CLAUDE_PLUGIN_DATA/report_r6.json"
+i12_count=$(jq '[.mechanical_issues[] | select(.id == "I-12" and .task_id == "T6")] | length' "$CLAUDE_PLUGIN_DATA/report_r6.json")
+assert_eq "Phase 8: non-numeric pr_number emits I-12" "1" "$i12_count"
+
 echo "Passed: $pass | Failed: $fail"
 [[ $fail -eq 0 ]]

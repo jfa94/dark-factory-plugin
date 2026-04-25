@@ -4,6 +4,7 @@
 #   pipeline-rescue-apply --tier=safe --plan=<report.json>
 #   pipeline-rescue-apply --tier=risky --plan=<approved.json>
 #   pipeline-rescue-apply --plans=<approved-plans.json>        (investigation)
+#   pipeline-rescue-apply --action=rehydrate-archived-run --run-id=<id>
 #   pipeline-rescue-apply --dry-run ...
 # Exit: 0 on success (even with per-action errors logged), 1 on fatal.
 
@@ -16,6 +17,8 @@ require_command jq
 tier=""
 plan=""
 plans=""
+action=""
+run_id_arg=""
 dry_run=0
 
 while [[ $# -gt 0 ]]; do
@@ -26,13 +29,17 @@ while [[ $# -gt 0 ]]; do
     --plan=*) plan="${1#--plan=}"; shift ;;
     --plans) plans="$2"; shift 2 ;;
     --plans=*) plans="${1#--plans=}"; shift ;;
+    --action) action="$2"; shift 2 ;;
+    --action=*) action="${1#--action=}"; shift ;;
+    --run-id) run_id_arg="$2"; shift 2 ;;
+    --run-id=*) run_id_arg="${1#--run-id=}"; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) log_error "unknown flag: $1"; exit 1 ;;
   esac
 done
 
-if [[ -z "$plan" && -z "$plans" ]]; then
-  log_error "must pass --plan or --plans"
+if [[ -z "$plan" && -z "$plans" && -z "$action" ]]; then
+  log_error "must pass --plan, --plans, or --action"
   exit 1
 fi
 
@@ -199,6 +206,36 @@ _apply_I_12() {
   fi
 }
 
+_apply_rehydrate_archived_run() {
+  local rid="$1"
+  local archive_dir="$CLAUDE_PLUGIN_DATA/archive/$rid"
+  local run_dir="$CLAUDE_PLUGIN_DATA/runs/$rid"
+  local current_link="$CLAUDE_PLUGIN_DATA/runs/current"
+
+  if [[ ! -f "$archive_dir/state.json" ]]; then
+    log_error "rehydrate: archive missing for run $rid ($archive_dir/state.json)"
+    return 1
+  fi
+  if [[ -e "$run_dir" ]]; then
+    log_error "rehydrate: runs/$rid already exists; refusing to overwrite"
+    return 1
+  fi
+  if (( dry_run )); then
+    printf '{"action":"rehydrate-archived-run","run_id":"%s","result":"dry_run"}\n' "$rid"
+    return 0
+  fi
+
+  mkdir -p "$CLAUDE_PLUGIN_DATA/runs"
+  cp -R "$archive_dir/" "$run_dir/"
+
+  if [[ ! -L "$current_link" && ! -e "$current_link" ]]; then
+    ln -s "$run_dir" "$current_link"
+  fi
+
+  rescue_audit "$rid" safe "" "" rehydrate_archived_run ok "source=$archive_dir"
+  printf '{"action":"rehydrate-archived-run","run_id":"%s","result":"ok"}\n' "$rid"
+}
+
 _apply_I_15() {
   local run_id="$1" task_id="$2" plan_file="$3"
   local evidence keep close_list
@@ -316,6 +353,17 @@ _dispatch_safe() {
     esac
   done < <(jq -r '.mechanical_issues[] | select(.tier == 1) | [.id, (.task_id // ""), (.description // ""), (.pr_url // "")] | @tsv' "$plan_file")
 }
+
+if [[ -n "$action" ]]; then
+  if [[ -z "$run_id_arg" ]]; then
+    log_error "--action requires --run-id"
+    exit 1
+  fi
+  case "$action" in
+    rehydrate-archived-run) _apply_rehydrate_archived_run "$run_id_arg"; exit $? ;;
+    *) log_error "unknown --action: $action"; exit 1 ;;
+  esac
+fi
 
 if [[ -n "$plans" ]]; then
   _dispatch_plans "$plans"

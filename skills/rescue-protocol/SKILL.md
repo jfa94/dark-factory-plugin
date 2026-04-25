@@ -21,11 +21,16 @@ You are the rescue orchestrator. You repair a pipeline run that has complex issu
 
 1. **Autonomy check.** Run `pipeline-ensure-autonomy`. If it exits 2 (stale or missing), follow the existing relaunch prompt pattern from `/factory:run`.
 
-2. **Select target run.** Read `$CLAUDE_PLUGIN_DATA/runs/current` symlink → run id. Fall back to `pipeline-state list | jq -r last` if no symlink. Exit with "No run to rescue." if none exist.
+2. **Select target run.** Resolution order:
+   1. Read `$CLAUDE_PLUGIN_DATA/runs/current` symlink → run id.
+   2. Else `pipeline-state list | jq -r last`.
+   3. Else list real runs in `$CLAUDE_PLUGIN_DATA/runs/` whose names match `^run-[0-9]{8}-[0-9]{6}$` (skip fixtures like `run-wrapper-*` unless the user passes `--include-fixtures`); if any, prompt with `AskUserQuestion`.
+   4. Else list `$CLAUDE_PLUGIN_DATA/archive/*/state.json` newest-first, prompt with `AskUserQuestion`. On user pick, run `pipeline-rescue-apply --action=rehydrate-archived-run --run-id=<id>` (tier-1, auto-applied) before continuing — this restores `runs/<id>/` from the archive copy and re-creates `runs/current` if absent. Archive copy is preserved.
+   5. Exit with "No run to rescue." if all empty.
 
 3. **Refuse if pipeline is live.** If `.status == "running"` and a fresh `pipeline-state` lock attempt succeeds (meaning no current holder), proceed. Otherwise exit with "Pipeline is running; wait for it to halt before rescuing."
 
-4. **Scan.** Run `pipeline-rescue-scan <run-id> > $rundir/rescue/report-<ts>.json`. Read the report.
+4. **Scan.** Run `pipeline-rescue-scan <run-id> > $rundir/rescue/report-<ts>.json 2> $rundir/rescue/scan-<ts>.log`. Read the report. On non-zero exit, quote the last 20 lines of `scan-<ts>.log` verbatim — never paraphrase stderr into prose.
 
 5. **Short-circuit if clean.** If `mechanical_issues` and `investigation_flags` are both empty AND no task is `status=failed`, skip to step 12 (invoke resume).
 

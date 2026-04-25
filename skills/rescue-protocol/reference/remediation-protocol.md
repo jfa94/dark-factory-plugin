@@ -12,6 +12,10 @@ Every action below is idempotent. The apply script detects current state before 
 | I-04  | Write `.pr_url` and `.pr_number` from GitHub              |
 | I-05  | Overwrite `.ci_status` from `gh pr view` latest           |
 
+### Pre-scan (selection-time, tier 1)
+
+`pipeline-rescue-apply --action=rehydrate-archived-run --run-id=<id>` — invoked by the skill when the user picks an archived run. `cp -R $CLAUDE_PLUGIN_DATA/archive/<id>/` → `runs/<id>/`; restore `runs/current` symlink only if absent. Refuses if `runs/<id>/` already exists or `archive/<id>/state.json` is missing. Archive copy preserved. Audit entry: `action=rehydrate_archived_run`.
+
 ## Tier 2 (risky, batch-approved)
 
 | Issue | Action                                                              |

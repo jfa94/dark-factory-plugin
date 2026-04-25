@@ -300,6 +300,19 @@ Drives the `/factory:debug` reviewer-implementer loop. Handles reviewer detectio
 - Enforces Iron Law: every round commits a review artifact before spawning executor
 - Writes escalation audit trail when executor cannot resolve findings
 
+### rescue-protocol
+
+Orchestrates recovery of pipeline runs with complex issues. Sequences scan, auto-apply, user approval, diagnostic agent dispatch, and handoff to resume.
+
+**Key behaviors:**
+
+- Runs `pipeline-ensure-autonomy` first
+- Auto-applies tier-1 fixes without prompting
+- Batch-approves tier-2/3 fixes via `AskUserQuestion`
+- Dispatches `rescue-diagnostic` agent in parallel for failed tasks
+- Hands off to `pipeline-orchestrator` skill with `mode=resume`
+- Never edits state.json directly — all writes go through `pipeline-state`
+
 ### review-protocol
 
 Injects Actor-Critic adversarial review methodology into any reviewer.

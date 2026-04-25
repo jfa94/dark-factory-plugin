@@ -65,6 +65,62 @@ The orchestration runs to completion inside the invoking session — there is no
 
 ---
 
+## /factory:rescue
+
+Recover a pipeline run from complex issues that `/factory:run resume` cannot handle: merge conflicts, unmerged PRs, orphan branches, failed tasks, review deadlocks, state corruption. Produces a clean state that resume picks up naturally.
+
+### Arguments
+
+| Argument             | Required | Default | Description                                                           |
+| -------------------- | -------- | ------- | --------------------------------------------------------------------- |
+| `--dry-run`          | No       | -       | Scan and report only; skip auto-apply and user prompts                |
+| `--include-fixtures` | No       | -       | Include test-fixture-named runs (e.g., `run-wrapper-*`) in the picker |
+
+### Execution Flow
+
+1. Run `pipeline-ensure-autonomy` to verify session settings
+2. Select target run (current symlink, newest run, archived runs, or user pick)
+3. If run is archived, rehydrate it via `pipeline-rescue-apply --action=rehydrate-archived-run`
+4. Run `pipeline-rescue-scan` to detect issues
+5. Auto-apply tier-1 fixes (safe, always idempotent)
+6. Batch-approve tier-2 and tier-3 fixes via user prompt
+7. Apply approved mechanical fixes
+8. For failed tasks, dispatch read-only `rescue-diagnostic` agent in parallel
+9. Batch-approve investigation remediation plans
+10. Apply approved plans
+11. Invoke `pipeline-orchestrator` skill with `mode=resume`
+
+### Issue Taxonomy
+
+Issues are classified into tiers by required approval:
+
+| Tier | Approval   | Examples                                      |
+| ---- | ---------- | --------------------------------------------- |
+| 1    | Auto-apply | stale lock, orphan worktree, backfill PR URL  |
+| 2    | Batch      | merge conflict, closed PR, CI red, stuck task |
+| 3    | Batch      | duplicate PRs, state malformed, spec drift    |
+| N/A  | Agent      | failed tasks flagged for investigation        |
+
+### State Directory
+
+Rescue artifacts persist under:
+
+```
+${CLAUDE_PLUGIN_DATA}/runs/<run-id>/rescue/
+```
+
+Contents:
+
+| File                            | Description                  |
+| ------------------------------- | ---------------------------- |
+| `report-<ts>.json`              | Scan output                  |
+| `approved-mechanical-<ts>.json` | Approved tier-2/3 fixes      |
+| `diagnostic.<task>.input.json`  | Input to diagnostic agent    |
+| `diagnostic.<task>.output.json` | Diagnostic agent decision    |
+| `approved-plans-<ts>.json`      | Approved investigation plans |
+
+---
+
 ## /factory:configure
 
 Interactive settings editor.

@@ -6,7 +6,7 @@
       "name": "factory",
       "source": "./",
       "description": "Autonomous coding pipeline: converts GitHub PRD issues into merged pull requests with quality-first review gates",
-      "version": "0.6.0"
+      "version": "0.6.2"
     }
   ]
 }

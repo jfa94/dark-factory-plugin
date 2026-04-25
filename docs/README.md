@@ -1,4 +1,4 @@
-<!-- last-documented: 40e846704b82505d33f35053e56147fa85d1ab2c -->
+<!-- last-documented: 1166e509dbdd01507b7b1e8bac1f8a1ba1f5c218 -->
 
 # Dark Factory Plugin
 
@@ -37,7 +37,7 @@ The plugin automates the end-to-end software development workflow: reading a req
 
 ### Reference
 
-- [Commands](./reference/commands.md) - `/factory:run` and `/factory:configure` specifications
+- [Commands](./reference/commands.md) - `/factory:run`, `/factory:debug`, `/factory:rescue`, `/factory:configure` specifications
 - [Configuration Schema](./reference/configuration.md) - All runtime config options with types and defaults
 - [Bin Scripts](./reference/bin-scripts.md) - Deterministic pipeline utilities
 - [State Schema](./reference/state-schema.md) - Run state structure and task lifecycle

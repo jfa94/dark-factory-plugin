@@ -1,5 +1,5 @@
 {
   "name": "factory",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Autonomous coding pipeline: converts GitHub PRD issues into merged pull requests with quality-first review gates"
 }

@@ -1070,6 +1070,130 @@ Configure as `statusLine.command` in `~/.claude/settings.json`:
 
 ---
 
+## Rescue Scripts
+
+### pipeline-rescue-scan
+
+Scan a pipeline run for rescue-actionable issues.
+
+**Usage:**
+
+```bash
+pipeline-rescue-scan <run-id>
+```
+
+**Output:**
+
+```json
+{
+  "run_id": "run-20260413-140000",
+  "state_summary": {"status": "...", "tasks": [...]},
+  "mechanical_issues": [
+    {"id": "I-03", "tier": 1, "task_id": "task_01", "description": "PR #42 merged but task status=executing"}
+  ],
+  "investigation_flags": [
+    {"id": "I-16", "task_id": "task_02", "reason": "task status=failed"}
+  ]
+}
+```
+
+**Issue IDs:**
+
+| ID   | Tier | Description                                   |
+| ---- | ---- | --------------------------------------------- |
+| I-01 | 1    | Stale state lock (dead PID)                   |
+| I-02 | 1    | Orphan worktree (branch gone)                 |
+| I-03 | 1    | PR merged, state not updated                  |
+| I-04 | 1    | PR exists on GitHub but state.pr_url empty    |
+| I-05 | 1    | Stale CI status                               |
+| I-06 | 2    | CI red, stage=ship, no ci_fixing              |
+| I-07 | 2    | PR merge conflict with base                   |
+| I-08 | 2    | PR closed unmerged                            |
+| I-09 | 2    | Review verdict deadlock                       |
+| I-10 | 2    | Stuck executing, no worktree, no PR           |
+| I-11 | 2    | Spec done, no handoff branch, tasks empty     |
+| I-12 | 2    | state.json malformed or non-numeric pr_number |
+| I-14 | inv  | Orphan task branch, no state entry            |
+| I-15 | 3    | Duplicate PRs for same branch                 |
+| I-16 | inv  | Task status=failed                            |
+
+**Exit codes:** 0=success (including no issues), 1=fatal (state missing, GitHub unreachable)
+
+---
+
+### pipeline-rescue-apply
+
+Apply rescue remediations. Idempotent per action.
+
+**Usage:**
+
+```bash
+pipeline-rescue-apply --tier=safe --plan=<report.json>
+pipeline-rescue-apply --tier=risky --plan=<approved.json>
+pipeline-rescue-apply --plans=<approved-plans.json>
+pipeline-rescue-apply --action=rehydrate-archived-run --run-id=<id>
+pipeline-rescue-apply --dry-run ...
+```
+
+**Arguments:**
+
+| Argument    | Description                                     |
+| ----------- | ----------------------------------------------- |
+| `--tier`    | `safe` (tier-1) or `risky` (tier-2/3)           |
+| `--plan`    | Path to scan report or approved mechanical JSON |
+| `--plans`   | Path to approved investigation plans JSON       |
+| `--action`  | Direct action: `rehydrate-archived-run`         |
+| `--run-id`  | Run ID for direct actions                       |
+| `--dry-run` | Log actions without applying                    |
+
+**Rehydrate action:**
+
+Restores an archived run from `${CLAUDE_PLUGIN_DATA}/archive/<run-id>/` back to `runs/<run-id>/` and re-creates the `runs/current` symlink if absent. Archive copy is preserved.
+
+**Exit codes:** 0=success, 1=fatal
+
+---
+
+### pipeline-ensure-autonomy
+
+Verify that the current session has up-to-date autonomous-mode settings.
+
+**Usage:**
+
+```bash
+pipeline-ensure-autonomy
+```
+
+**Behavior:**
+
+1. Self-heal exec bits on entry-point scripts (statusline-wrapper.sh, pipeline-\*)
+2. Check if `merged-settings.json` exists and matches current plugin version
+3. Regenerate if missing or stale
+4. Check FACTORY_AUTONOMOUS_MODE env var
+5. Check usage-cache.json freshness (>3600s = fail-closed)
+
+**Output:**
+
+```json
+{
+  "status": "ok",
+  "message": "autonomous mode active (version 0.6.1)",
+  "settings_path": "/path/to/merged-settings.json"
+}
+```
+
+**Statuses:**
+
+| Status      | Meaning                                          | Exit |
+| ----------- | ------------------------------------------------ | ---- |
+| ok          | File current, FACTORY_AUTONOMOUS_MODE=1          | 0    |
+| bypass      | No file but env var set (CI path)                | 0    |
+| stale       | File regenerated; session must relaunch          | 2    |
+| missing     | First run; file generated; session must relaunch | 2    |
+| stale-cache | usage-cache.json missing or >3600s old           | 2    |
+
+---
+
 ## Test Runner
 
 ### bin/test

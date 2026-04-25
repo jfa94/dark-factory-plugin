@@ -20,7 +20,7 @@ cat > "$mock_dir/gh" <<'SHIM'
 #!/usr/bin/env bash
 case "$*" in
   "pr view 42 --json state,"*)
-    echo '{"state":"MERGED","mergedAt":"2026-04-20T10:00:00Z","mergeable":"MERGEABLE","statusCheckRollup":[{"conclusion":"SUCCESS"}],"baseRefName":"main"}' ;;
+    echo '{"state":"MERGED","mergedAt":"2026-04-20T10:00:00Z","mergeable":"MERGEABLE","statusCheckRollup":[{"conclusion":"SUCCESS"}],"baseRefName":"staging"}' ;;
   "pr list --search [112] task( in:title --state all --json number,title,state,mergedAt,mergeable,headRefName,url")
     echo '[{"number":42,"title":"[112] task(T1): add login","state":"MERGED","mergedAt":"2026-04-20T10:00:00Z","mergeable":"MERGEABLE","headRefName":"dark-factory/112/t1","url":"https://x/42"}]' ;;
   *) echo '{}' ;;

@@ -566,7 +566,7 @@ _stage_postexec() {
     return 30
   fi
 
-  if ! ( cd "$wt" && pipeline-tdd-gate --task-id "$task_id" --run-id "$run_id" --base staging ) >/dev/null; then
+  if ! ( cd "$wt" && pipeline-tdd-gate --task-id "$task_id" --run-id "$run_id" ) >/dev/null; then
     _task_write quality_gates.tdd '{"ok":false}'
     log_warn "tdd gate failed for $task_id"
     t1=$(_now_ms)
@@ -634,7 +634,7 @@ _stage_postexec() {
 _emit_postexec_manifest() {
   local wt="$1"
   local detect provider
-  detect=$(pipeline-detect-reviewer --base staging)
+  detect=$(pipeline-detect-reviewer)
   provider=$(printf '%s' "$detect" | jq -r '.reviewer')
   log_metric "task.review.provider" "task_id=\"$task_id\"" "reviewer=\"$provider\""
 
@@ -671,7 +671,7 @@ _emit_postexec_manifest() {
     local review_file="$run_dir/.state/$run_id/$task_id.review.codex.json"
     local spec_path
     spec_path=$(pipeline-state read "$run_id" '.spec.path // ""' 2>/dev/null || printf '')
-    local cargs=(--base staging --task-id "$task_id")
+    local cargs=(--task-id "$task_id")
     [[ -n "$spec_path" ]] && cargs+=(--spec-dir "$spec_path")
     if ! pipeline-codex-review "${cargs[@]}" > "$review_file"; then
       log_warn "codex review failed for $task_id"
@@ -750,7 +750,17 @@ _stage_postreview() {
     return 30
   fi
 
-  # Durable commit point: review_files validated, now safe to advance past postexec.
+  # Strict: every listed artifact must exist before advancing state.
+  for f in "${files[@]}"; do
+    if [[ ! -f "$f" ]]; then
+      log_error "review file missing: $f"
+      t1=$(_now_ms)
+      log_step_end "postreview" "failed" "$((t1-t0))" "task_id=\"$task_id\"" "reason=\"missing_review_file\""
+      return 30
+    fi
+  done
+
+  # Durable commit point: all review artifacts confirmed present.
   _task_write stage '"postexec_done"'
 
   local any_changes=false any_discuss=false f verdict decision raw_json still_count

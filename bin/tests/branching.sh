@@ -64,6 +64,26 @@ assert_eq "base flag accepted" "claude-code" "$(echo "$output" | jq -r '.reviewe
 # Always exits 0
 assert_exit "always exits 0" 0 env PATH="$_nocodex_path" pipeline-detect-reviewer
 
+# F2 fix: with Codex on PATH, when only origin/staging exists (no local staging),
+# detect-reviewer must fall back to origin/staging and embed it in the emitted command.
+_codex_stubs=$(mktemp -d)
+cat > "$_codex_stubs/codex" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "login status") exit 0 ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$_codex_stubs/codex"
+_dr_repo=$(mktemp -d)
+git -C "$_dr_repo" init -q
+git -C "$_dr_repo" commit --allow-empty -m "init" -q
+git -C "$_dr_repo" update-ref refs/remotes/origin/staging "$(git -C "$_dr_repo" rev-parse HEAD)"
+output=$(cd "$_dr_repo" && env PATH="$_codex_stubs:$PLUGIN_BIN:/usr/bin:/bin" pipeline-detect-reviewer 2>/dev/null)
+assert_eq "detect-reviewer codex: uses origin/staging fallback" "true" \
+  "$( [[ "$(echo "$output" | jq -r '.command')" == *"origin/staging"* ]] && echo true || echo false )"
+rm -rf "$_codex_stubs" "$_dr_repo"
+
 # ============================================================
 echo ""
 echo "=== pipeline-parse-review (APPROVE) ==="

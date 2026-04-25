@@ -15,12 +15,13 @@ PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # --- Arg parsing ---
 
 base_ref="staging"
+base_explicit=false
 task_id=""
 spec_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --base)     base_ref="$2"; shift 2 ;;
+    --base)     base_ref="$2"; base_explicit=true; shift 2 ;;
     --task-id)  task_id="$2";  shift 2 ;;
     --spec-dir) spec_dir="$2"; shift 2 ;;
     *) log_error "unknown flag: $1"; exit 1 ;;
@@ -30,6 +31,15 @@ done
 if [[ -z "$task_id" ]]; then
   log_error "--task-id is required"
   exit 1
+fi
+
+if ! git rev-parse --verify "$base_ref" >/dev/null 2>&1; then
+  if [[ "$base_explicit" == "false" ]] && git rev-parse --verify origin/staging >/dev/null 2>&1; then
+    base_ref="origin/staging"
+  else
+    printf '{"ok":false,"error":"base_ref_not_found","base_ref":"%s"}\n' "$base_ref"
+    exit 1
+  fi
 fi
 
 # --- Build review prompt ---

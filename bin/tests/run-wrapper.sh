@@ -679,5 +679,12 @@ assert_eq "parse-review-downgrade: stage_after=postexec" "postexec" \
   "$(printf '%s' "$OUT" | jq -r '.stage_after')"
 write_stub pipeline-parse-review 'cat'
 
+# --- 26: F1 fix — postreview blocks when a listed review file is missing ------
+new_run postreview-missing-file
+pipeline-state task-write "$RUN_ID" alpha-001 stage '"postexec_done"' >/dev/null
+run_wrapper alpha-001 --stage postreview --review-file "$ROOT_TMP/does-not-exist-$RANDOM.json"
+assert_eq "postreview missing file: exit 30" "30" "$RC"
+assert_eq "postreview missing file: stage stays postexec_done" "postexec_done" "$(stage_of)"
+
 printf '\n=== RESULTS: %d passed, %d failed ===\n' "$passed" "$failed"
 exit $(( failed > 0 ? 1 : 0 ))

@@ -97,7 +97,6 @@ if [[ "$autonomous" == "1" ]]; then
       worktree=$(jq -r --arg t "$scoped_task_id" '.tasks[$t].worktree // empty' "$state_file" 2>/dev/null)
       if [[ -n "$branch" ]]; then
         log_output=""
-        commit_check_skipped=false
         git_dir="${worktree:-}"
         if [[ -n "$git_dir" && -d "$git_dir" ]]; then
           base_ref=""
@@ -108,9 +107,8 @@ if [[ "$autonomous" == "1" ]]; then
           fi
           if [[ -n "$base_ref" ]]; then
             log_output=$(git -C "$git_dir" log --oneline "$base_ref..$branch" 2>/dev/null || true)
-          elif git -C "$git_dir" rev-parse --verify "$branch" >/dev/null 2>&1; then
-            echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found in $git_dir; skipping commit check" >&2
-            commit_check_skipped=true
+          else
+            block_reason="Cannot verify commits: neither local staging nor origin/staging exists. Fetch staging or create it before running the pipeline."
           fi
         else
           base_ref=""
@@ -121,12 +119,11 @@ if [[ "$autonomous" == "1" ]]; then
           fi
           if [[ -n "$base_ref" ]]; then
             log_output=$(git log --oneline "$base_ref..$branch" 2>/dev/null || true)
-          elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
-            echo "[subagent-stop-gate] Warning: neither staging nor origin/staging found; skipping commit check" >&2
-            commit_check_skipped=true
+          else
+            block_reason="Cannot verify commits: neither local staging nor origin/staging exists. Fetch staging or create it before running the pipeline."
           fi
         fi
-        if [[ "$commit_check_skipped" == "false" ]] && [[ -z "$log_output" ]]; then
+        if [[ -z "$block_reason" ]] && [[ -z "$log_output" ]]; then
           block_reason="No commits detected — complete the implementation and commit before finishing the turn."
         fi
       fi

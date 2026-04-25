@@ -162,7 +162,7 @@ Emit a single JSON code block as your final output. The harness parses this bloc
     {
       "file": "path/to/file.ts",
       "line": 42,
-      "evidence": "<exact quote from diff>",
+      "verbatim_line": "<exact quote from diff, >= 10 chars>",
       "severity": "critical" | "important" | "minor",
       "description": "what is wrong and why"
     }
@@ -175,8 +175,8 @@ Rules:
 
 - `verdict` must be one of the three exact strings above
 - `findings` required when verdict is REQUEST_CHANGES; must be empty array `[]` when APPROVED
-- Each finding MUST include `evidence` — an exact quote (>= 5 chars) from the diff being reviewed
-- Findings without evidence are invalid and will be rejected by the parser
+- Each finding MUST include `verbatim_line` — an exact quote (>= 10 chars) from the diff being reviewed (legacy `evidence` field still accepted by parser but deprecated)
+- Findings without a verifiable verbatim quote are invalid and will be dropped by the parser
 - `line` is the line number in the file where the issue occurs (0 if unknown)
 
 Final verdict: **APPROVED**, **REQUEST_CHANGES** (any finding with evidence), or **NEEDS_DISCUSSION** (unresolvable UNCERTAIN items that need human judgment).

@@ -778,8 +778,8 @@ _stage_postreview() {
       # Already-normalized verdict JSON (e.g. pipeline-codex-review output, which
       # runs validate_findings internally before writing the file).
       verdict=$(cat "$f") || { log_warn "read failed on $f"; any_changes=true; continue; }
-      if ! printf '%s' "$verdict" | jq -e 'has("verdict")' >/dev/null 2>&1; then
-        log_warn "normalized review missing .verdict field: $f"; any_changes=true; continue
+      if ! printf '%s' "$verdict" | jq -e 'has("verdict") or has("decision")' >/dev/null 2>&1; then
+        log_warn "normalized review missing .verdict/.decision field: $f"; any_changes=true; continue
       fi
     elif [[ -n "$pr_wt" && -d "$pr_wt" ]]; then
       local base_ref
@@ -791,6 +791,7 @@ _stage_postreview() {
       fi
       verdict=$(cd "$pr_wt" && pipeline-parse-review --base "$base_ref" < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
     else
+      log_warn "postreview: worktree unresolved — running parse-review without diff validation on $f task_id=\"$task_id\""
       verdict=$(pipeline-parse-review < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
     fi
     # pipeline-parse-review emits `.verdict`; accept legacy `.decision` for

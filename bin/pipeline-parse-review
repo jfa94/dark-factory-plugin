@@ -65,10 +65,14 @@ if [[ -n "$json_block" ]] && printf '%s' "$json_block" | jq empty 2>/dev/null; t
       exit 1
     fi
 
-    # Strip findings missing evidence (length < 5), log warnings
+    # Strip findings missing evidence (length < 5), log warnings.
+    # Normalize legacy `.evidence` field into `.verbatim_line` so downstream
+    # validate_findings (which reads .verbatim_line) can grep it against the diff.
     valid_findings=$(printf '%s' "$json_block" | jq '[
       .findings[] |
-      if (.evidence // "" | length) >= 5 then . else empty end
+      . as $f |
+      ((.verbatim_line // .evidence // "")) as $vl |
+      if ($vl | length) >= 5 then ($f + {verbatim_line: $vl}) else empty end
     ]')
 
     # Count stripped findings and warn

@@ -775,7 +775,14 @@ _stage_postreview() {
   for f in "${files[@]}"; do
     [[ ! -f "$f" ]] && { log_warn "review file missing: $f"; continue; }
     if [[ -n "$pr_wt" && -d "$pr_wt" ]]; then
-      verdict=$(cd "$pr_wt" && pipeline-parse-review --base staging < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
+      local base_ref
+      base_ref=$(_resolve_base_ref "$pr_wt")
+      if [[ -z "$base_ref" ]]; then
+        log_warn "postreview: base ref not found (staging and origin/staging both missing) — treating $f as REQUEST_CHANGES task_id=\"$task_id\""
+        any_changes=true
+        continue
+      fi
+      verdict=$(cd "$pr_wt" && pipeline-parse-review --base "$base_ref" < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
     else
       verdict=$(pipeline-parse-review < "$f") || { log_warn "parse-review failed on $f"; any_changes=true; continue; }
     fi

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Parse structured review output into normalized JSON.
-# Usage: pipeline-parse-review [--reviewer codex|claude-code]
-# Input: stdin (raw reviewer output)
+# Usage: pipeline-parse-review [--reviewer claude-code] [--base <ref>]
+# Input: stdin (raw reviewer output — JSON-block or prose format)
+# Codex reviews must go through pipeline-codex-review, not this script.
 # Exit: 0=parsed, 1=parse failure
 
 source "$(dirname "$0")/pipeline-lib.sh"
@@ -21,16 +22,6 @@ raw=$(cat)
 
 if [[ -z "$raw" ]]; then
   log_error "empty review input"
-  exit 1
-fi
-
-# --- Codex JSON passthrough ---
-if [[ "$reviewer" == "codex" ]]; then
-  if printf '%s' "$raw" | jq empty 2>/dev/null; then
-    printf '%s' "$raw" | jq --arg reviewer "codex" '. + {reviewer: $reviewer}'
-    exit 0
-  fi
-  log_error "codex output is not valid JSON"
   exit 1
 fi
 
@@ -116,14 +107,14 @@ if [[ -n "$json_block" ]] && printf '%s' "$json_block" | jq empty 2>/dev/null; t
     blocking_count=$(printf '%s' "$valid_findings" | jq '[.[] | select(.severity == "critical")] | length')
     non_blocking_count=$(printf '%s' "$valid_findings" | jq "[.[] | select(.severity != \"critical\")] | length")
 
-    jq -n \
+    out_json=$(jq -n \
       --arg verdict "$normalized_verdict" \
       --argjson round 1 \
       --arg confidence "HIGH" \
       --argjson findings "$valid_findings" \
       --argjson blocking_count "$blocking_count" \
       --argjson non_blocking_count "$non_blocking_count" \
-      --argjson declared_blockers "$valid_count" \
+      --argjson declared_blockers "$blocking_count" \
       --argjson criteria_passed 0 \
       --argjson criteria_failed 0 \
       --argjson holdout_passed 0 \
@@ -144,7 +135,20 @@ if [[ -n "$json_block" ]] && printf '%s' "$json_block" | jq empty 2>/dev/null; t
         holdout_failed: $holdout_failed,
         summary: $summary,
         reviewer: $reviewer
-      }'
+      }')
+
+    if [[ -n "$base_ref" ]]; then
+      diff_file=$(mktemp)
+      trap 'rm -f "$tmpfile" "$diff_file"' EXIT
+      if git diff --unified=5 "$base_ref" HEAD > "$diff_file" 2>/dev/null && [[ -s "$diff_file" ]]; then
+        printf '%s' "$out_json" | validate_findings "$diff_file"
+      else
+        log_error "git diff failed or produced empty diff (base: $base_ref)"
+        exit 1
+      fi
+    else
+      printf '%s' "$out_json"
+    fi
     exit 0
   fi
 fi
@@ -317,6 +321,13 @@ done < "$tmpfile"
 # Extract summary (portable: awk instead of GNU sed)
 summary=$(awk '/^## Summary$/{found=1; next} found{print}' "$tmpfile" | head -5 | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
 
+# Enforce declared_blockers == blocking_count. Reviewer MUST agree with parser tally.
+if [[ "${declared_blockers:-0}" != "$blocking_count" ]]; then
+  log_warn "declared_blockers ($declared_blockers) ≠ blocking_count ($blocking_count) — downgrading to REQUEST_CHANGES"
+  verdict="REQUEST_CHANGES"
+  summary="[parser-downgrade: declared/observed blocker mismatch] ${summary}"
+fi
+
 # Build output JSON
 out_json=$(jq -n \
   --arg verdict "$verdict" \
@@ -358,7 +369,8 @@ if [[ -n "$base_ref" ]]; then
   if git diff --unified=5 "$base_ref" HEAD > "$diff_file" 2>/dev/null && [[ -s "$diff_file" ]]; then
     printf '%s' "$out_json" | validate_findings "$diff_file"
   else
-    printf '%s' "$out_json"
+    log_error "git diff failed or produced empty diff (base: $base_ref)"
+    exit 1
   fi
 else
   printf '%s' "$out_json"

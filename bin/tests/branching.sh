@@ -237,22 +237,27 @@ assert_eq "no verdict exits 1" "1" "$exit_code"
 
 # ============================================================
 echo ""
-echo "=== pipeline-parse-review (codex JSON passthrough) ==="
+echo "=== pipeline-parse-review (codex passthrough removed — prose fallthrough) ==="
 
-codex_json='{"verdict":"APPROVE","round":1,"findings":[],"summary":"ok"}'
-output=$(printf '%s' "$codex_json" | pipeline-parse-review --reviewer codex 2>/dev/null)
-assert_eq "codex verdict" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
-assert_eq "codex reviewer tag" "codex" "$(echo "$output" | jq -r '.reviewer')"
-
-# ============================================================
-echo ""
-echo "=== pipeline-parse-review (codex invalid JSON) ==="
-
+# Codex flow goes through pipeline-codex-review, which maps overall_correctness →
+# verdict before writing the review file. pipeline-parse-review no longer has a
+# special --reviewer codex passthrough; pre-normalized JSON without a ## Verdict
+# block or JSON code block with verdict+findings must fail.
 set +e
-printf 'not json' | pipeline-parse-review --reviewer codex >/dev/null 2>&1
+printf '{"verdict":"APPROVE","round":1,"findings":[],"summary":"ok"}' \
+  | pipeline-parse-review --reviewer codex >/dev/null 2>&1
 exit_code=$?
 set -e
-assert_eq "codex invalid JSON exits 1" "1" "$exit_code"
+assert_eq "codex pre-normalized JSON falls through prose — exits 1" "1" "$exit_code"
+
+# Real codex schema (overall_correctness) also fails: JSON-block path requires
+# verdict + findings keys; pipeline-codex-review must handle this schema, not parse-review.
+set +e
+printf '{"overall_correctness":"patch is correct","findings":[],"overall_explanation":"ok"}' \
+  | pipeline-parse-review --reviewer codex >/dev/null 2>&1
+exit_code=$?
+set -e
+assert_eq "real codex schema (overall_correctness) rejected by parse-review — exits 1" "1" "$exit_code"
 
 # ============================================================
 echo ""
@@ -443,6 +448,119 @@ More analysis...
 output=$(printf '%s' "$json_multi_block" | pipeline-parse-review 2>/dev/null)
 assert_eq "last json block wins" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
 assert_eq "last json block summary" "second block wins" "$(echo "$output" | jq -r '.summary')"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON-block: fabricated verbatim_line dropped) ==="
+
+_vl_repo=$(mktemp -d)
+git -C "$_vl_repo" init -q
+git -C "$_vl_repo" config user.email "test@test.local"
+git -C "$_vl_repo" config user.name "test"
+printf 'real content here\n' > "$_vl_repo/file.txt"
+git -C "$_vl_repo" add file.txt
+git -C "$_vl_repo" commit -m "staging commit" -q
+git -C "$_vl_repo" branch staging
+printf 'new content added\n' >> "$_vl_repo/file.txt"
+git -C "$_vl_repo" add file.txt
+git -C "$_vl_repo" commit -m "head commit" -q
+
+_fake_vl_review='Some review text.
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "summary": "Found critical issue",
+  "findings": [{
+    "title": "Fake finding",
+    "severity": "critical",
+    "evidence": "sufficient evidence here",
+    "verbatim_line": "THIS_LINE_DOES_NOT_EXIST_IN_DIFF_ZXQVB"
+  }]
+}
+```'
+
+output=$(cd "$_vl_repo" && printf '%s' "$_fake_vl_review" | pipeline-parse-review --base staging 2>/dev/null)
+assert_eq "json-block fabricated verbatim_line: finding dropped" "0" "$(echo "$output" | jq '.findings | length')"
+assert_eq "json-block fabricated verbatim_line: verdict downgraded to APPROVE" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
+
+_real_vl_review='Some review text.
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "summary": "Found critical issue",
+  "findings": [{
+    "title": "Real finding",
+    "severity": "critical",
+    "evidence": "sufficient evidence here",
+    "verbatim_line": "new content added"
+  }]
+}
+```'
+
+output=$(cd "$_vl_repo" && printf '%s' "$_real_vl_review" | pipeline-parse-review --base staging 2>/dev/null)
+assert_eq "json-block real verbatim_line: finding retained" "1" "$(echo "$output" | jq '.findings | length')"
+assert_eq "json-block real verbatim_line: verdict stays REQUEST_CHANGES" "REQUEST_CHANGES" "$(echo "$output" | jq -r '.verdict')"
+
+rm -rf "$_vl_repo"
+
+# ============================================================
+echo ""
+echo "=== pipeline-parse-review (JSON-block: validates against origin/staging, no local staging) ==="
+
+_origin_repo=$(mktemp -d)
+git -C "$_origin_repo" init -q
+git -C "$_origin_repo" config user.email "test@test.local"
+git -C "$_origin_repo" config user.name "test"
+printf 'base content\n' > "$_origin_repo/file.txt"
+git -C "$_origin_repo" add file.txt
+git -C "$_origin_repo" commit -m "staging commit" -q
+# Set up origin/staging without a local staging branch
+git -C "$_origin_repo" update-ref refs/remotes/origin/staging "$(git -C "$_origin_repo" rev-parse HEAD)"
+printf 'added line\n' >> "$_origin_repo/file.txt"
+git -C "$_origin_repo" add file.txt
+git -C "$_origin_repo" commit -m "head commit" -q
+
+_origin_fake_review='Review text.
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "summary": "Fabricated",
+  "findings": [{
+    "title": "Fake",
+    "severity": "critical",
+    "evidence": "sufficient evidence here",
+    "verbatim_line": "THIS_LINE_DOES_NOT_EXIST_IN_DIFF_ZXQVB"
+  }]
+}
+```'
+
+output=$(cd "$_origin_repo" && printf '%s' "$_origin_fake_review" | pipeline-parse-review --base origin/staging 2>/dev/null)
+assert_eq "origin/staging: fabricated verbatim_line dropped" "0" "$(echo "$output" | jq '.findings | length')"
+assert_eq "origin/staging: verdict downgraded to APPROVE" "APPROVE" "$(echo "$output" | jq -r '.verdict')"
+
+_origin_real_review='Review text.
+
+```json
+{
+  "verdict": "REQUEST_CHANGES",
+  "summary": "Real issue",
+  "findings": [{
+    "title": "Real",
+    "severity": "critical",
+    "evidence": "sufficient evidence here",
+    "verbatim_line": "added line"
+  }]
+}
+```'
+
+output=$(cd "$_origin_repo" && printf '%s' "$_origin_real_review" | pipeline-parse-review --base origin/staging 2>/dev/null)
+assert_eq "origin/staging: real verbatim_line retained" "1" "$(echo "$output" | jq '.findings | length')"
+assert_eq "origin/staging: verdict stays REQUEST_CHANGES" "REQUEST_CHANGES" "$(echo "$output" | jq -r '.verdict')"
+
+rm -rf "$_origin_repo"
 
 # ============================================================
 echo ""

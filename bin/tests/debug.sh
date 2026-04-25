@@ -114,6 +114,49 @@ grep -q "STATUS: BLOCKED — escalate" "$esc_dir/escalation.md" \
   && pass "escalation file embeds executor message" \
   || fail "escalation file embeds executor message"
 
+# --- skill loop smoke test (bin scripts only) ----------------------------
+
+current="loop-smoke"
+
+loop_run="loop-001"
+loop_dir="$ROOT_TMP/data/debug/$loop_run"
+export CLAUDE_PLUGIN_DATA="$ROOT_TMP/data"
+
+# Round 1: reviewer returns one critical finding
+write_stub pipeline-codex-review "cat $FIXTURES/review-mixed.json"
+
+result=$(pipeline-debug-review --base HEAD --severity critical --out-dir "$loop_dir" --round 1)
+got=$(printf '%s' "$result" | jq -r '.blocking_count')
+assert_eq "round 1 produces blocking findings" "1" "$got"
+
+[[ -f "$loop_dir/round-1.review.json" ]] && pass "round 1 artifact persisted" \
+  || fail "round 1 artifact persisted"
+
+# Simulate executor escalation
+cat > "$loop_dir/round-1.executor.log" <<'EOF'
+Findings analysis complete.
+STATUS: BLOCKED — escalate: ConnectionPool singleton ownership rework needed
+EOF
+
+# Skill calls escalate when STATUS line matches the escalate pattern.
+findings_path=$(printf '%s' "$result" | jq -r '.review_file')
+esc_stdout=$(pipeline-debug-escalate \
+  --run-id "$loop_run" \
+  --reason "ConnectionPool singleton ownership rework needed" \
+  --base "HEAD~1" \
+  --severity "critical" \
+  --findings "$findings_path" \
+  --executor-msg "$loop_dir/round-1.executor.log")
+
+# The stdout marker the skill must surface verbatim
+case "$esc_stdout" in
+  "ESCALATED path=$loop_dir/escalation.md") pass "escalate stdout marker matches loop dir" ;;
+  *) fail "escalate stdout marker (got: $esc_stdout)" ;;
+esac
+
+[[ -f "$loop_dir/escalation.md" ]] && pass "escalation.md present in loop dir" \
+  || fail "escalation.md present in loop dir"
+
 # --- summary --------------------------------------------------------------
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

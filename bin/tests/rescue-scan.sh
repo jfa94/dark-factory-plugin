@@ -27,9 +27,9 @@ make_gh_mock() {
   cat > "$mock_dir/gh" <<'SHIM'
 #!/usr/bin/env bash
 case "$*" in
-  "pr view 42 --json state,mergedAt,mergeable,statusCheckRollup")
+  "pr view 42 --json state,"*)
     cat <<'JSON'
-{"state":"MERGED","mergedAt":"2026-04-20T10:00:00Z","mergeable":"MERGEABLE","statusCheckRollup":[]}
+{"state":"MERGED","mergedAt":"2026-04-20T10:00:00Z","mergeable":"MERGEABLE","statusCheckRollup":[],"baseRefName":"main"}
 JSON
     ;;
   "pr list --search [112] task( in:title --state all --json number,title,state,mergedAt,mergeable,headRefName,url")
@@ -137,8 +137,8 @@ mkdir -p "$CLAUDE_PLUGIN_DATA/mock2"
 cat > "$CLAUDE_PLUGIN_DATA/mock2/gh" <<'SHIM'
 #!/usr/bin/env bash
 case "$*" in
-  "pr view 42 --json state,mergedAt,mergeable,statusCheckRollup")
-    echo '{"state":"OPEN","mergedAt":null,"mergeable":"CONFLICTING","statusCheckRollup":[]}' ;;
+  "pr view 42 --json state,"*)
+    echo '{"state":"OPEN","mergedAt":null,"mergeable":"CONFLICTING","statusCheckRollup":[],"baseRefName":"main"}' ;;
   "pr list --search [112] task( in:title --state all --json number,title,state,mergedAt,mergeable,headRefName,url")
     echo '[{"number":42,"title":"[112] task(T1): add login","state":"OPEN","mergedAt":null,"mergeable":"CONFLICTING","headRefName":"dark-factory/112/t1","url":"https://x/42"}]' ;;
   *) echo '{}' ;;
@@ -157,8 +157,8 @@ mkdir -p "$CLAUDE_PLUGIN_DATA/mock3"
 cat > "$CLAUDE_PLUGIN_DATA/mock3/gh" <<'SHIM'
 #!/usr/bin/env bash
 case "$*" in
-  "pr view 42 --json state,mergedAt,mergeable,statusCheckRollup")
-    echo '{"state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE","statusCheckRollup":[]}' ;;
+  "pr view 42 --json state,"*)
+    echo '{"state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE","statusCheckRollup":[],"baseRefName":"main"}' ;;
   "pr list --search [112] task( in:title --state all --json number,title,state,mergedAt,mergeable,headRefName,url")
     printf '[{"number":41,"title":"[112] task(T1): first","state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE","headRefName":"dark-factory/112/t1","url":"https://x/41"},{"number":42,"title":"[112] task(T1): add login","state":"OPEN","mergedAt":null,"mergeable":"MERGEABLE","headRefName":"dark-factory/112/t1","url":"https://x/42"}]\n' ;;
   *) echo '{}' ;;

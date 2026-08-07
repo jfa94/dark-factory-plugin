@@ -1,18 +1,15 @@
 import {escapeStrykerGlob} from './scope.js'
 
 /**
- * Stable-hash mutation sharding (the splitter behind the CI `mutation-scope` job
- * and the nightly warm-base seeding run).
+ * Stable-hash mutation sharding (the splitter behind the PR and manually
+ * dispatched full-surface mutation workflows).
  *
  * A file's shard is a pure function of its PATH — `fnv1a(path) % n` — so the
- * assignment is stable across diffs, branches, and repo evolution. That stability
- * is the point: each shard owns a Stryker incremental cache, and the nightly
- * develop run seeds those caches for the WHOLE mutable surface (default-branch
- * caches are readable by every PR). A PR's diff files land on exactly the shards
- * whose caches already hold their prior results, so only genuinely changed
- * mutants re-run. The previous LPT-by-sloc packer balanced a single run better,
- * but reshuffled files between shards whenever the scope changed — invalidating
- * the incremental caches that dominate real-world cost.
+ * assignment is stable across diffs, branches, and repo evolution. Full-surface
+ * dispatches therefore keep each file in the shard whose incremental history it
+ * restores, while cold PR runs get deterministic distribution. The previous
+ * LPT-by-sloc packer balanced a single run better but reshuffled files whenever
+ * the scope changed, invalidating full-run incremental progress.
  *
  * Pure string/number functions — no I/O, deterministic.
  */

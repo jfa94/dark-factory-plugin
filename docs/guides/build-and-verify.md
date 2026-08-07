@@ -88,7 +88,8 @@ Because `scripts/build.mjs` is a deterministic, dependency-inlined esbuild (no
 working tree is unchanged proves the **committed `dist/` is exactly `build(src)`**.
 That equivalence is what makes scanning `src/` sufficient — the scanned source and
 the shipped artifact are provably the same code. The same `git diff --exit-code`
-also covers the templates build output (`shard-mutation-scope.mjs`), catching the
+also covers the generated helper (`shard-mutation-scope.mjs`); its adjacent managed
+test is ordinary source and runs against that bundle in scaffolded repositories. This catches the
 case where someone edits a bundle by hand or forgets to rebuild and commit. The
 step fails loud on any drift.
 

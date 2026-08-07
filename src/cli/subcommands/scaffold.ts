@@ -289,7 +289,7 @@ const LEGACY_E2E_EXAMPLE_HASHES: readonly string[] = [
     '629824a48477223cfcef02bcb6c850aa9622d73d41c93bc3b76486831a98770e',
 ]
 
-/** The nightly warm-base workflow — rendered only when mutation is contracted. */
+/** The manual full-surface workflow — rendered only when mutation is contracted. */
 const MUTATION_NIGHTLY_REL = '.github/workflows/mutation-nightly.yml'
 
 /** The stryker seed — deferred to pass 2a: its `mutate` globs render from the contract's roots. */
@@ -299,12 +299,14 @@ const STRYKER_SEED_REL = '.stryker.config.json'
 const CI_NET_RELS: readonly string[] = [
     QUALITY_GATE_REL,
     '.github/scripts/shard-mutation-scope.mjs',
+    '.github/scripts/shard-mutation-scope.test.mjs',
     MUTATION_NIGHTLY_REL,
 ]
 
 const TEMPLATE_MANIFEST: readonly TemplateEntry[] = [
     {rel: QUALITY_GATE_REL, policy: 'managed'},
     {rel: '.github/scripts/shard-mutation-scope.mjs', policy: 'managed'},
+    {rel: '.github/scripts/shard-mutation-scope.test.mjs', policy: 'managed'},
     {rel: MUTATION_NIGHTLY_REL, policy: 'managed'},
     {rel: STRYKER_SEED_REL, policy: 'seed', nodeOnly: true},
     {rel: '.dependency-cruiser.cjs', policy: 'seed', nodeOnly: true},
@@ -684,9 +686,8 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
             if (!CI_NET_RELS.includes(entry.rel)) {
                 continue
             }
-            // The nightly warm-base workflow exists ONLY where mutation is contracted
-            // (renderMutationNightly returns null otherwise) — no cron burn on repos
-            // that waived mutation.
+            // The manual full-surface workflow exists only where mutation is
+            // contracted (renderMutationNightly returns null otherwise).
             if (entry.rel === MUTATION_NIGHTLY_REL && !gates.contract.gates.mutation.contracted) {
                 continue
             }

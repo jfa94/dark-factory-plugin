@@ -327,30 +327,30 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
         contract: npmContract({mutation: roots === undefined ? {contracted: true} : {contracted: true, roots}}),
     })
 
-    it('renderQualityGate rewrites the diff pathspec from contracted roots', () => {
+    it('renderQualityGate passes contracted roots to diff mode', () => {
         const out = renderQualityGate(template, rootsOpts(['app', 'utils']))
-        expect(out).toContain("-- 'app/**/*.ts' 'utils/**/*.ts'")
-        expect(out).not.toContain("'src/**/*.ts'")
+        expect(out).toContain("diff \"origin/$BASE_REF\" 'app' 'utils'")
+        expect(out).not.toContain('__MUTATION_ROOTS__')
     })
 
-    it("default roots (['src'] / omitted) leave the template pathspec untouched", () => {
+    it("default roots (['src'] / omitted) render the src helper argument", () => {
         const out = renderQualityGate(template, rootsOpts(undefined))
-        expect(out).toContain("-- 'src/**/*.ts'")
+        expect(out).toContain('diff "origin/$BASE_REF" \'src\'')
     })
 
     it('renderMutationNightly: contracted → rendered with setup, roots, npm rewrite', () => {
         const out = renderMutationNightly(nightly, {...rootsOpts(['app']), packageManager: 'npm'})
         expect(out).not.toBeNull()
-        expect(out).toContain("git ls-files -- 'app/**/*.ts'")
+        expect(out).toContain("shard-mutation-scope.mjs full 'app'")
         expect(out).not.toContain('# factory:mutation-setup')
-        expect(out).toContain('npx stryker run \\')
+        expect(out).toContain('npx stryker run --mutate')
         expect(out).not.toContain('pnpm exec stryker')
         expect(out).toContain('actions/cache/save')
     })
 
     it('renderMutationNightly: pnpm keeps pnpm exec', () => {
         const out = renderMutationNightly(nightly, {...PNPM_OPTS})
-        expect(out).toContain('pnpm exec stryker run \\')
+        expect(out).toContain('pnpm exec stryker run --mutate')
     })
 
     it('renderMutationNightly: mutation waived → null (no nightly workflow)', () => {
@@ -366,9 +366,25 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
         expect(() => renderMutationNightly(nightly, {...NPM_OPTS, contract})).toThrow(/not supported/)
     })
 
-    it('PR and nightly shard cache keys share one scheme (restore-keys prefix alignment)', () => {
-        const key = /key: \$\{\{ runner\.os \}\}-stryker-shard-\$\{\{ matrix\.shard \}\}-\$\{\{ github\.sha \}\}/
-        expect(template).toMatch(key)
-        expect(nightly).toMatch(key)
+    it('PR mutation is cold while full caches use stable restore prefixes and unique save keys', () => {
+        const pr = renderQualityGate(template, PNPM_OPTS)
+        const full = renderMutationNightly(nightly, PNPM_OPTS) ?? ''
+        expect(pr).not.toContain('actions/cache/restore')
+        expect(pr).not.toContain('--incrementalFile')
+        expect(full).toContain('${{ runner.os }}-stryker-shard-${{ matrix.shard }}-')
+        expect(full).toContain('${{ steps.source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}')
+        expect(full).toContain('restore-keys:')
+    })
+
+    it('full workflow is manual-only and chunks sequentially with partial-progress saves', () => {
+        const out = renderMutationNightly(nightly, PNPM_OPTS) ?? ''
+        expect(out).toContain('name: Mutation Full (Manual)')
+        expect(out).toContain('workflow_dispatch:')
+        expect(out).not.toContain('schedule:')
+        expect(out).not.toContain('cron:')
+        expect(out).toContain('CHUNK: 8')
+        expect(out).toContain('CAP_MIN: 330')
+        expect(out).toContain('if [ "$i" -gt 0 ]')
+        expect(out).toContain('if: always() && steps.slice.outputs.slice')
     })
 })

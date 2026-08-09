@@ -3342,6 +3342,30 @@ Both workflow templates' scope-compute steps now drop marker-bearing files befor
 sharding (an `awk` first-line check; the shard script itself stays pure/no-I/O).
 Contract: the marker must be the file's FIRST line to be recognised.
 
+**Amendment (2026-08-07, v1.46.0 — manual full tracking, hunk-scoped PR verdicts).**
+Seven days of private-repository job timestamps showed the two scheduled full-surface
+workflows consumed 98.3% of Actions minutes. Because GitHub bills every matrix job
+separately, nightly eight-shard runs cost the sum of their runtimes; some shards also
+reached the six-hour ceiling. The cache key used `github.sha` even though the workflow
+checked out `develop`, so repeated immutable keys could restore but not publish newer
+incremental state.
+
+The managed filename remains `mutation-nightly.yml` for in-place rollout, but the
+workflow is now **Mutation Full (Manual)** with `workflow_dispatch` only. Full shards
+run sequential eight-file chunks against one incremental file, stop starting chunks
+after a 330-minute soft budget, and save partial progress on threshold failure. Cache
+write keys include shard, checked-out `develop` SHA, run id, and attempt; restoration
+uses only the stable OS/shard prefix.
+
+The rollup PR workflow no longer consumes full-run caches. It derives Stryker line
+ranges from zero-context hunks (new files whole; modified/deletion seams padded two
+lines and merged) and runs cold, making `thresholds.break` a verdict on the PR alone.
+The generated `shard-mutation-scope` helper now owns both `diff <base-ref> <roots...>`
+and `full <roots...>` modes plus the shared exclusions and first-line quarantine
+rule. Its scaffolded test pins empty/added/modified/deletion/overlap/root/filter cases.
+The Stryker seed carries the same test, declaration, type-only, `types/`, `data/`,
+barrel, and Next metadata exclusions.
+
 ---
 
 ## Open Questions

@@ -277,22 +277,19 @@ function waivedMutationBlock(reason: string): readonly string[] {
 }
 
 /**
- * The templates' scope computations carry the default-roots pathspec literal
- * (`'src/**\/*.ts'`); a contract with non-default mutation roots re-points them.
- * Replacing the literal keeps the templates valid workflows on their own while
- * making the CI scope, the local gate's {@link mutationScope}, and the seeded
- * stryker `mutate` globs agree on ONE roots source (the contract).
+ * Replace the helper's roots placeholder with shell-quoted contracted roots.
+ * Gate-contract root validation restricts these to plain relative directories;
+ * quoting still keeps the generated command robust and reviewable.
  */
-const DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'"
+const MUTATION_ROOTS_PLACEHOLDER = '__MUTATION_ROOTS__'
 
-function rootsPathspec(roots: readonly string[]): string {
-    return roots.map((r) => `'${r}/**/*.ts'`).join(' ')
+function rootsArgs(roots: readonly string[]): string {
+    return roots.map((r) => `'${r}'`).join(' ')
 }
 
 function applyMutationRoots(lines: string[], contract: GateContract): string[] {
-    const roots = mutationRoots(contract)
-    const spec = rootsPathspec(roots)
-    return spec === DEFAULT_ROOTS_PATHSPEC ? lines : lines.map((l) => l.replace(DEFAULT_ROOTS_PATHSPEC, spec))
+    const args = rootsArgs(mutationRoots(contract))
+    return lines.map((line) => line.replace(MUTATION_ROOTS_PLACEHOLDER, args))
 }
 
 /** Collapse the `# factory:mutation-begin` … `# factory:mutation-end` region. */
@@ -314,16 +311,14 @@ function renderMutationRegion(lines: string[], opts: RenderQualityGateOpts): str
     kept = replaceMarker(kept, '# factory:mutation-setup', mutationSetupBlock(opts))
     kept = applyMutationRoots(kept, opts.contract)
     if (opts.packageManager === 'npm') {
-        kept = kept.map((l) => l.replace('pnpm exec stryker run \\', 'npx stryker run \\'))
+        kept = kept.map((l) => l.replace('pnpm exec stryker run', 'npx stryker run'))
     }
     return kept
 }
 
 /**
- * Render the mutation-nightly warm-base workflow (the scheduled default-branch
- * run that seeds the per-shard incremental caches every PR restores). Returns
- * null when the contract waives mutation — the scaffold then writes no nightly
- * workflow at all. Same npm-stack constraint as {@link renderQualityGate}.
+ * Render the manually dispatched full-surface mutation workflow. Returns null
+ * when the contract waives mutation, so scaffold writes no full workflow.
  */
 export function renderMutationNightly(template: string, opts: RenderQualityGateOpts): string | null {
     if (opts.contract.stack !== 'npm') {
@@ -339,7 +334,7 @@ export function renderMutationNightly(template: string, opts: RenderQualityGateO
     lines = replaceMarker(lines, '# factory:mutation-setup', mutationSetupBlock(opts))
     lines = applyMutationRoots(lines, opts.contract)
     if (opts.packageManager === 'npm') {
-        lines = lines.map((l) => l.replace('pnpm exec stryker run \\', 'npx stryker run \\'))
+        lines = lines.map((l) => l.replace('pnpm exec stryker run', 'npx stryker run'))
     }
     return lines.join('\n')
 }

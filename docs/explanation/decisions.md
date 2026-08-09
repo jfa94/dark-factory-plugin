@@ -3366,6 +3366,14 @@ rule. Its scaffolded test pins empty/added/modified/deletion/overlap/root/filter
 The Stryker seed carries the same test, declaration, type-only, `types/`, `data/`,
 barrel, and Next metadata exclusions.
 
+**Amendment (2026-08-09, v1.46.1 — isolate the generated Node helper test).**
+The scaffolded helper test is dependency-free `node:test`, but its original
+`*.test.mjs` name matched Vitest's default discovery in targets such as GoodbyeSpy.
+Vitest then failed the otherwise-passing suite with "No test suite found" because
+the file deliberately contains no Vitest tests. The managed artifact is now named
+`shard-mutation-scope.node-test.mjs`; re-scaffolding removes the legacy managed path
+before installing the renamed test.
+
 ---
 
 ## Open Questions

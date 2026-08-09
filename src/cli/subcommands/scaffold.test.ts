@@ -112,8 +112,8 @@ describe('runScaffold', () => {
         // The cost-aware shard helper is a plugin-MANAGED file shipped with the CI net.
         expect(report.files_created).toContain('.github/scripts/shard-mutation-scope.mjs')
         expect(existsSync(join(root, '.github', 'scripts', 'shard-mutation-scope.mjs'))).toBe(true)
-        expect(report.files_created).toContain('.github/scripts/shard-mutation-scope.test.mjs')
-        expect(existsSync(join(root, '.github', 'scripts', 'shard-mutation-scope.test.mjs'))).toBe(true)
+        expect(report.files_created).toContain('.github/scripts/shard-mutation-scope.node-test.mjs')
+        expect(existsSync(join(root, '.github', 'scripts', 'shard-mutation-scope.node-test.mjs'))).toBe(true)
         expect(report.files_updated).toEqual([])
         // The advisory `files_outdated` bucket was retired with the project-owned SEED
         // model (Decision 15) — a SEED file is either created or present, never "outdated".
@@ -528,6 +528,18 @@ describe('runScaffold', () => {
         quality: {...cfg.quality, gateEnv: {NEXT_PUBLIC_SUPABASE_URL: 'http://localhost:54321'}},
     }
 
+    it('replaces the legacy Vitest-discoverable Node test name', async () => {
+        const scriptsDir = join(root, '.github', 'scripts')
+        await mkdir(scriptsDir, {recursive: true})
+        await writeFile(join(scriptsDir, 'shard-mutation-scope.test.mjs'), 'legacy managed bytes\n', 'utf8')
+
+        const report = await runScaffold(baseArgs())
+
+        expect(existsSync(join(scriptsDir, 'shard-mutation-scope.test.mjs'))).toBe(false)
+        expect(existsSync(join(scriptsDir, 'shard-mutation-scope.node-test.mjs'))).toBe(true)
+        expect(report.files_updated).toContain('.github/scripts/shard-mutation-scope.test.mjs')
+    })
+
     it('renders the configured gateEnv into the WRITTEN managed quality-gate.yml (CI parity)', async () => {
         await runScaffold(baseArgs(GATEENV_CFG))
 
@@ -665,7 +677,7 @@ describe('runScaffold', () => {
                 const report = await runScaffold({...baseArgs(), targetRoot: deno})
                 expect(existsSync(join(deno, '.github', 'workflows', 'quality-gate.yml'))).toBe(false)
                 expect(existsSync(join(deno, '.github', 'scripts', 'shard-mutation-scope.mjs'))).toBe(false)
-                expect(existsSync(join(deno, '.github', 'scripts', 'shard-mutation-scope.test.mjs'))).toBe(false)
+                expect(existsSync(join(deno, '.github', 'scripts', 'shard-mutation-scope.node-test.mjs'))).toBe(false)
                 expect(report.files_created).not.toContain('.github/workflows/quality-gate.yml')
             } finally {
                 await rm(deno, {recursive: true, force: true})

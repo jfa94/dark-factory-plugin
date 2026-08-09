@@ -19144,7 +19144,7 @@ var stateCommand = {
 };
 
 // src/cli/subcommands/scaffold.ts
-import { mkdir as mkdir14, readFile as readFile19, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir14, readFile as readFile19, rm as rm4, writeFile as writeFile5 } from "node:fs/promises";
 import { existsSync as existsSync11 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname12, join as join30, relative as relative2 } from "node:path";
@@ -19890,17 +19890,18 @@ var LEGACY_E2E_EXAMPLE_HASHES = [
   "629824a48477223cfcef02bcb6c850aa9622d73d41c93bc3b76486831a98770e"
 ];
 var MUTATION_NIGHTLY_REL = ".github/workflows/mutation-nightly.yml";
+var LEGACY_SHARD_TEST_REL = ".github/scripts/shard-mutation-scope.test.mjs";
 var STRYKER_SEED_REL = ".stryker.config.json";
 var CI_NET_RELS = [
   QUALITY_GATE_REL,
   ".github/scripts/shard-mutation-scope.mjs",
-  ".github/scripts/shard-mutation-scope.test.mjs",
+  ".github/scripts/shard-mutation-scope.node-test.mjs",
   MUTATION_NIGHTLY_REL
 ];
 var TEMPLATE_MANIFEST = [
   { rel: QUALITY_GATE_REL, policy: "managed" },
   { rel: ".github/scripts/shard-mutation-scope.mjs", policy: "managed" },
-  { rel: ".github/scripts/shard-mutation-scope.test.mjs", policy: "managed" },
+  { rel: ".github/scripts/shard-mutation-scope.node-test.mjs", policy: "managed" },
   { rel: MUTATION_NIGHTLY_REL, policy: "managed" },
   { rel: STRYKER_SEED_REL, policy: "seed", nodeOnly: true },
   { rel: ".dependency-cruiser.cjs", policy: "seed", nodeOnly: true },
@@ -20134,6 +20135,11 @@ async function runScaffold(opts) {
   }
   if (gates.contract.stack === "npm") {
     const facts = await readWorkflowFacts(opts.targetRoot);
+    const legacyShardTest = join30(opts.targetRoot, ...LEGACY_SHARD_TEST_REL.split("/"));
+    if (existsSync11(legacyShardTest)) {
+      await rm4(legacyShardTest);
+      lists.updated.push(LEGACY_SHARD_TEST_REL);
+    }
     for (const entry of TEMPLATE_MANIFEST) {
       if (!CI_NET_RELS.includes(entry.rel)) {
         continue;

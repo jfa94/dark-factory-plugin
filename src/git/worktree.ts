@@ -11,15 +11,13 @@
  * the knob is absent.
  */
 import {existsSync} from 'node:fs'
+import {FALLBACK_STAGING_BRANCH} from './run-staging.js'
 
 import {createLogger} from '../shared/index.js'
-import {GitSchema} from '../config/schema.js'
 import {runScopedBranch} from './branch.js'
 import type {GitClient, GitOpts, MergeAttempt} from './git-client.js'
 
 const log = createLogger('git')
-
-const GIT_DEFAULTS = GitSchema.parse({})
 
 /** Args to {@link createTaskWorktree}. */
 export interface CreateTaskWorktreeArgs {
@@ -59,7 +57,7 @@ export interface TaskWorktree {
  */
 export async function createTaskWorktree(args: CreateTaskWorktreeArgs): Promise<TaskWorktree> {
     const remote = args.remote ?? 'origin'
-    const base = args.base ?? GIT_DEFAULTS.stagingBranch
+    const base = args.base ?? FALLBACK_STAGING_BRANCH
     const branch = runScopedBranch(args.runId, args.taskId)
     const startPoint = `${remote}/${base}`
 
@@ -100,7 +98,7 @@ export interface AssertBaseArgs {
  */
 export async function assertBaseIsStagingTip(args: AssertBaseArgs): Promise<void> {
     const remote = args.remote ?? 'origin'
-    const base = args.base ?? GIT_DEFAULTS.stagingBranch
+    const base = args.base ?? FALLBACK_STAGING_BRANCH
     const opts: GitOpts = {cwd: args.path}
     const stagingTip = await args.gitClient.revParse(`${remote}/${base}`, opts)
     const mergeBase = await args.gitClient.mergeBase('HEAD', `${remote}/${base}`, opts)
@@ -137,7 +135,7 @@ export interface EnsureOnStagingArgs {
  */
 export async function ensureOnStaging(args: EnsureOnStagingArgs): Promise<void> {
     const remote = args.remote ?? 'origin'
-    const base = args.base ?? GIT_DEFAULTS.stagingBranch
+    const base = args.base ?? FALLBACK_STAGING_BRANCH
     const opts: GitOpts = {cwd: args.path}
     log.debug(`ensureOnStaging: reset --hard + checkout -B ${args.branch} ${remote}/${base}`)
     await args.gitClient.resetHardClean(`${remote}/${base}`, opts)

@@ -39,6 +39,8 @@ export interface ShippedPr {
 export interface RunSummary {
     run_id: string
     run_status: RunStatus
+    /** WHY the run is terminal failed/superseded; absent on completed/live/legacy states. */
+    terminal_reason?: string
     execution_mode: ExecutionMode
     spec_id: string
     issue_number: number
@@ -154,6 +156,7 @@ export function buildRunSummary(
     return {
         run_id: run.run_id,
         run_status: run.status,
+        ...(run.terminal_reason !== undefined ? {terminal_reason: run.terminal_reason} : {}),
         execution_mode: run.execution_mode,
         spec_id: run.spec.spec_id,
         issue_number: run.spec.issue_number,
@@ -208,6 +211,9 @@ export function renderRunSummaryMarkdown(summary: RunSummary): string {
         `**${summary.run_status.toUpperCase()}** · execution-mode \`${summary.execution_mode}\` · ` +
             `spec \`${summary.spec_id}\` (PRD #${summary.issue_number}) · ${summary.repo}`
     )
+    if (summary.run_status === 'failed' || summary.run_status === 'superseded') {
+        out.push(`**Reason:** ${summary.terminal_reason ?? 'reason unavailable'}`)
+    }
     out.push(`**Duration:** ${renderDuration(summary.timing.duration_seconds)}`)
     out.push(
         `**Tasks:** ${summary.totals.total} total · ${summary.totals.shipped} shipped · ` +

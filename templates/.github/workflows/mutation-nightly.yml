@@ -43,7 +43,7 @@ jobs:
         run: |
           mapfile -t files < <(
               git ls-files -- 'src/**/*.ts' \
-              | grep -Ev '\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$' || true
+              | grep -Ev '\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts' || true
           )
           # Quarantined files (file-wide '// Stryker disable all' marker on line 1)
           # produce only Ignored mutants; a shard slice containing nothing else makes

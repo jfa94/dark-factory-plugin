@@ -58,7 +58,9 @@ This is idempotent. It:
 
     **Repos whose test suite needs an environment booted in CI** (a local database, an
     emulator) declare it in the contract, not by hand-editing the managed workflow
-    (Decision 73 — hand edits are auto-reverted as drift). Add `setup_steps` to the
+    (Decision 73 — a hand-edited managed file makes the next scaffold refuse with
+    `files_conflict`, see [step 2](#2-handle-a-files_conflict-refusal)). Add
+    `setup_steps` to the
     committed `.factory/gates.json`:
 
     ```json
@@ -114,16 +116,47 @@ own private `staging-<run-id>` integration branch from `develop` at
 [`run create`](../reference/cli.md#run-create) (Decision 33).
 
 It prints a `ScaffoldReport`: `files_created`, `files_present`, `files_updated`
-(outdated files auto-refreshed: managed files on any drift, seed configs only while
-pristine per the committed `.factory/scaffold.lock` hash record — commit the lock
-alongside the seeds), `protection` (enabled / strict-up-to-date / required checks /
+(outdated files auto-refreshed — both managed files and seed configs only while
+provably pristine per the committed `.factory/scaffold.lock` hash record; commit the
+lock alongside the seeds), `protection` (enabled / strict-up-to-date / required checks /
 provisioned), and `settings` (created / changed, plus a nested `local` with the same
 shape for `.claude/settings.local.json`). A CUSTOMIZED seed config is
 project-owned — reported under `files_present`, never overwritten (even a richer
 superset of the shipped baseline is recognized as current, not drift); delete it and
 re-scaffold to re-adopt the latest baseline.
 
-## 2. Handle a protection refusal
+## 2. Handle a `files_conflict` refusal
+
+Managed files (the CI net) are plugin-authored by contract, but scaffold will not
+clobber one you have edited. If a managed file matches neither the newly rendered
+template nor the hash recorded in `.factory/scaffold.lock`, scaffold refuses with
+`files_conflict` **before writing anything** — no seeds, no gate contract, no lock,
+no protection changes:
+
+```
+files_conflict: managed file(s) differ from both the shipped template and the
+recorded scaffold hash: .github/workflows/quality-gate.yml. Nothing was written…
+```
+
+Two ways forward:
+
+```bash
+# Keep the plugin's version — discard your local edits, then re-scaffold.
+git checkout .github/workflows/quality-gate.yml
+factory scaffold --repo <owner/name>
+
+# Or re-adopt explicitly: overwrite the customized managed file(s) with the
+# plugin template and re-record their hashes.
+factory scaffold --repo <owner/name> --force-managed
+```
+
+A repo scaffolded before the lock recorded managed hashes will report a conflict on
+its first re-scaffold even if it was never edited; `--force-managed` re-adopts it and
+records the hashes, after which pristine files auto-update silently. If you need CI
+behavior the template does not give you, express it in the committed gate contract
+(`.factory/gates.json`) rather than by editing the managed workflow.
+
+## 3. Handle a protection refusal
 
 If scaffold refuses because `develop` is unprotected, you have two options.
 
@@ -160,21 +193,20 @@ gh api -X PUT repos/<owner>/<repo>/branches/develop/protection --input - <<'JSON
 JSON
 ```
 
-## 3. Tune the branch contract (optional)
+## 4. Tune the branch contract (optional)
 
 The branches and required checks are configurable. To change them before
 scaffolding:
 
 ```bash
 factory configure --set git.baseBranch=develop
-factory configure --set git.stagingBranch=staging
 factory configure --set 'git.developRequiredStatusChecks=["Quality","Mutation Testing","Security Scan"]'
 ```
 
 See [Configure the factory](./configure-the-factory.md) and the
 [configuration reference](../reference/configuration.md).
 
-## 4. Next
+## 5. Next
 
 - Inspect or change settings: [Configure the factory](./configure-the-factory.md).
 - Start a pipeline: [Run the pipeline](./run-the-pipeline.md).

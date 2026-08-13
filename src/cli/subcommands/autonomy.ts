@@ -28,7 +28,7 @@
  *   - bake .env.CLAUDE_PLUGIN_DATA                          → {@link materializeMergedSettings}.
  *   - detect the user's statusLine and chain it via            (ditto)
  *     FACTORY_ORIGINAL_STATUSLINE.
- *   - stamp ._factoryVersion                                → (ditto, from plugin.json).
+ *   - stamp env.FACTORY_SETTINGS_HASH (content fingerprint) → (ditto — see {@link canonicalSettingsHash}).
  *   - write atomically                                      → {@link runAutonomyEnsure}.
  *
  * What the old bash did that is DROPPED (deliberately):
@@ -47,6 +47,7 @@
 /* eslint-disable security/detect-non-literal-fs-filename -- fs on internal derived paths (run/spec/state/repo/data dirs), never external input; runtime write-danger is covered by the TCB write-deny hook */
 import {existsSync} from 'node:fs'
 import {readFile} from 'node:fs/promises'
+import {createHash} from 'node:crypto'
 import {join} from 'node:path'
 import {homedir} from 'node:os'
 
@@ -81,12 +82,13 @@ status     Reports whether THIS session is autonomous and whether merged-setting
            exists. Exits 0 when autonomous, 1 when not (never throws).
 
 preflight  The run-entry check (what \`/factory:run\` calls). Decides over
-           {autonomous?, merged-settings present?, plugin vs on-disk version} whether
-           the run may proceed. (Re)scaffolds merged-settings.json and halts for a
-           relaunch when the session is not autonomous OR the settings are stale /
-           missing / unstamped; proceeds silently when already fresh (or autonomous via
-           a directly-exported env). Exits 0 to proceed, 1 to halt. Never throws on the
-           decision path.
+           {autonomous?, merged-settings present?, expected vs stored settings
+           content hash (FACTORY_SETTINGS_HASH)} whether the run may proceed.
+           (Re)scaffolds merged-settings.json and halts for a relaunch when the
+           session is not autonomous OR the settings are stale / missing /
+           unstamped; proceeds silently when already fresh (or autonomous via a
+           directly-exported env). Exits 0 to proceed, 1 to halt. Never throws on
+           the decision path.
 
 Usage:
   factory autonomy ensure
@@ -155,6 +157,43 @@ function isObject(v: unknown): v is Record<string, unknown> {
     return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
+/**
+ * Content fingerprint of a merged settings object: sha256 over recursively
+ * key-sorted canonical JSON, with two normalizations so the hash tracks
+ * SEMANTIC content only:
+ *   - `env.FACTORY_SETTINGS_HASH` is excluded (the stamp cannot hash itself);
+ *   - every occurrence of the absolute plugin root in strings is folded back to
+ *     `${CLAUDE_PLUGIN_ROOT}`, so a plugin-version bump that only moves the
+ *     install path does not churn the hash — a template/user-settings content
+ *     change does.
+ */
+export function canonicalSettingsHash(merged: Record<string, unknown>, pluginRoot: string): string {
+    const walk = (value: unknown): unknown => {
+        if (typeof value === 'string') {
+            return value.split(pluginRoot).join('${CLAUDE_PLUGIN_ROOT}')
+        }
+        if (Array.isArray(value)) {
+            return value.map(walk)
+        }
+        if (isObject(value)) {
+            const out: Record<string, unknown> = {}
+            for (const k of Object.keys(value).sort()) {
+                out[k] = walk(value[k])
+            }
+            return out
+        }
+        return value
+    }
+    const env = isObject(merged.env) ? {...merged.env} : undefined
+    if (env !== undefined) {
+        delete env.FACTORY_SETTINGS_HASH
+    }
+    const input = env !== undefined ? {...merged, env} : merged
+    return createHash('sha256')
+        .update(JSON.stringify(walk(input)))
+        .digest('hex')
+}
+
 /** Read `.statusLine.command` from a settings object, if present and a string. */
 function statusLineCommandOf(settings: Record<string, unknown>): string | undefined {
     const sl = settings.statusLine
@@ -177,8 +216,6 @@ export interface MaterializeInput {
     readonly pluginRoot: string
     /** `$HOME` for the `~`-shortened DATA_TILDE form + statusline expansion. */
     readonly home: string
-    /** Optional plugin version to stamp as `_factoryVersion`. */
-    readonly version?: string | undefined
 }
 
 /**
@@ -266,28 +303,28 @@ export function materializeMergedSettings(input: MaterializeInput): Record<strin
 
     merged.env = env
 
-    if (input.version !== undefined && input.version.length > 0) {
-        merged._factoryVersion = input.version
-    }
+    // Stamp the content fingerprint LAST (the hash excludes this key, so a stale
+    // inherited FACTORY_SETTINGS_HASH riding along in the user env never leaks in).
+    env.FACTORY_SETTINGS_HASH = canonicalSettingsHash(merged, pluginRoot)
 
     return merged
 }
 
-/** Read the plugin version from `<pluginRoot>/.claude-plugin/plugin.json`. */
-async function readPluginVersion(pluginRoot: string): Promise<string | undefined> {
-    const path = join(pluginRoot, '.claude-plugin', 'plugin.json')
+/** Best-effort read of a user settings.json: missing / unparseable / non-object → `{}`. */
+async function readUserSettings(path: string): Promise<Record<string, unknown>> {
     if (!existsSync(path)) {
-        return undefined
+        return {}
     }
     try {
         const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
-        if (isObject(parsed) && typeof parsed.version === 'string') {
-            return parsed.version
+        if (isObject(parsed)) {
+            return parsed
         }
-    } catch {
-        /* unparseable plugin.json → no version stamp */
+        log.warn(`${path} is not a JSON object; ignoring`)
+    } catch (err) {
+        log.warn(`could not parse ${path} (${(err as Error).message}); ignoring`)
     }
-    return undefined
+    return {}
 }
 
 /** Options for {@link runAutonomyEnsure}; all paths injectable for tests. */
@@ -325,32 +362,18 @@ export async function runAutonomyEnsure(opts: AutonomyEnsureOptions = {}): Promi
     const write = opts.writeStdout ?? ((t: string) => process.stdout.write(t))
 
     // Read user settings (best-effort: missing or unparseable → empty base).
-    let userSettings: Record<string, unknown> = {}
-    if (existsSync(userSettingsPath)) {
-        try {
-            const parsed: unknown = JSON.parse(await readFile(userSettingsPath, 'utf8'))
-            if (isObject(parsed)) {
-                userSettings = parsed
-            } else {
-                log.warn(`${userSettingsPath} is not a JSON object; ignoring`)
-            }
-        } catch (err) {
-            log.warn(`could not parse ${userSettingsPath} (${(err as Error).message}); ignoring`)
-        }
-    }
+    const userSettings = await readUserSettings(userSettingsPath)
 
     // Read the template from the plugin install.
     const templatePath = join(pluginRoot, 'templates', 'settings.autonomous.json')
     const template = await readFile(templatePath, 'utf8')
 
-    const version = await readPluginVersion(pluginRoot)
     const merged = materializeMergedSettings({
         template,
         userSettings,
         dataDir,
         pluginRoot,
         home,
-        version,
     })
 
     const path = mergedSettingsPath(dataDir)
@@ -432,18 +455,19 @@ export function runAutonomyStatus(opts: AutonomyStatusOptions = {}): Promise<Exi
 }
 
 /**
- * Read the stamped `_factoryVersion` from an existing merged-settings.json.
- * Missing file / unparseable JSON / unstamped → `undefined` (the decision fn
- * treats an absent stamp as a pre-versioning artifact = stale).
+ * Read the stamped `env.FACTORY_SETTINGS_HASH` from an existing
+ * merged-settings.json. Missing file / unparseable JSON / unstamped →
+ * `undefined` (the decision fn treats an absent stamp as a pre-hashing
+ * artifact = stale).
  */
-async function readOnDiskVersion(path: string): Promise<string | undefined> {
+async function readStoredHash(path: string): Promise<string | undefined> {
     if (!existsSync(path)) {
         return undefined
     }
     try {
         const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
-        if (isObject(parsed) && typeof parsed._factoryVersion === 'string') {
-            return parsed._factoryVersion
+        if (isObject(parsed) && isObject(parsed.env) && typeof parsed.env.FACTORY_SETTINGS_HASH === 'string') {
+            return parsed.env.FACTORY_SETTINGS_HASH
         }
     } catch {
         /* unparseable merged-settings.json → treat as unstamped (stale) */
@@ -451,27 +475,30 @@ async function readOnDiskVersion(path: string): Promise<string | undefined> {
     return undefined
 }
 
+/** Short display form of a settings hash. */
+const shortHash = (h: string | undefined): string => (h === undefined ? '?' : h.slice(0, 12))
+
 /** Human-facing one-liner explaining a preflight verdict (for the printed report). */
 function describePreflightReason(
     reason: PreflightReason,
-    pluginVersion: string | undefined,
-    onDiskVersion: string | undefined
+    expectedHash: string | undefined,
+    storedHash: string | undefined
 ): string {
     switch (reason) {
         case 'fresh':
-            return `merged settings are current (v${pluginVersion ?? '?'})`
+            return `merged settings are current (settings hash ${shortHash(expectedHash)})`
         case 'ci-raw-env':
             return 'autonomous via the environment directly; no merged-settings file needed'
-        case 'version-unknowable':
-            return 'plugin version is unreadable — leaving the existing merged settings untouched'
+        case 'hash-unknowable':
+            return 'the expected settings hash is uncomputable — leaving the existing merged settings untouched'
         case 'missing-settings':
             return 'no merged settings exist yet'
         case 'not-autonomous':
             return 'this session is not autonomous'
-        case 'stale-version':
-            return `merged settings are stale (v${onDiskVersion ?? '?'} → v${pluginVersion ?? '?'})`
+        case 'stale-settings':
+            return `merged settings content is stale (${shortHash(storedHash)} → ${shortHash(expectedHash)})`
         case 'unstamped':
-            return 'merged settings predate version stamping (treated as stale)'
+            return 'merged settings predate content-hash stamping (treated as stale)'
     }
 }
 
@@ -487,7 +514,7 @@ export interface AutonomyPreflightOptions {
 
 /**
  * The run-entry composer ported from the old `pipeline-ensure-autonomy` step:
- * decide — over {autonomous, merged-settings present, plugin vs on-disk version}
+ * decide — over {autonomous, merged-settings present, expected vs stored settings hash}
  * via the pure {@link decideAutonomyPreflight} — whether `/factory:run` may
  * proceed, scaffolding (delegating to {@link runAutonomyEnsure}, the single
  * writer path) and halting for the irreducible relaunch when it must.
@@ -519,16 +546,31 @@ export async function runAutonomyPreflight(opts: AutonomyPreflightOptions = {}):
 
     const path = dataDir !== undefined ? mergedSettingsPath(dataDir) : ''
     const mergedSettingsPresent = path.length > 0 && existsSync(path)
-    const pluginVersion = pluginRoot !== undefined ? await readPluginVersion(pluginRoot) : undefined
-    const onDiskVersion = mergedSettingsPresent ? await readOnDiskVersion(path) : undefined
+
+    // The expected hash is what a regenerate would stamp NOW: dry-materialize the
+    // merged settings from the current template + user settings and read its stamp.
+    // Any failure (unreadable template, unresolvable root) → unknowable.
+    let expectedHash: string | undefined
+    if (dataDir !== undefined && pluginRoot !== undefined) {
+        try {
+            const template = await readFile(join(pluginRoot, 'templates', 'settings.autonomous.json'), 'utf8')
+            const userSettings = await readUserSettings(opts.userSettingsPath ?? join(home, '.claude', 'settings.json'))
+            const merged = materializeMergedSettings({template, userSettings, dataDir, pluginRoot, home})
+            const stamped = (merged.env as Record<string, unknown>).FACTORY_SETTINGS_HASH
+            expectedHash = typeof stamped === 'string' ? stamped : undefined
+        } catch {
+            /* expected hash unknowable → proceed without churn (mirrors the old version-unknowable path) */
+        }
+    }
+    const storedHash = mergedSettingsPresent ? await readStoredHash(path) : undefined
 
     const decision = decideAutonomyPreflight({
         autonomous: isAutonomous(env),
         mergedSettingsPresent,
-        pluginVersion,
-        onDiskVersion,
+        expectedHash,
+        storedHash,
     })
-    const verdict = describePreflightReason(decision.reason, pluginVersion, onDiskVersion)
+    const verdict = describePreflightReason(decision.reason, expectedHash, storedHash)
 
     if (decision.regenerate) {
         // A regenerate always implies halt-for-relaunch (the PreflightDecision
@@ -552,7 +594,7 @@ export async function runAutonomyPreflight(opts: AutonomyPreflightOptions = {}):
         return EXIT.ERROR
     }
 
-    // proceed without regenerating (fresh / ci-raw-env / version-unknowable).
+    // proceed without regenerating (fresh / ci-raw-env / hash-unknowable).
     write(`OK: autonomous mode ready — ${verdict}.\n`)
     return EXIT.OK
 }

@@ -173,6 +173,48 @@ export function parseHoldoutVerdicts(raw: string): readonly HoldoutVerdict[] {
     })
 }
 
+/** Discriminates well-formed verdicts from an EVALUATOR fault (retry the evaluator). */
+export type HoldoutOutputClassification =
+    | {readonly kind: 'verdicts'; readonly verdicts: readonly HoldoutVerdict[]}
+    | {readonly kind: 'evaluator-failure'; readonly reason: string}
+
+/**
+ * Classify the validator's raw output BEFORE scoring: unparseable JSON, wrong
+ * cardinality, criterion-text mismatch (the positional anti-spoof), or a
+ * `satisfied` verdict with blank evidence are EVALUATOR failures — the evaluator
+ * broke its contract, so the verify wave retries at the same rung instead of
+ * charging the producer. A well-formed miss (`satisfied:false`, any evidence —
+ * including 0/N) is NOT an evaluator failure: it stays a blocking verdict.
+ */
+export function classifyHoldoutOutput(record: HoldoutRecord, raw: string): HoldoutOutputClassification {
+    let verdicts: readonly HoldoutVerdict[]
+    try {
+        verdicts = parseHoldoutVerdicts(raw)
+    } catch (err) {
+        return {kind: 'evaluator-failure', reason: err instanceof Error ? err.message : String(err)}
+    }
+    const withheld = record.withheld_criteria
+    if (verdicts.length !== withheld.length) {
+        return {
+            kind: 'evaluator-failure',
+            reason: `wrong verdict cardinality (${verdicts.length} verdicts for ${withheld.length} withheld criteria)`,
+        }
+    }
+    for (let i = 0; i < withheld.length; i++) {
+        const v = verdicts[i]
+        if (v === undefined || v.criterion !== withheld[i]) {
+            return {kind: 'evaluator-failure', reason: `criterion text mismatch at position ${i + 1}`}
+        }
+        if (v.satisfied && v.evidence.trim().length === 0) {
+            return {
+                kind: 'evaluator-failure',
+                reason: `satisfied verdict with blank evidence at position ${i + 1}`,
+            }
+        }
+    }
+    return {kind: 'verdicts', verdicts}
+}
+
 /**
  * Score the validator's verdicts against the answer key. Deterministic. A withheld
  * criterion is credited ONLY when the verdict at its position matches its exact

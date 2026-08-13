@@ -183,6 +183,8 @@ When in doubt, err **patch**. Never bump major unless a clear breaking change is
 
 Parse the current version as `MAJOR.MINOR.PATCH`. Apply the appropriate increment; reset lower components to 0 (e.g., minor bump: `1.2.3` → `1.3.0`). Write the new version string back to the same file using the same format you found it in.
 
+If the project declares a `version:sync` npm script, write the bump ONLY to the canonical file (`package.json`) and then run `npm run version:sync` to propagate it — never hand-edit the mirrored manifests. Otherwise, propagate the same version to every sibling manifest that mirrors it (e.g. `plugin.json`, a marketplace entry).
+
 Do not add or remove any other fields. Do not reformat the file.
 
 ---

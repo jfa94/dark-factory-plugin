@@ -45,7 +45,7 @@ Violating the letter of this rule violates the spirit. No exceptions.
 ## Rules
 
 1. **Apply the `database-design-review` skill as your rubric.** Iron Laws are blocking;
-   Decision Gates are non-blocking unless unjustified AND harmful; naming/indexing is minor.
+   Decision Gates are non-blocking unless unjustified AND harmful; naming/indexing is `warning`, non-blocking.
    Severity mapping is defined there — follow it exactly.
 2. **Judge only DB-touching files.** App-code quality belongs to the other panel members. The
    one app-code question you own: a data invariant enforced only in app code that a DB

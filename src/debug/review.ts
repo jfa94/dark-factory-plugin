@@ -30,6 +30,7 @@
  * start reading `result.mergeGate`/`result.result` off of this call.
  */
 import {buildPanelManifest} from '../verifier/judgment/panel.js'
+import {E2E_TEST_DIR} from '../config/schema.js'
 import {composeCrossVendorPrompt} from '../verifier/judgment/cross-vendor-prompt.js'
 import type {CrossVendorResolution} from '../verifier/judgment/vendor.js'
 import {resolvePluginRoot} from '../config/index.js'
@@ -221,7 +222,7 @@ export type E2eFoldResult =
       }
 
 /**
- * Run the repo's COMMITTED Playwright e2e suite (`config.testDir`) against
+ * Run the repo's COMMITTED Playwright e2e suite (`E2E_TEST_DIR`) against
  * `input.cwd` and fold the result into {@link Finding}s.
  *
  * - Missing `config.startCommand`/`config.baseURL` → `{kind: "skipped", ...}`,
@@ -271,7 +272,7 @@ export async function runCommittedE2e(
                     baseURL: nonNull(config.baseURL),
                 }),
                 replaceEnv: true,
-                testDir: config.testDir,
+                testDir: E2E_TEST_DIR,
             },
             tool
         )

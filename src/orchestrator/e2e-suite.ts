@@ -7,6 +7,7 @@
  * crash-retry re-enters the facade's dispatch via the threaded {@link EmitFn}.
  */
 import {join} from 'node:path'
+import {E2E_TEST_DIR} from '../config/schema.js'
 import {ensureStageWorktree, publishToStaging, specTaskLines} from './stage-helpers.js'
 import {
     resetTaskRow,
@@ -406,7 +407,7 @@ export async function runSuiteAndDecide(deps: E2eRunDeps, runId: string): Promis
     let criticalResult
     try {
         criticalResult = await runE2e(
-            {cwd: worktree, env: scrubbedE2eEnv(cfg, boot), replaceEnv: true, testDir: cfg.testDir},
+            {cwd: worktree, env: scrubbedE2eEnv(cfg, boot), replaceEnv: true, testDir: E2E_TEST_DIR},
             tool
         )
     } catch (err) {
@@ -486,7 +487,7 @@ export async function runSuiteAndDecide(deps: E2eRunDeps, runId: string): Promis
         for (const s of unmappableCritical) {
             const row = affected.find((r) => specPathMatches(s.file, r.spec_path))
             const specPath =
-                row?.spec_path ?? (s.file.startsWith(`${cfg.testDir}/`) ? s.file : `${cfg.testDir}/${s.file}`)
+                row?.spec_path ?? (s.file.startsWith(`${E2E_TEST_DIR}/`) ? s.file : `${E2E_TEST_DIR}/${s.file}`)
             if ((counts[specPath] ?? 0) >= 1) {
                 readjudicated.push(specPath)
             } else if (row?.expectation === 'should-still-pass') {

@@ -1,6 +1,6 @@
 {
     "name": "factory-plugin",
-    "version": "1.45.2",
+    "version": "1.46.0",
     "private": true,
     "type": "module",
     "description": "Factory plugin build tooling (Node + TypeScript rewrite). NOT the scaffold shipped into target repos (see templates/package.scaffold.json).",
@@ -21,14 +21,17 @@
         "format:check": "prettier --check .",
         "lint": "eslint . --max-warnings 0",
         "check:circular": "madge --circular --extensions ts src/",
-        "verify": "npm run typecheck && npm run check:circular && npm run lint && npm run test && npm run build",
+        "verify": "pnpm run typecheck && pnpm run check:circular && pnpm run lint && pnpm run test && pnpm run build",
         "lint:fix": "eslint . --fix",
+        "version:check": "node scripts/version.mjs check",
+        "version:sync": "node scripts/version.mjs sync",
         "audit": "npm audit --audit-level=high --omit=dev"
     },
     "devDependencies": {
         "@eslint/js": "^9.39.1",
         "@types/node": "^22.0.0",
         "@types/proper-lockfile": "^4.1.4",
+        "@vitest/coverage-v8": "^3.2.7",
         "esbuild": "^0.25.0",
         "eslint": "^9.39.1",
         "eslint-config-prettier": "^10.1.8",

@@ -24,6 +24,7 @@
  * ({@link MAX_ASSESS_ATTEMPTS}); the cap converts it to the same loud fail.
  */
 import {join} from 'node:path'
+import {E2E_TEST_DIR} from '../config/schema.js'
 import {ensureStageWorktree, publishToStaging, specTaskLines} from './stage-helpers.js'
 import type {StageDone, StageFailed, StageSpawnBase} from './stage-helpers.js'
 import {z} from 'zod'
@@ -204,7 +205,7 @@ export async function runAssessmentEmit(deps: AssessmentRunDeps, runId: string):
         model: ASSESSOR_MODEL,
         prompt: buildAssessorPrompt({
             worktree,
-            testDir: deps.config.e2e.testDir,
+            testDir: E2E_TEST_DIR,
             spec: deps.spec,
             cfg: deps.config.e2e,
         }),
@@ -321,7 +322,7 @@ export async function runAssessmentRecord(
     // Merge guard: the assessor's branch may only touch e2e machinery — anything else
     // would land unreviewed code in the target repo just by being on this branch.
     const staging = run.staging_branch
-    const testDirPrefix = `${deps.config.e2e.testDir}/`
+    const testDirPrefix = `${E2E_TEST_DIR}/`
     const changed = await deps.git.diffNames(staging, assessBranchName(runId), {cwd: worktree})
     const stray = changed.filter((f) => !f.startsWith(testDirPrefix) && f !== 'playwright.config.ts')
     if (stray.length > 0) {

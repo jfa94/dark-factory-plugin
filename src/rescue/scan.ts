@@ -67,6 +67,8 @@ export interface RescueTaskLine {
 export interface RescueScan {
     run_id: string
     run_status: RunStatus
+    /** WHY the run is terminal failed/superseded; absent on live runs and legacy states. */
+    terminal_reason?: string
     counts: {
         total: number
         shipped: number
@@ -206,6 +208,7 @@ export function scanRun(run: RunState): RescueScan {
     return {
         run_id: run.run_id,
         run_status: run.status,
+        ...(run.terminal_reason !== undefined ? {terminal_reason: run.terminal_reason} : {}),
         counts: {
             total: all.length,
             shipped: by('shipped').length,

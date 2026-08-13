@@ -393,7 +393,12 @@ async function supersedeRun(state: StateManager, existing: RunState, stagingDeps
                 .baseline,
         })
     }
-    await state.finalize(existing.run_id, 'superseded') // terminal LAST (resume-safe)
+    // terminal LAST (resume-safe)
+    await state.finalize(
+        existing.run_id,
+        'superseded',
+        'superseded by operator --supersede relaunch for the same PRD issue'
+    )
 }
 
 /**

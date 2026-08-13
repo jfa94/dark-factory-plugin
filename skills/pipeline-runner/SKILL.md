@@ -170,15 +170,18 @@ first REFILL, arm ONE session-scoped recurring wake sized to the configured TTL:
 
 ```bash
 TTL_MIN=$(factory config-defaults | jq -r .stallTtlMinutes)   # default 15
+INTERVAL=$(( TTL_MIN < 59 ? TTL_MIN : 59 ))   # `*/60`+ is invalid cron syntax — clamp
 ```
 
 ```
 CronCreate({
-  cron: "*/<TTL_MIN> * * * *", recurring: true,
+  cron: "*/<INTERVAL> * * * *", recurring: true,
   prompt: "Heartbeat for factory run <run_id>: re-enter skills/pipeline-runner/SKILL.md
-    Phase 3 REFILL. If the run is now terminal or this session no longer has an
-    in-flight table for it, CronDelete this job and do nothing else. A run that is
-    `paused` mid-5h-quota-wait is NOT terminal — keep firing so REFILL re-checks the gate."
+    Phase 3 REFILL. CronDelete this job ONLY on a positively-read terminal run status
+    (factory state shows completed/failed/superseded). On a missing, ambiguous, or
+    unreadable status, KEEP the job armed — an ambiguous read must never kill the
+    watchdog. A run that is `paused` mid-5h-quota-wait is NOT terminal — keep firing
+    so REFILL re-checks the gate."
 })
 ```
 

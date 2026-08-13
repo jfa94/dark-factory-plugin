@@ -22,6 +22,7 @@
  * so the rollup PR is OPENED for inspection but never auto-merged (plan §V step 4).
  */
 import {createLogger} from '../shared/index.js'
+import {FALLBACK_STAGING_BRANCH} from './run-staging.js'
 import {GitSchema} from '../config/schema.js'
 import type {ChecksState, GhClient} from './gh-client.js'
 
@@ -117,7 +118,7 @@ async function waitForCi(gh: GhClient, number: number, args: RollupArgs): Promis
  * the idempotency contract.
  */
 export async function rollup(args: RollupArgs): Promise<RollupResult> {
-    const staging = args.stagingBranch ?? GIT_DEFAULTS.stagingBranch
+    const staging = args.stagingBranch ?? FALLBACK_STAGING_BRANCH
     const base = args.baseBranch ?? GIT_DEFAULTS.baseBranch
     if (base === 'main') {
         throw new Error("rollup: baseBranch must not be 'main' (Decision 16 — the factory never touches main)")

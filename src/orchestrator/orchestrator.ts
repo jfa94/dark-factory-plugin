@@ -256,7 +256,20 @@ async function recordResults(
     const verdictStore = new FsHoldoutVerdictStore(deps.dataDir)
     // Holdout BEFORE reviews — the record ordering the old skill enforced by prose.
     if (results.holdout !== undefined) {
-        await applyRecordHoldout(record, runId, taskId, task.escalation_rung, verdictStore, results.holdout.raw)
+        const holdout = await applyRecordHoldout(
+            record,
+            runId,
+            taskId,
+            task.escalation_rung,
+            verdictStore,
+            results.holdout.raw
+        )
+        if (holdout.kind === 'evaluator-failure') {
+            // Malformed EVALUATOR output: skip applyRecordReviews entirely — no
+            // reviewers persisted means the next verify entry spawns a fresh panel
+            // at the SAME rung (the producer pays nothing for an evaluator fault).
+            return holdout.step
+        }
     }
     const env = await applyRecordReviews(record, runId, taskId, verdictStore, results.reviews)
     return env.step

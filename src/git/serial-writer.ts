@@ -20,14 +20,12 @@
  * calls observe strictly non-overlapping critical sections.
  */
 import {join} from 'node:path'
+import {FALLBACK_STAGING_BRANCH} from './run-staging.js'
 import {createLogger, withFileLock, DEFAULT_FILE_LOCK_TUNING, type FileLockTuning} from '../shared/index.js'
-import {GitSchema} from '../config/schema.js'
 import {resolveDataDir, type DataDirOptions} from '../config/load.js'
 import type {GhClient, PullRequest} from './gh-client.js'
 
 const log = createLogger('git')
-
-const GIT_DEFAULTS = GitSchema.parse({})
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -125,7 +123,7 @@ export class MergeSerializer {
         this.ghClient = opts.ghClient
         this.owner = opts.owner
         this.repo = opts.repo
-        this.staging = opts.stagingBranch ?? GIT_DEFAULTS.stagingBranch
+        this.staging = opts.stagingBranch ?? FALLBACK_STAGING_BRANCH
         this.dataDir = resolveDataDir(opts)
         this.lockScope = opts.lockScope ?? `${opts.owner}__${opts.repo}__${this.staging}`.replace(/[^\w.-]/g, '-')
         this.tuning = {...MERGE_LOCK_DEFAULTS, ...(opts.lock ?? {})}

@@ -21,7 +21,7 @@ spec that's green but meaningless.
 There is no `@critical` tag, no annotation, no metadata file. **Where a spec lives is
 what it means:**
 
-- **Committed** (target repo's `e2e/` by default, config `e2e.testDir`) = **critical**.
+- **Committed** (target repo's `e2e/` — the engine's fixed test directory) = **critical**.
   Thin, journey-oriented, load-bearing — it gates this run and every future `--e2e` run.
   Must pass the fail-first proof (below) before it is ever merged.
 - **Ephemeral** (a gitignored run directory, never committed) = **throwaway**. One per

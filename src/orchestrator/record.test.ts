@@ -14,6 +14,7 @@ import {dirname, join} from 'node:path'
 
 import {
     applyRecordHoldout,
+    HOLDOUT_EVALUATOR_RETRY_CAP,
     applyRecordReviews,
     applyRecordProducer,
     buildWorktreeSource,
@@ -105,6 +106,21 @@ describe('applyRecordHoldout record', () => {
             staging_branch: `staging-${RUN_ID}`,
             spec: {repo: 'acme/widgets', spec_id: '42-checkout', issue_number: 42},
         })
+        await state.update(RUN_ID, (s) => ({
+            ...s,
+            tasks: {
+                t1: {
+                    task_id: 't1',
+                    status: 'reviewing',
+                    phase: 'verify',
+                    depends_on: [],
+                    risk_tier: 'medium',
+                    escalation_rung: 0,
+                    reviewers: [],
+                    merge_resyncs: 0,
+                },
+            },
+        }))
         deps = {
             config: defaultConfig(),
             spec: holdoutSpec(),
@@ -138,8 +154,13 @@ describe('applyRecordHoldout record', () => {
             ['e', true, 'src/y.ts:3'],
         ])
 
-        const env = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, raw)
+        const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, raw)
 
+        expect(result.kind).toBe('recorded')
+        if (result.kind !== 'recorded') {
+            throw new Error('unreachable')
+        }
+        const env = result.envelope
         expect(env.evidence.gate).toBe('holdout')
         expect(env.evidence.observed).toBe(true)
         expect(env.check.status).toBe('pass')
@@ -152,30 +173,99 @@ describe('applyRecordHoldout record', () => {
         ])
     })
 
-    it('scores a partial satisfaction below the pass rate as a FAIL', async () => {
+    it('scores a well-formed partial miss below the pass rate as a blocking FAIL (not an evaluator failure)', async () => {
         await holdout.put(RUN_ID, makeHoldoutRecord('t1', ['d', 'e'], 5))
         const raw = validatorJson([
             ['d', true, 'src/x.ts:10'],
             ['e', false, ''],
         ])
 
-        const env = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, raw)
+        const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, raw)
 
-        expect(env.check.status).toBe('fail') // 1/2 = 50% < 80%
-        expect(env.evidence.observed).toBe(false)
+        expect(result.kind).toBe('recorded')
+        if (result.kind !== 'recorded') {
+            throw new Error('unreachable')
+        }
+        expect(result.envelope.check.status).toBe('fail') // 1/2 = 50% < 80%
+        expect(result.envelope.evidence.observed).toBe(false)
     })
 
-    it('fails CLOSED on unparseable validator output (verdicts → [], every criterion fails)', async () => {
+    it('a well-formed 0/N miss still records as blocking (producer pays, no retry)', async () => {
+        await holdout.put(RUN_ID, makeHoldoutRecord('t1', ['d'], 5))
+        const raw = validatorJson([['d', false, 'not implemented anywhere']])
+
+        const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, raw)
+
+        expect(result.kind).toBe('recorded')
+        if (result.kind !== 'recorded') {
+            throw new Error('unreachable')
+        }
+        expect(result.envelope.check.satisfied).toBe(0)
+        expect(result.envelope.evidence.observed).toBe(false)
+        const task = (await state.read(RUN_ID)).tasks.t1
+        expect(task?.holdout_evaluator_retries).toBeUndefined()
+    })
+
+    const evaluatorFailures: readonly [string, (record: string) => string][] = [
+        ['unparseable output', () => 'not json at all'],
+        ['wrong cardinality', () => validatorJson([['d', true, 'src/x.ts:1']])],
+        [
+            'criterion text mismatch',
+            () =>
+                validatorJson([
+                    ['SPOOFED', true, 'src/x.ts:1'],
+                    ['e', true, 'src/y.ts:2'],
+                ]),
+        ],
+        [
+            'satisfied with blank evidence',
+            () =>
+                validatorJson([
+                    ['d', true, '   '],
+                    ['e', true, 'src/y.ts:2'],
+                ]),
+        ],
+    ]
+
+    it.each(evaluatorFailures)(
+        'evaluator failure (%s) retries the same-rung verify wave without persisting verdicts or bumping the rung',
+        async (_name, mk) => {
+            await holdout.put(RUN_ID, makeHoldoutRecord('t1', ['d', 'e'], 5))
+
+            const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, mk('t1'))
+
+            expect(result.kind).toBe('evaluator-failure')
+            if (result.kind !== 'evaluator-failure') {
+                throw new Error('unreachable')
+            }
+            expect(result.step).toEqual({done: false, phase: 'verify'})
+            expect(await verdictStore.has(RUN_ID, 't1', 0)).toBe(false)
+            const task = (await state.read(RUN_ID)).tasks.t1
+            expect(task?.escalation_rung).toBe(0) // producer rung untouched
+            expect(task?.holdout_evaluator_retries).toBe(1)
+            expect(task?.status).not.toBe('failed')
+        }
+    )
+
+    it('fails blocked-environmental once the evaluator retry cap is exhausted', async () => {
         await holdout.put(RUN_ID, makeHoldoutRecord('t1', ['d', 'e'], 5))
+        await state.updateTask(RUN_ID, 't1', (t) => ({
+            ...t,
+            holdout_evaluator_retries: HOLDOUT_EVALUATOR_RETRY_CAP,
+        }))
 
-        const env = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, 'not json at all')
+        const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, 'garbage')
 
-        expect(env.check.status).toBe('fail')
-        expect(env.check.satisfied).toBe(0)
-        expect(env.evidence.observed).toBe(false)
-        // Even on a parse failure, an (empty) verdict array is persisted, so a later
-        // record-reviews re-derivation sees the same fail-closed result.
-        expect(await verdictStore.get(RUN_ID, 't1', 0)).toEqual([])
+        expect(result.kind).toBe('evaluator-failure')
+        if (result.kind !== 'evaluator-failure') {
+            throw new Error('unreachable')
+        }
+        expect(result.step.done).toBe(true)
+        const task = (await state.read(RUN_ID)).tasks.t1
+        expect(task?.status).toBe('failed')
+        expect(task?.failure_class).toBe('blocked-environmental')
+        expect(task?.failure_reason).toMatch(/holdout evaluator/)
+        expect(task?.escalation_rung).toBe(0) // still never charged to the producer
     })
 
     it('is a LOUD error when the task has no withheld answer key', async () => {

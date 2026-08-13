@@ -285,6 +285,22 @@ function waivedMutationBlock(reason: string): readonly string[] {
  */
 const DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'"
 
+/**
+ * Single source of the mutable-source predicate: files matching this ERE are
+ * EXCLUDED from mutation scope. Both workflow templates carry a `grep -Ev`
+ * line; render-time replacement from this constant keeps the PR gate and the
+ * nightly warm-base scoping identical — they drifted once (the
+ * `src/app/(robots|sitemap)` clause existed only in the PR gate), which
+ * poisons the incremental-cache warm base.
+ */
+const MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts`
+
+function applyMutableSourceExclude(lines: string[]): string[] {
+    return lines.map((l) =>
+        l.includes('grep -Ev') ? l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`) : l
+    )
+}
+
 function rootsPathspec(roots: readonly string[]): string {
     return roots.map((r) => `'${r}/**/*.ts'`).join(' ')
 }
@@ -313,6 +329,7 @@ function renderMutationRegion(lines: string[], opts: RenderQualityGateOpts): str
     let kept = [...lines.slice(0, begin), ...lines.slice(begin + 1, end), ...lines.slice(end + 1)]
     kept = replaceMarker(kept, '# factory:mutation-setup', mutationSetupBlock(opts))
     kept = applyMutationRoots(kept, opts.contract)
+    kept = applyMutableSourceExclude(kept)
     if (opts.packageManager === 'npm') {
         kept = kept.map((l) => l.replace('pnpm exec stryker run \\', 'npx stryker run \\'))
     }
@@ -338,6 +355,7 @@ export function renderMutationNightly(template: string, opts: RenderQualityGateO
     let lines = template.split('\n')
     lines = replaceMarker(lines, '# factory:mutation-setup', mutationSetupBlock(opts))
     lines = applyMutationRoots(lines, opts.contract)
+    lines = applyMutableSourceExclude(lines)
     if (opts.packageManager === 'npm') {
         lines = lines.map((l) => l.replace('pnpm exec stryker run \\', 'npx stryker run \\'))
     }

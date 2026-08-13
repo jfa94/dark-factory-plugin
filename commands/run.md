@@ -181,7 +181,8 @@ factory autonomy status        # manual primitive: exits 0 if autonomous, 1 if n
 
 Preflight regenerates `${CLAUDE_PLUGIN_DATA}/merged-settings.json` (via `ensure`) and halts for a
 relaunch when the session is **not autonomous** OR the settings are **stale** (the stamped
-`_factoryVersion` differs from the installed plugin), **missing**, or **unstamped**; it proceeds
+`FACTORY_SETTINGS_HASH` content fingerprint differs from what a regenerate would produce now),
+**missing**, or **unstamped**; it proceeds
 silently when the settings are already fresh, or when the session is autonomous via a
 directly-exported env (the sanctioned CI path). `ensure` merges
 `templates/settings.autonomous.json` with the user's `~/.claude/settings.json` (placeholders

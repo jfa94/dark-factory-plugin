@@ -40,7 +40,6 @@ error and **nothing is written**. Examples:
 
 ```bash
 factory configure --set quality.holdoutPercent=25
-factory configure --set git.stagingBranch=staging
 factory configure --set git.provision=true
 factory configure --unset quality.securityCommand
 ```

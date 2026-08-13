@@ -125,7 +125,7 @@ describe('runAssessmentEmit', () => {
         expect(env.prompt).toContain(env.worktree)
         expect(env.prompt).toContain('task-a')
         expect(env.prompt).toContain('a user can complete checkout')
-        expect(env.prompt).toContain(defaultConfig().e2e.testDir)
+        expect(env.prompt).toContain('e2e/')
         expect(env.prompt).toContain('boot-impossible')
     })
 

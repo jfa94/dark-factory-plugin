@@ -11,12 +11,10 @@
  * tests against the fake with zero network.
  */
 import {createLogger} from '../shared/index.js'
-import {GitSchema} from '../config/schema.js'
+import {FALLBACK_STAGING_BRANCH} from './run-staging.js'
 import type {GhClient} from './gh-client.js'
 
 const log = createLogger('git')
-
-const GIT_DEFAULTS = GitSchema.parse({})
 
 /** Args to {@link createTaskPrIdempotent}. */
 export interface CreateTaskPrArgs {
@@ -50,7 +48,7 @@ export interface TaskPrResult {
  * number + url and whether it was resumed.
  */
 export async function createTaskPrIdempotent(args: CreateTaskPrArgs): Promise<TaskPrResult> {
-    const base = args.base ?? GIT_DEFAULTS.stagingBranch
+    const base = args.base ?? FALLBACK_STAGING_BRANCH
 
     // Δ P: look up by head FIRST (state "all"). A kill can land after the PR was
     // opened OR even after it MERGED but before the run recorded `done` — BOTH are

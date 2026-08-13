@@ -17,7 +17,7 @@ Read a single value by its dotted key path:
 
 ```bash
 factory configure --get quality.holdoutPercent
-factory configure --get git.stagingBranch
+factory configure --get git.baseBranch
 ```
 
 ## Change a setting
@@ -28,7 +28,7 @@ otherwise as a bare string.
 
 ```bash
 factory configure --set quality.holdoutPercent=25
-factory configure --set git.stagingBranch=integration
+factory configure --set git.baseBranch=develop
 factory configure --set git.provision=true
 factory configure --set 'git.developRequiredStatusChecks=["Quality","Mutation Testing","Security Scan"]'
 ```

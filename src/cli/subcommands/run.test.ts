@@ -1402,7 +1402,7 @@ describe('runStop (park a live run, Decision 72)', () => {
 
     it('is LOUD on a terminal run — nothing to park', async () => {
         await seed('run-term')
-        await state.finalize('run-term', 'failed')
+        await state.finalize('run-term', 'failed', 'test: forced terminal')
         await expect(runStop(['--run', 'run-term'], {dataDir})).rejects.toThrow(/terminal/)
     })
 

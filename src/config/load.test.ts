@@ -193,4 +193,33 @@ describe('loadConfig', () => {
         writeFileSync(configPath(dd), JSON.stringify({stallTtlMinutes: -5}))
         expect(() => loadConfig({dataDir: dd})).toThrow()
     })
+
+    it('warns ONCE per retired key present in the raw overlay, still loads (Zod strips them)', () => {
+        __resetDataDirWarnings()
+        const dd = join(home, 'data')
+        mkdirSync(dd, {recursive: true})
+        writeFileSync(
+            configPath(dd),
+            JSON.stringify({git: {stagingBranch: 'custom'}, e2e: {testDir: 'tests'}, stallTtlMinutes: 45})
+        )
+        const warned: string[] = []
+        const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+            warned.push(String(chunk))
+            return true
+        })
+        try {
+            const cfg = loadConfig({dataDir: dd})
+            expect(cfg.stallTtlMinutes).toBe(45)
+            expect('stagingBranch' in cfg.git).toBe(false)
+            expect('testDir' in cfg.e2e).toBe(false)
+            loadConfig({dataDir: dd}) // second load: no duplicate warnings
+            const text = warned.join('')
+            // One warn line per retired key (each line names the key twice: message + --unset hint).
+            expect(text.match(/is retired and ignored/g)?.length).toBe(2)
+            expect(text).toContain('git.stagingBranch')
+            expect(text).toContain('e2e.testDir')
+        } finally {
+            spy.mockRestore()
+        }
+    })
 })

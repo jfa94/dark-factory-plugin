@@ -4,7 +4,7 @@ import {defineConfig, devices} from '@playwright/test'
  * Seeded by `factory scaffold` (Decision 39) — then PROJECT-OWNED (never
  * auto-overwritten; delete + re-scaffold to pick up a template update).
  *
- * `testDir` MUST match the factory's `e2e.testDir` config (default "e2e") —
+ * `testDir` MUST stay "e2e" — the engine's fixed e2e directory —
  * persistence in that directory IS the criticality signal for the run-level
  * e2e phase: nothing is tagged, so this directory boundary is load-bearing.
  *

@@ -183,7 +183,7 @@ directory and docs are not opted out (`package.json` `factory.docs.enabled !== f
 and the run's docs phase isn't already `done`. The runner then runs `factory run docs`,
 which emits a scribe spawn request for a staging-rooted worktree; the runner spawns the
 `scribe` agent, then records the docs commit back via `factory run docs --results`. The
-record merges/pushes the docs commit onto the staging branch. Only once docs are `done`
+record merges/pushes the docs commit onto the run's staging branch (`staging-<run-id>`). Only once docs are `done`
 does `factory next-task` emit `finalize`. A docs failure suspends the run for a retry
 (resumable via `/factory:resume`), bounded by `MAX_DOCS_ATTEMPTS` (2) — once the cap is
 hit, docs are treated as best-effort and the run finalizes `completed` without a docs

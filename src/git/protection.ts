@@ -9,14 +9,12 @@
  * hope). Provisioning is OPT-IN (--provision); default OFF.
  */
 import {createLogger} from '../shared/index.js'
-import {GitSchema} from '../config/schema.js'
+import {FALLBACK_STAGING_BRANCH} from './run-staging.js'
 import {MUTATION_CHECK_CONTEXT, type RequiredCheckExtras} from '../verifier/deterministic/gate-contract.js'
 import type {GhClient} from './gh-client.js'
 import type {ProtectionApiResult} from './gh-client.js'
 
 const log = createLogger('git')
-
-const GIT_DEFAULTS = GitSchema.parse({})
 
 /** The two develop profiles a protection PUT can write (D74). */
 export interface EffectiveProfiles {
@@ -83,7 +81,7 @@ export interface ProbeProtectionArgs {
 
 /** Probe live branch-protection state (read-only). */
 export async function probeProtection(args: ProbeProtectionArgs): Promise<ProtectionState> {
-    const branch = args.branch ?? GIT_DEFAULTS.stagingBranch
+    const branch = args.branch ?? FALLBACK_STAGING_BRANCH
     const result: ProtectionApiResult = await args.ghClient.repoProtection(args.owner, args.repo, branch)
     return {
         enabled: result.enabled,
@@ -104,7 +102,7 @@ export async function probeProtection(args: ProbeProtectionArgs): Promise<Protec
 export function requireProtectionOrRefuse(
     state: ProtectionState,
     requiredChecks: readonly string[],
-    branch: string = GIT_DEFAULTS.stagingBranch,
+    branch: string = FALLBACK_STAGING_BRANCH,
     opts: {requireStrict?: boolean} = {}
 ): ProtectionState {
     const reasons: string[] = []
@@ -145,7 +143,7 @@ export interface ProvisionProtectionArgs {
  * repo's protection without explicit opt-in).
  */
 export async function provisionProtection(args: ProvisionProtectionArgs): Promise<ProtectionState> {
-    const branch = args.branch ?? GIT_DEFAULTS.stagingBranch
+    const branch = args.branch ?? FALLBACK_STAGING_BRANCH
     if (!args.provision) {
         throw new Error('provisionProtection called without --provision opt-in — refusing to mutate branch protection')
     }

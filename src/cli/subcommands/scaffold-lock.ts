@@ -28,6 +28,14 @@ export interface ScaffoldLock {
     readonly version: 1
     /** template rel path → sha256 hex of the content scaffold wrote. */
     readonly seeds: Record<string, string>
+    /**
+     * MANAGED files (the CI net): rel path → sha256 of the content scaffold last
+     * wrote (S10). Lets a re-scaffold prove a managed file is pristine before
+     * auto-updating it; a mismatch (or a legacy lock with no entry) is a
+     * files_conflict — never a silent clobber. Additive to lock version 1: old
+     * engines ignore the key and degrade safely.
+     */
+    readonly managed: Record<string, string>
 }
 
 export function sha256Hex(text: string): string {
@@ -44,7 +52,7 @@ export async function loadScaffoldLock(
     targetRoot: string
 ): Promise<{lock: ScaffoldLock; existed: boolean; invalid: boolean}> {
     const path = join(targetRoot, SCAFFOLD_LOCK_REL)
-    const empty: ScaffoldLock = {version: 1, seeds: {}}
+    const empty: ScaffoldLock = {version: 1, seeds: {}, managed: {}}
     if (!existsSync(path)) {
         return {lock: empty, existed: false, invalid: false}
     }
@@ -54,13 +62,19 @@ export async function loadScaffoldLock(
         if (typeof seeds !== 'object' || seeds === null) {
             return {lock: empty, existed: true, invalid: true}
         }
-        const valid: Record<string, string> = {}
-        for (const [rel, hash] of Object.entries(seeds)) {
-            if (typeof hash === 'string') {
-                valid[rel] = hash
+        const readMap = (value: unknown): Record<string, string> => {
+            const valid: Record<string, string> = {}
+            if (typeof value === 'object' && value !== null) {
+                for (const [rel, hash] of Object.entries(value)) {
+                    if (typeof hash === 'string') {
+                        valid[rel] = hash
+                    }
+                }
             }
+            return valid
         }
-        return {lock: {version: 1, seeds: valid}, existed: true, invalid: false}
+        const managed = (parsed as {managed?: unknown}).managed
+        return {lock: {version: 1, seeds: readMap(seeds), managed: readMap(managed)}, existed: true, invalid: false}
     } catch {
         return {lock: empty, existed: true, invalid: true}
     }
@@ -69,10 +83,17 @@ export async function loadScaffoldLock(
 /** Write the lock (stable key order + trailing newline for a quiet git diff). */
 export async function saveScaffoldLock(targetRoot: string, lock: ScaffoldLock): Promise<void> {
     const path = join(targetRoot, SCAFFOLD_LOCK_REL)
-    const seeds: Record<string, string> = {}
-    for (const [rel, hash] of Object.entries(lock.seeds).sort(([a], [b]) => a.localeCompare(b))) {
-        seeds[rel] = hash
+    const sorted = (map: Record<string, string>): Record<string, string> => {
+        const out: Record<string, string> = {}
+        for (const [rel, hash] of Object.entries(map).sort(([a], [b]) => a.localeCompare(b))) {
+            out[rel] = hash
+        }
+        return out
     }
     await mkdir(dirname(path), {recursive: true})
-    await writeFile(path, JSON.stringify({version: 1, seeds}, null, 2) + '\n', 'utf8')
+    await writeFile(
+        path,
+        JSON.stringify({version: 1, seeds: sorted(lock.seeds), managed: sorted(lock.managed)}, null, 2) + '\n',
+        'utf8'
+    )
 }

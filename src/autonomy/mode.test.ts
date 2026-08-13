@@ -52,8 +52,8 @@ describe('decideAutonomyPreflight', () => {
             decideAutonomyPreflight({
                 autonomous: false,
                 mergedSettingsPresent: false,
-                pluginVersion: '1.0.0',
-                onDiskVersion: undefined,
+                expectedHash: 'aaa',
+                storedHash: undefined,
             })
         ).toEqual({proceed: false, regenerate: true, reason: 'missing-settings'})
     })
@@ -63,8 +63,8 @@ describe('decideAutonomyPreflight', () => {
             decideAutonomyPreflight({
                 autonomous: false,
                 mergedSettingsPresent: true,
-                pluginVersion: '1.0.0',
-                onDiskVersion: '1.0.0',
+                expectedHash: 'aaa',
+                storedHash: 'aaa',
             })
         ).toEqual({proceed: false, regenerate: true, reason: 'not-autonomous'})
     })
@@ -74,30 +74,30 @@ describe('decideAutonomyPreflight', () => {
             decideAutonomyPreflight({
                 autonomous: true,
                 mergedSettingsPresent: false,
-                pluginVersion: '1.0.0',
-                onDiskVersion: undefined,
+                expectedHash: 'aaa',
+                storedHash: undefined,
             })
         ).toEqual({proceed: true, regenerate: false, reason: 'ci-raw-env'})
     })
 
-    it('autonomous + file + versions differ → halt + regenerate (stale-version)', () => {
+    it('autonomous + file + hashes differ → halt + regenerate (stale-settings)', () => {
         expect(
             decideAutonomyPreflight({
                 autonomous: true,
                 mergedSettingsPresent: true,
-                pluginVersion: '1.0.0',
-                onDiskVersion: '0.9.0',
+                expectedHash: 'aaa',
+                storedHash: 'bbb',
             })
-        ).toEqual({proceed: false, regenerate: true, reason: 'stale-version'})
+        ).toEqual({proceed: false, regenerate: true, reason: 'stale-settings'})
     })
 
-    it('autonomous + file + versions equal → proceed without regenerate (fresh)', () => {
+    it('autonomous + file + hashes equal → proceed without regenerate (fresh)', () => {
         expect(
             decideAutonomyPreflight({
                 autonomous: true,
                 mergedSettingsPresent: true,
-                pluginVersion: '1.0.0',
-                onDiskVersion: '1.0.0',
+                expectedHash: 'aaa',
+                storedHash: 'aaa',
             })
         ).toEqual({proceed: true, regenerate: false, reason: 'fresh'})
     })
@@ -107,35 +107,35 @@ describe('decideAutonomyPreflight', () => {
             decideAutonomyPreflight({
                 autonomous: true,
                 mergedSettingsPresent: true,
-                pluginVersion: '1.0.0',
-                onDiskVersion: undefined,
+                expectedHash: 'aaa',
+                storedHash: undefined,
             })
         ).toEqual({proceed: false, regenerate: true, reason: 'unstamped'})
     })
 
-    it('autonomous + file + plugin version unknowable → proceed without regenerate (version-unknowable)', () => {
+    it('autonomous + file + expected hash unknowable → proceed without regenerate (hash-unknowable)', () => {
         expect(
             decideAutonomyPreflight({
                 autonomous: true,
                 mergedSettingsPresent: true,
-                pluginVersion: undefined,
-                onDiskVersion: '1.0.0',
+                expectedHash: undefined,
+                storedHash: 'aaa',
             })
-        ).toEqual({proceed: true, regenerate: false, reason: 'version-unknowable'})
+        ).toEqual({proceed: true, regenerate: false, reason: 'hash-unknowable'})
     })
 
     it('invariant: regenerate === true ⟹ proceed === false (across the whole input space)', () => {
         const bools = [true, false]
-        const versions: (string | undefined)[] = [undefined, '0.9.0', '1.0.0']
+        const hashes: (string | undefined)[] = [undefined, 'aaa', 'bbb']
         for (const autonomous of bools) {
             for (const mergedSettingsPresent of bools) {
-                for (const pluginVersion of versions) {
-                    for (const onDiskVersion of versions) {
+                for (const expectedHash of hashes) {
+                    for (const storedHash of hashes) {
                         const decision = decideAutonomyPreflight({
                             autonomous,
                             mergedSettingsPresent,
-                            pluginVersion,
-                            onDiskVersion,
+                            expectedHash,
+                            storedHash,
                         })
                         if (decision.regenerate) {
                             expect(decision.proceed).toBe(false)

@@ -409,6 +409,16 @@ export const TaskStateSchema = z.object({
     merge_resyncs: z.number().int().min(0).default(0),
 
     /**
+     * Same-rung verify re-runs consumed for holdout EVALUATOR failures (malformed
+     * validator output — unparseable/wrong-cardinality/mismatched/blank-evidence-pass).
+     * Distinct from `spawn_in_flight.redrives` (hung-spawn respawn, Decision 66): this
+     * counts delivered-but-broken evaluator output. Cap enforced in record.ts
+     * (HOLDOUT_EVALUATOR_RETRY_CAP); exhaustion fails the task `blocked-environmental`.
+     * Absent = 0.
+     */
+    holdout_evaluator_retries: z.number().int().min(0).optional(),
+
+    /**
      * Spawn-in-flight checkpoint (idempotent re-spawn). Set by the orchestrator when it
      * EMITS a spawn for `phase` at `rung`, recording the task-branch `tip_sha` at emit
      * time. Producers commit to the SHARED task worktree, so a stop in the post-spawn /
@@ -1039,6 +1049,17 @@ export const RunStateSchema = z.object({
      */
     debug: z.boolean().default(false),
 
+    /**
+     * WHY the run went terminal as `failed`/`superseded` — a one-line human-facing
+     * cause (evaluator exhaustion, e2e phase failure, operator cancel, superseding
+     * run id, …). Written ONLY by `StateManager.finalize`, which REQUIRES it for
+     * failed/superseded and FORBIDS it for completed; the schema keeps it optional
+     * so legacy terminal states (written before the field existed) still parse —
+     * they display "reason unavailable". A stored terminal EVENT, not a derived
+     * verdict: the cause at flip time is history nothing can re-derive.
+     */
+    terminal_reason: z.string().min(1).optional(),
+
     /** Lifecycle timestamps (ISO-8601). */
     started_at: z.string(),
     updated_at: z.string(),
@@ -1108,6 +1129,18 @@ function refineRunCrossFields(run: RunState, ctx: z.RefinementCtx): void {
             message: isTerminalRunStatus(run.status)
                 ? `run '${run.run_id}' is terminal ('${run.status}') but has no ended_at`
                 : `run '${run.run_id}' is '${run.status}' (non-terminal) but carries ended_at`,
+        })
+    }
+
+    // Run-level terminal_reason direction check: a reason may only accompany a
+    // failed|superseded status (never completed, never a live run). The PRESENCE
+    // requirement for failed/superseded lives in StateManager.finalize (write
+    // path), not here — legacy terminal states predate the field and must re-read.
+    if (run.terminal_reason !== undefined && run.status !== 'failed' && run.status !== 'superseded') {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['terminal_reason'],
+            message: `run '${run.run_id}' is '${run.status}' but carries terminal_reason (only failed|superseded may)`,
         })
     }
 

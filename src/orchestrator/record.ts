@@ -50,9 +50,8 @@ import {
 } from '../verifier/judgment/index.js'
 import {
     checkHoldout,
+    classifyHoldoutOutput,
     holdoutEvidence,
-    parseHoldoutVerdicts,
-    type HoldoutVerdict,
     type HoldoutVerdictStore,
     type HoldoutCheckResult,
 } from '../verifier/holdout/index.js'
@@ -277,21 +276,27 @@ export interface RecordHoldoutEnvelope {
 }
 
 /**
- * Parse the validator output FAIL-CLOSED: an unrecoverable parse is `[]` (every
- * withheld criterion then scores as a FAIL), mirroring the runner contract in
- * validate.ts — never throws a pass through on garbage.
+ * Same-rung verify re-runs allowed for holdout EVALUATOR failures (malformed
+ * validator output). Distinct from SPAWN_REDRIVE_CAP (hung-spawn respawn,
+ * Decision 66) — this bounds delivered-but-broken output. Exhaustion fails the
+ * task `blocked-environmental`: the evaluator, not the producer, is broken.
  */
-function parseVerdictsFailClosed(raw: string): readonly HoldoutVerdict[] {
-    try {
-        return parseHoldoutVerdicts(raw)
-    } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err)
-        log.warn(`holdout validator output unparseable — failing closed (0 satisfied): ${detail}`)
-        return []
-    }
-}
+export const HOLDOUT_EVALUATOR_RETRY_CAP = 2
 
-/** Record the holdout-validator output: persist raw verdicts + emit derived evidence. */
+/** Discriminated result of {@link applyRecordHoldout}. */
+export type RecordHoldoutResult =
+    | {readonly kind: 'recorded'; readonly envelope: RecordHoldoutEnvelope}
+    /** Evaluator failure: nothing persisted to the verdict store; `step` is the
+     * already-persisted next step (same-rung verify retry, or terminal fail at cap). */
+    | {readonly kind: 'evaluator-failure'; readonly step: TaskStep}
+
+/**
+ * Record the holdout-validator output: persist verdicts + emit derived evidence.
+ * Malformed output is an EVALUATOR failure, not a producer miss — it re-runs the
+ * verify wave at the SAME rung (bounded by {@link HOLDOUT_EVALUATOR_RETRY_CAP})
+ * without persisting verdicts or touching the escalation rung; a well-formed miss
+ * (including 0/N) records normally and stays blocking via the merge gate.
+ */
 export async function applyRecordHoldout(
     deps: RecordDeps,
     runId: string,
@@ -299,7 +304,7 @@ export async function applyRecordHoldout(
     rung: number,
     verdictStore: HoldoutVerdictStore,
     raw: string
-): Promise<RecordHoldoutEnvelope> {
+): Promise<RecordHoldoutResult> {
     if (!(await deps.holdout.has(runId, taskId))) {
         throw new Error(
             `record-holdout: task '${taskId}' has no withheld answer key — nothing to validate ` +
@@ -307,11 +312,37 @@ export async function applyRecordHoldout(
         )
     }
     const record = await deps.holdout.get(runId, taskId)
-    const verdicts = parseVerdictsFailClosed(raw)
+    const classified = classifyHoldoutOutput(record, raw)
+    if (classified.kind === 'evaluator-failure') {
+        const run = await deps.state.read(runId)
+        const used = run.tasks[taskId]?.holdout_evaluator_retries ?? 0
+        if (used >= HOLDOUT_EVALUATOR_RETRY_CAP) {
+            const step = await escalateOrFail(
+                deps,
+                runId,
+                taskId,
+                classifyFailure({
+                    kind: 'environmental',
+                    reason: `holdout evaluator produced malformed output ${used + 1} times (cap ${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason}`,
+                }),
+                'verify'
+            )
+            await persistStepCursor(deps, runId, taskId, step)
+            return {kind: 'evaluator-failure', step}
+        }
+        await deps.state.updateTask(runId, taskId, (t) => ({...t, holdout_evaluator_retries: used + 1}))
+        log.warn(
+            `holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} — re-running the verify wave at the same rung`
+        )
+        const step: TaskStep = {done: false, phase: 'verify'}
+        await persistStepCursor(deps, runId, taskId, step)
+        return {kind: 'evaluator-failure', step}
+    }
+    const verdicts = classified.verdicts
     await verdictStore.put(runId, taskId, rung, verdicts)
 
     const check = checkHoldout(record, verdicts, deps.config.quality.holdoutPassRate)
-    return {run_id: runId, task_id: taskId, evidence: holdoutEvidence(check), check}
+    return {kind: 'recorded', envelope: {run_id: runId, task_id: taskId, evidence: holdoutEvidence(check), check}}
 }
 
 // ---------------------------------------------------------------------------

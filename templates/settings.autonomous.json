@@ -104,15 +104,6 @@
                         "statusMessage": "Running related tests"
                     }
                 ]
-            },
-            {
-                "matcher": ".*",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "AUDIT=.claude/tool-audit.jsonl; if [ -f \"$AUDIT\" ] && [ $(stat -f%z \"$AUDIT\" 2>/dev/null || stat -c%s \"$AUDIT\" 2>/dev/null || echo 0) -gt 10485760 ]; then mv \"$AUDIT\" \"$AUDIT.old\"; fi; jq -c --arg ts \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" --arg task \"${FACTORY_TASK_ID:-interactive}\" '{ts: $ts, task: $task, tool: .tool_name, target: (.tool_input.file_path // .tool_input.command // null)}' >> \"$AUDIT\" 2>/dev/null || true"
-                    }
-                ]
             }
         ]
     }

@@ -1339,7 +1339,11 @@ describe('applyResume', () => {
         'is LOUD on a terminal run (%s) — nothing to resume',
         async (status) => {
             await createBareRun('r1')
-            await state.finalize('r1', status)
+            if (status === 'completed') {
+                await state.finalize('r1', status)
+            } else {
+                await state.finalize('r1', status, 'test: forced terminal')
+            }
             await expect(applyResume(state, 'r1', underCurve(), defaultConfig(), NOW)).rejects.toThrow(/terminal/)
         }
     )

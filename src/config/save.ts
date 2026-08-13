@@ -59,7 +59,7 @@ export async function saveRawConfig(raw: Record<string, unknown>, opts: DataDirO
  * Parse a `--set` token (`a.b.c=value`) into a dotted path + a typed value. The
  * value is parsed as JSON when it parses (so `--set quality.holdoutPercent=20`,
  * `--set git.autoProvision=true`, `--set spec.tags='["x","y"]'` all type
- * correctly); otherwise it is kept as a bare string (`--set git.stagingBranch=staging`).
+ * correctly); otherwise it is kept as a bare string (`--set git.baseBranch=develop`).
  */
 export function parseSetToken(token: string): {path: string[]; value: ConfigValue} {
     const eq = token.indexOf('=')

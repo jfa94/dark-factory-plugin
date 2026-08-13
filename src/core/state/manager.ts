@@ -581,10 +581,23 @@ export class StateManager {
      * Finalize a run to a TERMINAL status (Decision 22/24 — finalize is terminal,
      * never spins). Refuses a non-terminal status. Stamps `ended_at`. Idempotent
      * for the same terminal status.
+     *
+     * Reason contract (discriminated by overload): `failed`/`superseded` REQUIRE a
+     * non-empty reason (persisted as `terminal_reason`); `completed` forbids one.
+     * Same-status retries: a legacy run missing its reason is backfilled once; a
+     * DIFFERENT reason than the stored one throws loudly (never silently replaced).
      */
-    async finalize(runId: string, status: RunState['status']): Promise<RunState> {
+    async finalize(runId: string, status: 'completed'): Promise<RunState>
+    async finalize(runId: string, status: 'failed' | 'superseded', reason: string): Promise<RunState>
+    async finalize(runId: string, status: RunState['status'], reason?: string): Promise<RunState> {
         if (!isTerminalRunStatus(status)) {
             throw new Error(`state: finalize requires a terminal status (completed|failed|superseded); got '${status}'`)
+        }
+        if (status === 'completed' && reason !== undefined) {
+            throw new Error(`state: finalize 'completed' takes no reason; got '${reason}'`)
+        }
+        if (status !== 'completed' && (reason === undefined || reason.trim().length === 0)) {
+            throw new Error(`state: finalize '${status}' requires a non-empty reason`)
         }
         return this.update(runId, (state) => {
             if (isTerminalRunStatus(state.status) && state.status !== status) {
@@ -592,11 +605,31 @@ export class StateManager {
                     `state: run '${runId}' already terminal as '${state.status}'; cannot re-finalize as '${status}'`
                 )
             }
+            // Same-status retry with a conflicting reason: refuse — a reason is a
+            // stored terminal EVENT; rewriting it would falsify history. A missing
+            // stored reason (legacy state) may be filled exactly once.
+            if (
+                isTerminalRunStatus(state.status) &&
+                state.terminal_reason !== undefined &&
+                reason !== undefined &&
+                state.terminal_reason !== reason
+            ) {
+                throw new Error(
+                    `state: run '${runId}' already finalized '${status}' with reason '${state.terminal_reason}'; ` +
+                        `refusing to replace it with '${reason}'`
+                )
+            }
             // Clear any quota checkpoint: it is valid ONLY while paused|suspended
             // (refineRunCrossFields), so a paused/suspended run that finalizes to a
             // terminal status must drop it or re-validation throws. Finalize is
             // terminal — there is no resume horizon to preserve.
-            return {...state, status, quota: undefined, ended_at: state.ended_at ?? nowIso()}
+            return {
+                ...state,
+                status,
+                quota: undefined,
+                terminal_reason: state.terminal_reason ?? reason,
+                ended_at: state.ended_at ?? nowIso(),
+            }
         })
     }
 

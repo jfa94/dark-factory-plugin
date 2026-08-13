@@ -23,7 +23,6 @@ import {runPipelineGuards} from './pipeline-guards.js'
 import {runSubagentStop} from './subagent-stop.js'
 import {runStopGate} from './stop-gate.js'
 import {runSessionStart} from './session-start.js'
-import {runNotification} from './notification.js'
 
 /** The mutable hook registry. WS9 registers the real guards here. */
 export const hookRegistry: Record<string, Hook> = {
@@ -52,13 +51,9 @@ export const hookRegistry: Record<string, Hook> = {
             "SubagentStop: log a stopping reviewer's parsed verdict (observational — the orchestrator record is the single writer of task.reviewers[])",
         run: (argv) => runSubagentStop(argv),
     },
-    notification: {
-        describe: 'Notification: log permission requests to run telemetry (observational)',
-        run: (argv) => runNotification(argv),
-    },
     'stop-gate': {
         describe:
-            'Stop: log a resumability hint for an owned all-terminal run (never mutates state — `factory resume` finalizes); block ONLY on state corruption',
+            'Stop: one-shot block telling the session to `factory resume` an owned all-terminal unfinalized run (never mutates state); one-shot block on state corruption; stop_hook_active re-entries always allow',
         run: (argv) => runStopGate(argv),
     },
     'session-start': {

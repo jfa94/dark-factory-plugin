@@ -183,6 +183,37 @@ async function commentFailuresOnPrd(deps: FinalizeRunDeps, run: RunState, report
 }
 
 /**
+ * One-line WHY for a run that finalizes `failed` (undefined on completed): the
+ * phase override that condemned it (e2e / assessment / traceability, with that
+ * phase's own reason), else the task tally. Mirrors the status-override ordering
+ * in {@link finalizeRun} step 1 so the reason always names the actual condemner.
+ */
+function deriveTerminalReason(run: RunState, taskTerminal: string): string | undefined {
+    if (run.e2e_phase?.status === 'failed') {
+        return `e2e phase failed: ${run.e2e_phase.reason ?? 'no reason recorded'}`
+    }
+    if (run.e2e_assessment?.status === 'failed') {
+        return `e2e assessment failed: ${run.e2e_assessment.reason ?? 'no reason recorded'}`
+    }
+    if (run.traceability?.status === 'failed') {
+        return `traceability audit failed: ${run.traceability.reason ?? 'no reason recorded'}`
+    }
+    if (taskTerminal !== 'failed') {
+        return undefined
+    }
+    const tasks = Object.values(run.tasks)
+    if (tasks.length === 0) {
+        return 'no tasks (nothing was shippable)'
+    }
+    const failed = tasks.filter((t) => t.status !== 'done')
+    const named = failed
+        .slice(0, 3)
+        .map((t) => `${t.task_id}${t.failure_class ? ` (${t.failure_class})` : ''}`)
+        .join(', ')
+    return `${failed.length} of ${tasks.length} task(s) failed: ${named}${failed.length > 3 ? ', …' : ''}`
+}
+
+/**
  * Finalize a run whose tasks are ALL terminal: build + persist the report, emit
  * telemetry, post the deduped PRD failure comment, ship the rollup, then flip the run terminal.
  * See the module header for the resume-safe ordering + idempotency contract.
@@ -209,13 +240,20 @@ export async function finalizeRun(deps: FinalizeRunDeps, runId: string): Promise
         run.traceability?.status === 'failed'
             ? 'failed'
             : taskTerminal
+    // The WHY, derived at the same point as the status (persisted at step 7 as
+    // terminal_reason): the phase override that condemned the run, else the task tally.
+    const terminalReason = deriveTerminalReason(run, taskTerminal)
 
     // 2. report — status overridden to the DECIDED terminal (state flips in step 7).
     // Gates-in-force (S3): re-derive from the repo's committed contract (derive-don't-store;
     // the contract is TCB-write-denied to agents, so any mid-run drift is operator-only). If
     // it can't be loaded at finalize, render that state loudly rather than omitting the section.
     const gates = await resolveGatesInForce(deps.git)
-    const report = buildPartialReport({...run, status: terminal}, deps.spec, {now, ...gates})
+    const report = buildPartialReport(
+        {...run, status: terminal, ...(terminal === 'failed' ? {terminal_reason: terminalReason} : {})},
+        deps.spec,
+        {now, ...gates}
+    )
     const markdown = renderPartialReportMarkdown(report)
 
     // 3. persist report.md (atomic full-file replace).
@@ -387,7 +425,10 @@ export async function finalizeRun(deps: FinalizeRunDeps, runId: string): Promise
     }
 
     // 7. flip terminal LAST (so a crash in 2–6 leaves the run resumable).
-    const finalized = await deps.state.finalize(runId, terminal)
+    const finalized =
+        terminal === 'completed'
+            ? await deps.state.finalize(runId, 'completed')
+            : await deps.state.finalize(runId, 'failed', terminalReason ?? 'run failed (no cause recorded)')
     // D3: a not-merged rollup (incl. the new "auto-armed" branch-policy fallback) names
     // its reason here — "visible, not silent" for the completed-but-not-yet-landed gap
     // (the `completed` verdict is DECIDED at step 1, before the rollup runs; it is only

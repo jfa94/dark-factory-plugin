@@ -82,11 +82,11 @@ describe('factory configure', () => {
     })
 
     it('coerces JSON scalar types (number/boolean) and falls back to string', async () => {
-        await configureCommand.run(['--set', 'git.stagingBranch=staging'])
+        await configureCommand.run(['--set', 'git.baseBranch=develop'])
         const overlay = JSON.parse(await readFile(join(dataDir, 'config.json'), 'utf8')) as {
-            git: {stagingBranch: unknown}
+            git: {baseBranch: unknown}
         }
-        expect(overlay.git.stagingBranch).toBe('staging') // bare string
+        expect(overlay.git.baseBranch).toBe('develop') // bare string
     })
 
     it('--set creates a nested gateEnv record leaf and round-trips it', async () => {

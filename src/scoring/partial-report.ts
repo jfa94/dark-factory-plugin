@@ -62,6 +62,8 @@ export interface IncompleteLine {
 export interface PartialRunReport {
     run_id: string
     run_status: RunStatus
+    /** WHY the run is terminal failed/superseded; absent on completed/live/legacy states. */
+    terminal_reason?: string
     spec_id: string
     issue_number: number
     repo: string
@@ -216,6 +218,7 @@ export function buildPartialReport(
     return {
         run_id: run.run_id,
         run_status: run.status,
+        ...(run.terminal_reason !== undefined ? {terminal_reason: run.terminal_reason} : {}),
         spec_id: run.spec.spec_id,
         issue_number: run.spec.issue_number,
         repo: run.spec.repo,
@@ -410,6 +413,9 @@ export function renderPartialReportMarkdown(report: PartialRunReport): string {
             `**Spec:** \`${report.spec_id}\` (PRD #${report.issue_number}) · ` +
             `**Repo:** ${report.repo}`
     )
+    if (report.run_status === 'failed' || report.run_status === 'superseded') {
+        out.push(`**Reason:** ${report.terminal_reason ?? 'reason unavailable'}`)
+    }
     out.push(`**Generated:** ${report.generated_at}`)
     out.push('')
     out.push(

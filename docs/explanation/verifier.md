@@ -164,6 +164,36 @@ current-rung verdict file is simply **absent** after a bump, so the fast-path
 **fails closed** and re-spawns the panel against the new implementation. A prior
 rung's files become inert rather than misleading.
 
+## An evaluator fault is not a producer miss
+
+The holdout validator is itself an LLM, and it can break its own output contract.
+The engine used to parse that output **fail-closed** — unparseable JSON became an
+empty verdict list, so every withheld criterion scored as a FAIL. That is safe in
+the sense that nothing sneaks through, but it charges the wrong party: the producer
+gets escalated (a rung burned, a fresh implementation attempt spent) for a fault it
+had no part in. Worse, the signal is indistinguishable from a genuine 0/N miss, so
+a systematically broken evaluator reads as a systematically bad producer.
+
+The output is now **classified before scoring** (`classifyHoldoutOutput`). Four
+shapes are evaluator failures — unparseable JSON, verdict/criteria cardinality
+mismatch, criterion-text mismatch at a position (the positional anti-spoof), and a
+`satisfied: true` verdict with blank evidence. Each of those means the evaluator
+did not do its job, not that the code is wrong.
+
+An evaluator failure persists **no verdicts**, does not touch the escalation rung,
+and re-runs the verify wave at the **same rung**, bounded by
+`HOLDOUT_EVALUATOR_RETRY_CAP` (2). Exhausting the cap fails the task
+**`blocked-environmental`** — the honest classification, which routes it to the
+rescue/paging path where a human can look at a broken evaluator, rather than
+burying it in the producer's failure statistics.
+
+The boundary is deliberately narrow. A **well-formed miss** — `satisfied: false`
+with any evidence, including a clean 0/N sweep — is not an evaluator failure. It
+records normally and stays blocking via the merge gate. The distinction is between
+_output that arrived broken_ and _output that arrived and said no_; only the former
+is retried. (Contrast `spawn_in_flight.redrives`, Decision 66, which bounds output
+that never arrived at all.)
+
 ## Verify-then-fix (Decision 27)
 
 A reviewer's raw "this is a blocker" cannot be trusted to act on directly: LLM

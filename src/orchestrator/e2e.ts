@@ -38,6 +38,7 @@
  * `e2e-proof.ts` (the fail-first proof), and `e2e-shared.ts` (types + phase writers).
  */
 import {createLogger} from '../shared/index.js'
+import {E2E_TEST_DIR} from '../config/schema.js'
 import {CONTROL_TITLE_PREFIX, E2eResultsSchema, type E2eAuthorResults} from './e2e-schemas.js'
 import {
     e2eWorktreePath,
@@ -78,7 +79,7 @@ export async function runE2eEmit(deps: E2eRunDeps, runId: string): Promise<E2eAc
     }
 
     if (run.e2e_phase === undefined) {
-        return prepareAuthorSpawn(deps, run, runId, boot, cfg.testDir)
+        return prepareAuthorSpawn(deps, run, runId, boot, E2E_TEST_DIR)
     }
 
     // Author-crash re-entry (D5): author_attempts persisted with no manifest and no
@@ -89,7 +90,7 @@ export async function runE2eEmit(deps: E2eRunDeps, runId: string): Promise<E2eAc
         run.e2e_phase.manifest.length === 0 &&
         (run.e2e_phase.author_attempts ?? 0) >= 1
     ) {
-        return prepareAuthorSpawn(deps, run, runId, boot, cfg.testDir)
+        return prepareAuthorSpawn(deps, run, runId, boot, E2E_TEST_DIR)
     }
 
     // In-flight adjudication (D7): the cursor survived a crash/resume — idempotently

@@ -109,18 +109,40 @@ branch's checks come from `git.stagingRequiredStatusChecks` (default empty) at
 [`run create`](#run-create).
 
 ```
-factory scaffold [--repo <owner/name>] [--provision]
+factory scaffold [--repo <owner/name>] [--provision] [--waive mutation|coverage] [--force-managed]
 ```
 
 | Flag                  | Required | Notes                                                                                                                                                        |
 | --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--repo <owner/name>` | no       | Target GitHub repo (used for the protection probe). Auto-derived from the `origin` remote when omitted; an explicit value that disagrees with it fails loud. |
 | `--provision`         | no       | Write the mode's at-rest protection on develop (run-scoped: baseline; permanent: strict). Default: refuse when unprotected.                                  |
+| `--waive mutation`    | no       | Record the mutation gate as deliberately waived in the contract instead of refusing when stryker is not installed.                                           |
+| `--waive coverage`    | no       | Record the coverage gate as deliberately waived instead of refusing when no vitest coverage provider is installed.                                           |
+| `--force-managed`     | no       | Re-adopt conflicted MANAGED files: overwrite a customized managed file with the plugin template and re-record its hash. Default: refuse (`files_conflict`).  |
+
+### Managed-file ownership is fail-safe
+
+Managed files (the CI net) are plugin-authored by contract, but a re-scaffold no
+longer clobbers them blindly. `.factory/scaffold.lock` gained a `managed` hash map
+alongside `seeds`, and a **preflight runs before any write**:
+
+| On-disk managed file                                         | Outcome                                              |
+| ------------------------------------------------------------ | ---------------------------------------------------- |
+| byte-equal to the new render                                 | no-op (`files_present`)                              |
+| differs from the render but matches the lock's recorded hash | **pristine** → auto-update (`files_updated`)         |
+| differs from both (customized, or no lock entry)             | **`files_conflict` refusal — ZERO writes**           |
+| differs from both, `--force-managed` given                   | overwrite + re-record the hash (logged as a warning) |
+
+A `files_conflict` aborts the whole command before any seed, gate contract, lock,
+or protection change lands, and names the offending files; restore them
+(`git checkout`) or pass `--force-managed`. The `managed` key is additive to lock
+version 1, so an older engine ignores it and degrades safely, and a legacy lock
+with no `managed` entries simply reports a conflict instead of silently clobbering.
 
 Emits a `ScaffoldReport`: `{ repo, files_created, files_present, files_updated,
 protection, settings }`. `files_updated` carries the outdated files auto-refreshed
-this run: managed CI-net files on any drift, and SEED gate configs **only while
-pristine** — their bytes still matching the hash the committed
+this run: managed CI-net files **only while provably pristine** (above), and SEED
+gate configs **only while pristine** — their bytes still matching the hash the committed
 `.factory/scaffold.lock` recorded when scaffold wrote them
 ([Decision 15](../explanation/decisions.md#decision-15-project-scaffolding)). A
 customized seed (or one with no lock entry — e.g. scaffolded before the lock
@@ -454,7 +476,7 @@ returned envelope's `kind` tells the runner whether an agent is needed:
   The prompt directs the `e2e-author` to boot the app with the **resolved boot config**
   (`resolveBootConfig` = `e2e.startCommand`/`e2e.baseURL` override ?? the values the run-start
   assessment wrote into `playwright.config.ts`, D10), explore each user-facing task, author
-  **critical** journey specs into the worktree's `e2e.testDir` (committed) plus **throwaway**
+  **critical** journey specs into the worktree's `e2e/` directory (committed) plus **throwaway**
   specs into `throwaway_dir` (gitignored, never committed), self-validate them green against
   staging, and return a manifest of `{task_ids, spec_path, kind, title}` rows (`title` is the
   human-readable journey name, D12) — **without pushing**. On a **re-entry** (after a reopened
@@ -618,6 +640,13 @@ factory state --summary       # compact human summary
 
 No current run is not an error: prints `{"current": null}` (or `no current run`
 with `--summary`) and exits `0`. State corruption is loud.
+
+For a `failed` or `superseded` run, the `--summary` header appends
+`reason=<terminal_reason>` (or `reason=reason unavailable` for a terminal state
+written before the field existed) — see
+[`terminal_reason`](./state-model.md#terminal_reason--why-the-run-ended-badly).
+The same reason appears in the rescue scan (`/factory:resume`), the partial
+report, and the run summary as a `**Reason:**` line.
 
 With no `<run-id>`, the current run is resolved **per repo** from the caller's
 checkout — see below. `score`, `rescue`, `resume`, and `next-task` resolve the
@@ -792,6 +821,14 @@ and confirms each surviving blocker via the supplied `verifications` (a kept
 citable blocker with no recorded verdict fails closed). Holdout is recorded **before**
 reviews. A refused live merge re-routes the task through `exec` to re-sync, bounded
 by a persisted per-task budget (`merge_resyncs`).
+
+If the supplied `holdout.raw` is malformed — unparseable, wrong verdict cardinality,
+criterion-text mismatch, or a `satisfied` verdict with blank evidence — it is an
+**evaluator failure**, not a producer miss: no verdicts are persisted, the rung is
+untouched, and the emitted step re-runs the verify wave at the same rung. This is
+bounded by `HOLDOUT_EVALUATOR_RETRY_CAP` (2); exhaustion fails the task
+`blocked-environmental`. See
+[`holdout_evaluator_retries`](./state-model.md#holdout_evaluator_retries--evaluator-faults-are-not-producer-misses).
 
 ## `score`
 
@@ -1188,17 +1225,18 @@ factory autonomy preflight [--user-settings <path>]
 ```
 
 The verdict is a pure function of three inputs — is this session autonomous, does
-`merged-settings.json` exist, and does its stamped `_factoryVersion` match the installed
-plugin version:
+`merged-settings.json` exist, and does its stamped `env.FACTORY_SETTINGS_HASH` (a canonical-JSON
+content hash of the fully merged settings, plugin-root paths normalized) match the hash a
+regenerate would stamp now:
 
-| Autonomous? | Settings file | Version           | Outcome                                                       |
-| ----------- | ------------- | ----------------- | ------------------------------------------------------------- |
-| no          | (any)         | (any)             | **regenerate + halt** (`missing-settings` / `not-autonomous`) |
-| yes         | absent        | —                 | **proceed** (`ci-raw-env` — env exported directly)            |
-| yes         | present       | match             | **proceed** (`fresh`)                                         |
-| yes         | present       | differ            | **regenerate + halt** (`stale-version`)                       |
-| yes         | present       | unstamped         | **regenerate + halt** (`unstamped`)                           |
-| yes         | present       | plugin unknowable | **proceed** (`version-unknowable` — no churn)                 |
+| Autonomous? | Settings file | Settings hash       | Outcome                                                       |
+| ----------- | ------------- | ------------------- | ------------------------------------------------------------- |
+| no          | (any)         | (any)               | **regenerate + halt** (`missing-settings` / `not-autonomous`) |
+| yes         | absent        | —                   | **proceed** (`ci-raw-env` — env exported directly)            |
+| yes         | present       | match               | **proceed** (`fresh`)                                         |
+| yes         | present       | differ              | **regenerate + halt** (`stale-settings`)                      |
+| yes         | present       | unstamped           | **regenerate + halt** (`unstamped`)                           |
+| yes         | present       | expected unknowable | **proceed** (`hash-unknowable` — no churn)                    |
 
 On a halt it delegates to `ensure` (the single writer path) to (re)materialize the settings,
 prints the same `claude --worktree --settings <merged-settings.json>`

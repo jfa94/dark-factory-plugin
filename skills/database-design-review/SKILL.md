@@ -7,8 +7,8 @@ description: 'Review criteria for relational schema changes — the checklist th
 
 You judge **schema and migration changes** against relational-design discipline. Two tiers:
 
-- **Iron Laws** — categorical. A violation corrupts data or is unambiguously wrong: `blocking: true`, severity `critical` or `major`.
-- **Decision Gates** — genuine trade-offs. Deviating from the default is a finding ONLY when the deviation is both unexplained (no comment/spec justification visible) and harmful at the schema's evident scale: `blocking: false`, severity `minor` — unless the deviation is an Iron-Law violation in disguise.
+- **Iron Laws** — categorical. A violation corrupts data or is unambiguously wrong: `blocking: true`, severity `critical` or `error`.
+- **Decision Gates** — genuine trade-offs. Deviating from the default is a finding ONLY when the deviation is both unexplained (no comment/spec justification visible) and harmful at the schema's evident scale: `blocking: false`, severity `warning` — unless the deviation is an Iron-Law violation in disguise.
 
 Principles are engine-agnostic; examples Postgres-first. Query/EXPLAIN tuning, runtime concurrency, sharding, and backups are OUT of scope — do not flag them.
 
@@ -44,7 +44,7 @@ A diff whose DB files are all clean → `verdict: "approve"` with empty findings
 | G8 Where a rule lives | Invariant → DB constraint                     | enforces a data invariant only in app code when a constraint/CHECK could hold it (→ L1)                                                                                  |
 | G9 Tenancy            | Shared schema + mandatory `tenant_id` (+ RLS) | multi-tenant schema with tenant-owned tables lacking `tenant_id`, or per-tenant uniqueness as `UNIQUE(x)` instead of `UNIQUE(tenant_id, x)`, and no stated tenancy model |
 
-Naming (snake_case, FK named after the referenced table, no reserved words) and design-level indexing (FK columns unindexed, composite order wrong for the evident access path, missing partial-unique for soft-delete) are `minor`, non-blocking.
+Naming (snake_case, FK named after the referenced table, no reserved words) and design-level indexing (FK columns unindexed, composite order wrong for the evident access path, missing partial-unique for soft-delete) are `warning`, non-blocking.
 
 ## Anti-pattern quick reference
 
@@ -69,15 +69,15 @@ Naming (snake_case, FK named after the referenced table, no reserved words) and 
 - A new table with no stated/deducible grain, or columns that mix grains (L5).
 - `type` + `id` column pair → polymorphic FK (L7).
 - A migration that both adds and drops the same live shape in one step (L6).
-- `LIKE '%term%'` as the evident search plan for a new column → note full-text as `minor`.
+- `LIKE '%term%'` as the evident search plan for a new column → note full-text as `warning`.
 - Every table growing `deleted_at` by reflex (G4).
 - Multi-tenant tables with no `tenant_id` and no recorded tenancy decision (G9).
 
 ## Severity mapping
 
-- Iron Law violation → `blocking: true`; L9 (credentials) and L2 (money) are `critical`, others `major`.
-- Gate deviation, unjustified AND harmful → `blocking: false`, `minor` (escalate to blocking only when it is an Iron Law in disguise — e.g. G8 miss that leaves a corruptible invariant unenforced is L1).
-- Naming/indexing/style → `blocking: false`, `minor`. Never block on taste.
+- Iron Law violation → `blocking: true`; L9 (credentials) and L2 (money) are `critical`, others `error`.
+- Gate deviation, unjustified AND harmful → `blocking: false`, `warning` (escalate to blocking only when it is an Iron Law in disguise — e.g. G8 miss that leaves a corruptible invariant unenforced is L1).
+- Naming/indexing/style → `blocking: false`, `warning`. Never block on taste.
 
 ## Citations
 

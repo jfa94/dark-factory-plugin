@@ -49,15 +49,18 @@ The scaffolded `webServer` block is **env-driven**: the phase passes `FACTORY_E2
 `FACTORY_E2E=1` — which forces `reuseExistingServer: false` so a factory-driven run always
 boots a fresh app. Playwright's own `webServer` owns the boot, readiness poll, and teardown;
 the engine does not run a separate process manager. `baseURL` (when set as an override) is
-validated as a well-formed URL at config time. Optional tuning
-([full key table](../reference/configuration.md#e2e)):
+validated as a well-formed URL at config time (see the [full key table](../reference/configuration.md#e2e)).
 
-- `e2e.testDir` (default `e2e`) — the repo-relative directory the committed critical
-  suite lives in. It is **schema-locked to `e2e`**: the config parser rejects any other
-  value, because the scaffolded `playwright.config.ts` and the TCB write-guard both hardcode
-  that path. The repo's **own** `playwright.config.ts` is held to the same literal at run
-  birth: `run create --e2e` reads it and refuses any `testDir` other than `e2e`/`./e2e`
-  (S4, see [Limitations](#limitations)).
+The committed critical suite always lives in the literal `e2e/` directory. This is
+**not configurable** — the scaffolded `playwright.config.ts` and the TCB write-guard
+both hardcode that path, so the engine holds it as a constant (`E2E_TEST_DIR`) rather
+than a knob. (The old `e2e.testDir` key is retired; an overlay still carrying it is
+ignored with a warning.) The repo's **own** `playwright.config.ts` is held to the same
+literal at run birth: `run create --e2e` reads it and refuses any `testDir` other than
+`e2e`/`./e2e` (S4, see [Limitations](#limitations)).
+
+Remaining tuning keys:
+
 - `e2e.readyTimeoutMs` (default `30000`) — how long to wait for the app to boot.
 - `e2e.reopenCap` (default `2`) — how many times a task may be reopened by a still-red
   critical journey before the run fails outright.
@@ -106,7 +109,7 @@ change). The runner steps [`factory run e2e`](../reference/cli.md#run-e2e):
 1. **Author (once per run).** The `e2e-author` agent boots the app, explores each
    user-facing task via the Playwright MCP tools, and writes two kinds of spec —
    distinguished only by **where they land**:
-    - **Critical** specs (committed into the repo's `e2e.testDir`) — thin, journey-oriented,
+    - **Critical** specs (committed into the repo's `e2e/` directory) — thin, journey-oriented,
       load-bearing. They gate this run and every future `--e2e` run. (There is **no** CI `e2e`
       job — Decision 40 D11 removed it from `quality-gate.yml` as a self-bricking hazard; e2e
       gating is run-level only.)

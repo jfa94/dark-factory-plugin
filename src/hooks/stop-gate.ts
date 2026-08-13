@@ -26,9 +26,12 @@
  * session's own): debug runs pass through silently (the debug driver owns
  * finalize between review⇄fix passes), as do runs owned by a DIFFERENT session.
  *
- * The ONLY remaining block is an inaccessible data directory (M9 — surface the
- * inconsistency, never silently accept a corrupt-state stop). A foreign run's
- * unreadable state.json never surfaces here (listRuns skips unreadable runs silently).
+ * Two blocks remain, both ONE-SHOT (guarded by `stop_hook_active` so a re-entry
+ * never blocks twice): an inaccessible data directory (M9 — surface the
+ * inconsistency, never silently accept a corrupt-state stop; a foreign run's
+ * unreadable state.json never surfaces here — listRuns skips unreadable runs
+ * silently), and an owned all-terminal unfinalized run — the block's reason tells
+ * the session to run `factory resume` (the REAL finalize), never flipping status here.
  *
  * Output contract (Stop hook): a block (corruption only) is `{decision:"block",reason}`
  * on STDOUT with exit 0 (the JSON is the block signal). Allow = no output, exit 0.
@@ -43,14 +46,20 @@ const log = createLogger('hook:stop-gate')
 
 /**
  * The pure stop decision (separated from I/O so it is trivially unit-testable). The
- * hook always ALLOWS the stop — never blocks, never mutates state. `allow-unfinalized`
- * distinguishes the one case worth telling the operator about: this session's own run
- * was left `running` with every task terminal, and the next `factory resume` will
- * route it through the REAL `finalizeRun` (never a state-only status flip — see the
- * module header). The only corruption block (inaccessible data directory) is emitted
- * directly by {@link runStopGate}, not modelled here.
+ * hook NEVER mutates state. An owned run left `running` with every task terminal
+ * blocks ONCE (`block-finalize`) so the session itself runs `factory resume` — the
+ * REAL `finalizeRun`, never a state-only status flip; the `stop_hook_active`
+ * re-entry is `allow-unfinalized` (log hint only). The corruption block
+ * (inaccessible data directory) is emitted directly by {@link runStopGate},
+ * not modelled here.
  */
-export type StopAction = {kind: 'allow'} | {kind: 'allow-unfinalized'; run_id: string}
+export type StopAction =
+    | {kind: 'allow'}
+    /** stop_hook_active pass: hint only — never a second block (loop guard). */
+    | {kind: 'allow-unfinalized'; run_id: string}
+    /** First stop on an owned all-terminal unfinalized run: block ONCE with the
+     * `factory resume` instruction so the session runs the REAL finalize. */
+    | {kind: 'block-finalize'; run_id: string}
 
 const ALLOW: StopAction = {kind: 'allow'}
 
@@ -68,9 +77,11 @@ const ALLOW: StopAction = {kind: 'allow'}
  *      none of this session's business).
  *   4. pending work (in-flight tasks, or setup unfinished) → allow (NO hostage: the run
  *      stays `running` and resumable via `factory resume`).
- *   5. otherwise (≥1 task, all terminal)         → allow-unfinalized (hint only).
+ *   5. otherwise (≥1 task, all terminal)         → block-finalize ONCE (tell the session
+ *      to run `factory resume`); on a stop_hook_active re-entry → allow-unfinalized
+ *      (hint only, never a second block — the loop guard).
  */
-export function decideStop(run: RunState | null, stoppingSession?: string): StopAction {
+export function decideStop(run: RunState | null, stoppingSession?: string, stopHookActive = false): StopAction {
     if (run === null) {
         return ALLOW
     } // no active run — nothing to gate.
@@ -104,9 +115,12 @@ export function decideStop(run: RunState | null, stoppingSession?: string): Stop
         return ALLOW
     }
 
-    // ≥1 task, all terminal, run still `running` → leave it that way (resumable);
-    // the next `factory resume` routes through the real finalizeRun.
-    return {kind: 'allow-unfinalized', run_id: run.run_id}
+    // ≥1 task, all terminal, run still `running` → NO status flip ever (only the real
+    // finalizeRun may deliver). One-shot: the FIRST stop blocks with the `factory resume`
+    // instruction; a stop_hook_active re-entry passes through with the log hint only.
+    return stopHookActive
+        ? {kind: 'allow-unfinalized', run_id: run.run_id}
+        : {kind: 'block-finalize', run_id: run.run_id}
 }
 
 /** Options for {@link runStopGate} (injectable for tests). */
@@ -136,9 +150,14 @@ export async function runStopGate(_argv: string[] = [], deps: StopGateDeps = {})
     // Resolve the stopping session id from the Stop event stdin (best-effort: a
     // malformed/empty/absent payload leaves it undefined → the gate stays unscoped).
     let stoppingSession: string | undefined
+    let stopHookActive = false
     try {
         const raw = deps.readRaw ? await deps.readRaw() : await readStdin()
-        stoppingSession = sessionIdOf(parseHookInput(raw))
+        const input = parseHookInput(raw)
+        stoppingSession = sessionIdOf(input)
+        // Loop guard: CC sets stop_hook_active when this Stop fires because a previous
+        // Stop-hook block continued the session — never block twice in a row.
+        stopHookActive = input?.stop_hook_active === true
     } catch (err) {
         // A corrupt stdin is non-fatal here — we just lose session-scoping (degraded:
         // unknown stopper → null → allow). Never block the stop on this.
@@ -163,11 +182,25 @@ export async function runStopGate(_argv: string[] = [], deps: StopGateDeps = {})
         const reason =
             `could not enumerate run state: ${rawMsg}. ` + `Investigate the factory data directory before stopping.`
         log.error(reason)
+        if (stopHookActive) {
+            // Loop guard: a stop_hook_active re-entry never blocks again — the first
+            // block already surfaced the corruption; let the session end.
+            return EXIT.OK
+        }
         emitBlockDecision(deny(reason), emit)
         return EXIT.OK
     }
 
-    const action = decideStop(run, stoppingSession)
+    const action = decideStop(run, stoppingSession, stopHookActive)
+    if (action.kind === 'block-finalize') {
+        const reason =
+            `run ${action.run_id}: all tasks are terminal but the run is not finalized. ` +
+            `Run \`factory resume\` now to execute the real finalize (rollup PR, PRD close, report) — ` +
+            `never flip run status by hand.`
+        log.info(reason)
+        emitBlockDecision(deny(reason), emit)
+        return EXIT.OK
+    }
     if (action.kind === 'allow-unfinalized') {
         // Deliberately NOT finalized here: a state-only status flip would bypass the real
         // finalizeRun delivery (rollup PR, PRD close, e2e-failed override) and strand the

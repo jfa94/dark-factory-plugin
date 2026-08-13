@@ -25,12 +25,10 @@ import {
     advance,
     deriveMergeGateVerdict,
     mergeGateBlockReason,
-    spawn,
     waitRetry,
     type GateEvidence,
     type GateVerdict,
     type ReviewerResult,
-    type SpawnRequest,
     type PhaseResult,
     type TaskPhase,
 } from '../../types/index.js'
@@ -192,16 +190,6 @@ export interface RunPanelInput {
      * at run time, the Claude fallback ran same-vendor.
      */
     readonly blockOnCrossVendorAbsence?: boolean
-}
-
-/**
- * Build the panel SPAWN result — emitted when reviewers must still run (the
- * caller has no raw reviews yet). Kept here so the spawn↔derive paths share one
- * module. The request is built by {@link import("./panel.js").buildPanelManifest}
- * and passed in.
- */
-export function spawnPanel(request: SpawnRequest): PhaseResult {
-    return spawn(request)
 }
 
 /**

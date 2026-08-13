@@ -843,7 +843,7 @@ export async function runCancel(argv: string[], overrides: RunCancelOverrides = 
 
     // Mark terminal via the one sanctioned writer (the CLI bypasses the TCB write-deny
     // hook by design — it guards Edit/Write tools, not the engine's own fs writes).
-    const run = await state.finalize(runId, 'failed')
+    const run = await state.finalize(runId, 'failed', 'run cancelled by operator')
 
     const cleanup = args.flag('cleanup') === true
     // Resolve the PINNED branch (Decision 33) so any teardown targets the branch the run

@@ -231,6 +231,89 @@ describe('materializeMergedSettings', () => {
         ).toThrow(/not a JSON object/)
     })
 
+    it('stamps env.FACTORY_SETTINGS_HASH and the hash is stable under template key order', () => {
+        const base = materializeMergedSettings({
+            template: TEMPLATE,
+            userSettings: {},
+            dataDir: DATA_DIR,
+            pluginRoot: PLUGIN_ROOT,
+            home: HOME,
+        })
+        const hash = (base.env as Record<string, string>).FACTORY_SETTINGS_HASH
+        expect(hash).toMatch(/^[0-9a-f]{64}$/)
+        // Same content, different top-level key order → same hash (canonical JSON).
+        const reordered = JSON.stringify(
+            Object.fromEntries(Object.entries(JSON.parse(TEMPLATE) as Record<string, unknown>).reverse())
+        )
+        const out = materializeMergedSettings({
+            template: reordered,
+            userSettings: {},
+            dataDir: DATA_DIR,
+            pluginRoot: PLUGIN_ROOT,
+            home: HOME,
+        })
+        expect((out.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(hash)
+    })
+
+    it('normalizes plugin-root paths before hashing: a moved install alone does not churn the hash', () => {
+        const a = materializeMergedSettings({
+            template: TEMPLATE,
+            userSettings: {},
+            dataDir: DATA_DIR,
+            pluginRoot: '/opt/plugins/factory@1.0.0',
+            home: HOME,
+        })
+        const b = materializeMergedSettings({
+            template: TEMPLATE,
+            userSettings: {},
+            dataDir: DATA_DIR,
+            pluginRoot: '/opt/plugins/factory@2.0.0',
+            home: HOME,
+        })
+        expect((a.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(
+            (b.env as Record<string, string>).FACTORY_SETTINGS_HASH
+        )
+    })
+
+    it('a semantic template change AND a status-line change each change the hash', () => {
+        const hashOf = (template: string, userSettings: Record<string, unknown>): string => {
+            const out = materializeMergedSettings({
+                template,
+                userSettings,
+                dataDir: DATA_DIR,
+                pluginRoot: PLUGIN_ROOT,
+                home: HOME,
+            })
+            return (out.env as {FACTORY_SETTINGS_HASH: string}).FACTORY_SETTINGS_HASH
+        }
+        const base = hashOf(TEMPLATE, {})
+        const tweaked = JSON.parse(TEMPLATE) as {env: Record<string, string>}
+        tweaked.env.NEW_KEY = 'v'
+        expect(hashOf(JSON.stringify(tweaked), {})).not.toBe(base)
+        // A user statusLine changes the chained FACTORY_ORIGINAL_STATUSLINE → new hash.
+        expect(hashOf(TEMPLATE, {statusLine: {type: 'command', command: '~/mine.sh'}})).not.toBe(base)
+    })
+
+    it('a stale inherited FACTORY_SETTINGS_HASH in the user env never leaks into the hash', () => {
+        const clean = materializeMergedSettings({
+            template: TEMPLATE,
+            userSettings: {},
+            dataDir: DATA_DIR,
+            pluginRoot: PLUGIN_ROOT,
+            home: HOME,
+        })
+        const withStale = materializeMergedSettings({
+            template: TEMPLATE,
+            userSettings: {env: {FACTORY_SETTINGS_HASH: 'stale-from-a-prior-relaunch'}},
+            dataDir: DATA_DIR,
+            pluginRoot: PLUGIN_ROOT,
+            home: HOME,
+        })
+        expect((withStale.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(
+            (clean.env as Record<string, string>).FACTORY_SETTINGS_HASH
+        )
+    })
+
     it('emits valid JSON (round-trips through stringify/parse)', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
@@ -431,22 +514,22 @@ describe('runAutonomyPreflight', () => {
     /** Path of the merged settings under the current temp data dir. */
     const settingsPath = (): string => mergedSettingsPath(dataDir)
 
-    /** Phase `.claude-plugin/plugin.json` with the given version under the fake root. */
-    async function stagePluginVersion(version: string): Promise<void> {
-        await mkdir(join(pluginRoot, '.claude-plugin'), {recursive: true})
-        await writeFile(
-            join(pluginRoot, '.claude-plugin', 'plugin.json'),
-            JSON.stringify({name: 'factory', version}),
-            'utf8'
-        )
+    /** The hash a regenerate would stamp NOW for this temp dataDir/pluginRoot. */
+    const expectedHash = (): string => {
+        const merged = materializeMergedSettings({
+            template: TEMPLATE,
+            userSettings: {},
+            dataDir,
+            pluginRoot,
+            home: HOME,
+        })
+        return (merged.env as {FACTORY_SETTINGS_HASH: string}).FACTORY_SETTINGS_HASH
     }
 
-    /** Write a merged-settings.json carrying a sentinel key (and optional version stamp). */
-    async function stageMergedSettings(version?: string): Promise<void> {
-        const obj: Record<string, unknown> = {__sentinel: 'keep'}
-        if (version !== undefined) {
-            obj._factoryVersion = version
-        }
+    /** Write a merged-settings.json carrying a sentinel key (and optional hash stamp). */
+    async function stageMergedSettings(hash?: string): Promise<void> {
+        const obj: Record<string, unknown> =
+            hash !== undefined ? {__sentinel: 'keep', env: {FACTORY_SETTINGS_HASH: hash}} : {__sentinel: 'keep'}
         await writeFile(settingsPath(), JSON.stringify(obj), 'utf8')
     }
 
@@ -460,7 +543,6 @@ describe('runAutonomyPreflight', () => {
         pluginRoot = await mkdtemp(join(tmpdir(), 'factory-preflight-root-'))
         await mkdir(join(pluginRoot, 'templates'), {recursive: true})
         await writeFile(join(pluginRoot, 'templates', 'settings.autonomous.json'), TEMPLATE, 'utf8')
-        await stagePluginVersion('1.0.0')
         out.length = 0
     })
 
@@ -469,8 +551,8 @@ describe('runAutonomyPreflight', () => {
         await rm(pluginRoot, {recursive: true, force: true})
     })
 
-    it('exits OK and does NOT regenerate when autonomous + fresh', async () => {
-        await stageMergedSettings('1.0.0')
+    it('exits OK and does NOT regenerate when autonomous + fresh (stored hash matches)', async () => {
+        await stageMergedSettings(expectedHash())
         const code = await runAutonomyPreflight({
             dataDir,
             pluginRoot,
@@ -487,8 +569,8 @@ describe('runAutonomyPreflight', () => {
         expect(printed).toMatch(/ready/i)
     })
 
-    it('regenerates + exits ERROR with the relaunch command when the on-disk version is stale', async () => {
-        await stageMergedSettings('0.9.0')
+    it('regenerates + exits ERROR with the relaunch command when the stored hash is stale', async () => {
+        await stageMergedSettings('deadbeef-not-the-real-hash')
         const code = await runAutonomyPreflight({
             dataDir,
             pluginRoot,
@@ -498,9 +580,9 @@ describe('runAutonomyPreflight', () => {
         })
         expect(code).toBe(EXIT.ERROR)
         const written = await readMerged()
-        // Regenerated: sentinel gone, version re-stamped to the plugin version.
+        // Regenerated: sentinel gone, hash re-stamped to the expected content hash.
         expect(written.__sentinel).toBeUndefined()
-        expect(written._factoryVersion).toBe('1.0.0')
+        expect((written.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(expectedHash())
         const printed = out.join('')
         expect(printed).toContain(`claude --worktree --settings ${settingsPath()}\n`)
         expect(printed).toContain('stale')
@@ -508,8 +590,8 @@ describe('runAutonomyPreflight', () => {
         expect(printed).toContain('HALT:')
     })
 
-    it('regenerates + exits ERROR when the existing file lacks _factoryVersion', async () => {
-        await stageMergedSettings() // no version stamp
+    it('regenerates + exits ERROR when the existing file lacks a FACTORY_SETTINGS_HASH stamp', async () => {
+        await stageMergedSettings() // unstamped
         const code = await runAutonomyPreflight({
             dataDir,
             pluginRoot,
@@ -520,7 +602,7 @@ describe('runAutonomyPreflight', () => {
         expect(code).toBe(EXIT.ERROR)
         const written = await readMerged()
         expect(written.__sentinel).toBeUndefined()
-        expect(written._factoryVersion).toBe('1.0.0')
+        expect((written.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(expectedHash())
     })
 
     it('generates + exits ERROR when not autonomous + the file is missing (first run)', async () => {
@@ -551,9 +633,9 @@ describe('runAutonomyPreflight', () => {
         expect(existsSync(settingsPath())).toBe(false)
     })
 
-    it("exits OK without writing when the plugin version can't be read (no churn)", async () => {
-        await rm(join(pluginRoot, '.claude-plugin'), {recursive: true, force: true})
-        await stageMergedSettings('0.9.0') // would look stale IF we could compare
+    it("exits OK without writing when the expected hash can't be computed (no churn)", async () => {
+        await rm(join(pluginRoot, 'templates'), {recursive: true, force: true})
+        await stageMergedSettings('deadbeef') // would look stale IF we could compare
         const code = await runAutonomyPreflight({
             dataDir,
             pluginRoot,
@@ -583,7 +665,7 @@ describe('runAutonomyPreflight', () => {
     })
 
     it('the printed relaunch command points at the merged-settings path on every halt', async () => {
-        await stageMergedSettings('0.9.0') // stale ⇒ halt
+        await stageMergedSettings('deadbeef') // stale ⇒ halt
         await runAutonomyPreflight({
             dataDir,
             pluginRoot,

@@ -7,24 +7,28 @@ esbuild bundles in `dist/`.
 ## The one command
 
 ```bash
-npm run verify
+pnpm run verify
 ```
 
 `verify` runs, in order: `typecheck` → `check:circular` → `lint` → `test` →
 `build`. This is the contract CI enforces and the gate for a release-worthy state.
 If it is green, the checkout is healthy and the bundles are current.
 
+The package manager is **pnpm**, pinned by `package.json#packageManager`
+(`pnpm@11.9.0`). `pnpm-lock.yaml` is committed and CI installs with
+`--frozen-lockfile`, so a dependency change must land with its lockfile update.
+
 ## The individual steps
 
-| Step           | Command                                   | Notes                                                                             |
-| -------------- | ----------------------------------------- | --------------------------------------------------------------------------------- |
-| Type-check     | `npm run typecheck`                       | `tsc --noEmit`. **Use this, not `npx tsc`** — `npx tsc` is shadowed in this repo. |
-| Circular check | `npm run check:circular`                  | `madge --circular --extensions ts src/`. Fails on any import cycle (see below).   |
-| Lint           | `npm run lint`                            | `eslint .`                                                                        |
-| Test           | `npm run test`                            | `vitest run` (one shot).                                                          |
-| Test (watch)   | `npm run test:watch`                      | `vitest`.                                                                         |
-| Build          | `npm run build`                           | `node scripts/build.mjs` → both bundles.                                          |
-| Format         | `npm run format` / `npm run format:check` | `prettier`.                                                                       |
+| Step           | Command                                     | Notes                                                                             |
+| -------------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
+| Type-check     | `pnpm run typecheck`                        | `tsc --noEmit`. **Use this, not `npx tsc`** — `npx tsc` is shadowed in this repo. |
+| Circular check | `pnpm run check:circular`                   | `madge --circular --extensions ts src/`. Fails on any import cycle (see below).   |
+| Lint           | `pnpm run lint`                             | `eslint .`                                                                        |
+| Test           | `pnpm run test`                             | `vitest run` (one shot).                                                          |
+| Test (watch)   | `pnpm run test:watch`                       | `vitest`.                                                                         |
+| Build          | `pnpm run build`                            | `node scripts/build.mjs` → both bundles.                                          |
+| Format         | `pnpm run format` / `pnpm run format:check` | `prettier`.                                                                       |
 
 ## The no-circular-dependency gate
 
@@ -64,8 +68,8 @@ Both are full inlines (no `external`), so they run at a user's site with no
 `#!/usr/bin/env node` banner plus `chmod 0755` makes them directly executable;
 they are kept un-minified so the checked-in artifact stays diff-reviewable.
 
-**The bundles are committed.** When you change `src/`, re-run `npm run build` (or
-`npm run verify`) and commit the regenerated `dist/` alongside your source change,
+**The bundles are committed.** When you change `src/`, re-run `pnpm run build` (or
+`pnpm run verify`) and commit the regenerated `dist/` alongside your source change,
 or CI will fail on a stale bundle.
 
 ### The build-integrity gate: `committed dist == build(src)`
@@ -79,7 +83,7 @@ it at the root:
 ```yaml
 - name: Assert committed bundles match a fresh build (semgrep scans src, ships dist)
   run: |
-      npm run build
+      pnpm run build
       git diff --exit-code -- dist/ templates/.github/scripts/shard-mutation-scope.mjs
 ```
 
@@ -103,8 +107,45 @@ To add a subcommand, create `src/cli/subcommands/<name>.ts` exporting a
 `src/cli/main.ts`. The thin entry `src/bin/factory.ts` is the only place that
 calls `process.exit`. Hooks follow the same pattern via `src/hooks/main.ts`.
 
+## The coverage ratchet
+
+CI runs coverage as a separate step after `verify`:
+
+```bash
+pnpm exec vitest run --coverage
+```
+
+Thresholds live in `vitest.config.ts` under `test.coverage.thresholds` (v8
+provider). They are a **ratchet**, not an aspiration: each number is the
+then-current full-suite result rounded DOWN to one decimal, so the step fails only
+on a regression. When coverage rises durably, raise the floor in the same commit;
+never lower it to make a change pass.
+
+## The plugin CI pipeline
+
+`.github/workflows/tests.yml` has two jobs:
+
+| Job       | What it does                                                                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify`  | pnpm setup (from `packageManager`) → `pnpm install --frozen-lockfile` → `version:check` → `pnpm run verify` → coverage ratchet → the build-integrity gate below. |
+| `semgrep` | SAST over authored source (`p/typescript`, `p/security-audit`, `p/secrets`), scoped by `.semgrepignore`.                                                         |
+
+Every third-party action is **pinned to a full commit SHA** with the human-readable
+tag in a trailing comment. Keep it that way when bumping an action: a tag is
+mutable, a SHA is not.
+
 ## Versioning
 
-The plugin version is `package.json#version`. Bump it per the significance of your
-change (patch for fixes/refactors, minor for new backward-compatible capabilities,
-major for breaking changes).
+The plugin version is `package.json#version` — the **canonical** source. Two
+manifests must mirror it: `.claude-plugin/plugin.json` and the `plugins[0]` entry of
+`.claude-plugin/marketplace.json`. `scripts/version.mjs` owns that invariant:
+
+```bash
+pnpm run version:check   # exits 1 naming any drifted manifest (CI runs this)
+pnpm run version:sync    # rewrites both manifests from package.json
+```
+
+Bump `package.json#version` per the significance of your change (patch for
+fixes/refactors, minor for new backward-compatible capabilities, major for breaking
+changes), then run `version:sync` and commit all three files together. Never edit
+the manifest versions by hand — `version:check` is a CI step and will fail on drift.

@@ -6,6 +6,7 @@
  * facade (`e2e.ts`); the crash-retry re-enters it via the threaded {@link EmitFn}.
  */
 import {isAbsolute} from 'node:path'
+import {E2E_TEST_DIR} from '../config/schema.js'
 import {ensureStageWorktree, publishToStaging, specTaskLines} from './stage-helpers.js'
 import {
     parseProducerStatus,
@@ -241,7 +242,7 @@ export async function recordAuthorResults(
         // committed testDir — a critical entry declared OUTSIDE it (e.g. repo root)
         // would otherwise merge an unreviewed file just by being self-declared as
         // "critical" (nothing else checks a critical entry's location).
-        const testDirPrefix = `${cfg.testDir}/`
+        const testDirPrefix = `${E2E_TEST_DIR}/`
         const outsideTestDir = critical.filter((e) => !e.spec_path.startsWith(testDirPrefix))
         if (outsideTestDir.length > 0) {
             const reason =

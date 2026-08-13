@@ -200,8 +200,6 @@ export const GitSchema = z
          * is human-owned and out of scope).
          */
         baseBranch: z.string().min(1).default('develop'),
-        /** The integration branch task PRs serial-merge into (Δ L, §9.2). */
-        stagingBranch: z.string().min(1).default('staging'),
         /**
          * Required status-check contexts of develop's RUN PROFILE — under
          * `developProtection: "run-scoped"` (default) they are escalated onto
@@ -293,15 +291,6 @@ export const E2eConfigSchema = z
         /** OPTIONAL override of the base URL the app serves once booted (D10 — normally
          * assessment-resolved). */
         baseURL: z.string().url().optional(),
-        /**
-         * Repo-relative directory the COMMITTED critical suite lives in. Persistence
-         * in this directory IS the criticality signal (Decision 39) — no `@critical`
-         * tag exists. Locked to the default: the scaffolded `templates/playwright.config.ts`
-         * hardcodes `e2e/` — a custom value here would silently diverge from what the
-         * template actually runs, rather than genuinely relocating the suite (see the
-         * superRefine below).
-         */
-        testDir: z.string().min(1).default('e2e'),
         /** Max wait for `startCommand` to become ready before the boot is a failure, ms. */
         readyTimeoutMs: z.number().int().positive().default(30_000),
         /**
@@ -311,22 +300,20 @@ export const E2eConfigSchema = z
          */
         reopenCap: z.number().int().nonnegative().default(2),
     })
-    .superRefine((cfg, ctx) => {
-        if (cfg.testDir !== 'e2e') {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                path: ['testDir'],
-                message:
-                    `e2e.testDir must be the default 'e2e' — the scaffolded playwright.config.ts ` +
-                    `hardcodes that path, so a custom value here would silently diverge from what ` +
-                    'actually runs',
-            })
-        }
-    })
     .default({})
 
 /** Fully-resolved e2e config (all defaults applied). */
 export type E2eConfig = z.infer<typeof E2eConfigSchema>
+
+/**
+ * Repo-relative directory the COMMITTED critical e2e suite lives in. Persistence in
+ * this directory IS the criticality signal (Decision 39) — no `@critical` tag exists.
+ * NOT configurable: the scaffolded `templates/playwright.config.ts` hardcodes `e2e/`
+ * and the TCB write-deny protects the literal path, so a config knob could only
+ * silently diverge from what actually runs (the retired `e2e.testDir` key's
+ * superRefine already rejected every non-default value).
+ */
+export const E2E_TEST_DIR = 'e2e'
 
 /**
  * The single root config schema. Every sub-block defaults, so an empty object

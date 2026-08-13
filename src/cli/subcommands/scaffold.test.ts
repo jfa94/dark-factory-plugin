@@ -268,7 +268,7 @@ describe('runScaffold', () => {
         expect(second.files_updated).toEqual([])
     })
 
-    it('auto-updates a drifted plugin-MANAGED file (the CI workflow) — propagation path', async () => {
+    it('refuses to overwrite an unrecognized MANAGED file (files_conflict, zero writes) and re-adopts with --force-managed', async () => {
         const args = {
             targetRoot: root,
             templatesDir,
@@ -279,21 +279,31 @@ describe('runScaffold', () => {
             ghClient: new FakeGhClient({protection: {[BASE]: PROTECTED}}),
             provision: false,
         }
-        // Simulate an already-scaffolded repo carrying an OLD/customized workflow.
+        // An already-present customized workflow with NO recorded managed hash —
+        // scaffold cannot prove it authored it, so it must not clobber (S10).
         const wf = join(root, '.github', 'workflows', 'quality-gate.yml')
         await mkdir(dirname(wf), {recursive: true})
-        await writeFile(wf, 'name: stale round-robin workflow\n', 'utf8')
+        const customized = 'name: stale round-robin workflow\n'
+        await writeFile(wf, customized, 'utf8')
 
-        const report = await runScaffold(args)
+        await expect(runScaffold(args)).rejects.toThrow(/files_conflict/)
 
+        // Zero partial writes: file untouched, no seeds, no gate contract, no lock.
+        expect(await readFile(wf, 'utf8')).toBe(customized)
+        expect(existsSync(join(root, '.factory', 'gates.json'))).toBe(false)
+        expect(existsSync(join(root, '.factory', 'scaffold.lock'))).toBe(false)
+        expect(existsSync(join(root, '.gitignore'))).toBe(false)
+
+        // Explicit re-adoption overwrites and records the managed hash.
+        const report = await runScaffold({...args, forceManaged: true})
         expect(report.files_updated).toContain('.github/workflows/quality-gate.yml')
-        expect(report.files_created).not.toContain('.github/workflows/quality-gate.yml')
-        // Content was refreshed to the RENDERED template (Decision 53) — the fix
-        // reaches the repo in its stack-adaptive form, not the raw pnpm skeleton.
         const refreshed = await readFile(wf, 'utf8')
         expect(refreshed).toContain('name: Quality Gate')
-        expect(refreshed).not.toContain('# factory:setup')
         expect(refreshed).toContain('npm')
+        const lock = JSON.parse(await readFile(join(root, '.factory', 'scaffold.lock'), 'utf8')) as {
+            managed: Record<string, string>
+        }
+        expect(lock.managed['.github/workflows/quality-gate.yml']).toMatch(/^[0-9a-f]{64}$/)
     })
 
     it('treats an existing SEED config as project-owned: present, never overwritten, never re-flagged', async () => {
@@ -346,7 +356,6 @@ describe('runScaffold', () => {
             '.claude/settings.local.json',
             '.claude/worktrees/',
             '.claude/projects/',
-            '.claude/tool-audit.jsonl',
             '.claude-plugin-data/',
             '*.worktree',
         ]) {
@@ -847,6 +856,82 @@ describe('runScaffold', () => {
             expect(second.files_updated).toEqual([])
             expect(second.files_present).toContain('.factory/scaffold.lock')
             expect(await readFile(lockPath(), 'utf8')).toBe(first)
+        })
+    })
+
+    describe('managed-file ownership — fail-safe preflight (S10)', () => {
+        const SCRIPT_REL = '.github/scripts/shard-mutation-scope.mjs'
+        const scriptPath = () => join(root, '.github', 'scripts', 'shard-mutation-scope.mjs')
+        const lockPath = () => join(root, '.factory', 'scaffold.lock')
+        const readLock = async () => JSON.parse(await readFile(lockPath(), 'utf8')) as {managed: Record<string, string>}
+
+        async function copyTemplates(): Promise<string> {
+            const dir = await mkdtemp(join(tmpdir(), 'factory-templates-'))
+            await cp(templatesDir, dir, {recursive: true})
+            return dir
+        }
+
+        it('first scaffold records a hash per managed file; second run is quiet', async () => {
+            await runScaffold(baseArgs())
+            const lock = await readLock()
+            expect(lock.managed[SCRIPT_REL]).toBe(sha256Hex(await readFile(scriptPath(), 'utf8')))
+            expect(lock.managed['.github/workflows/quality-gate.yml']).toMatch(/^[0-9a-f]{64}$/)
+            const second = await runScaffold(baseArgs())
+            expect(second.files_updated).toEqual([])
+        })
+
+        it('auto-updates a PRISTINE managed file when the shipped template moves; re-records the hash', async () => {
+            await runScaffold(baseArgs())
+            const mutated = await copyTemplates()
+            try {
+                const newTemplate = '// v2 shard helper\n'
+                await writeFile(join(mutated, ...SCRIPT_REL.split('/')), newTemplate, 'utf8')
+
+                const report = await runScaffold({...baseArgs(), templatesDir: mutated})
+                expect(report.files_updated).toContain(SCRIPT_REL)
+                expect(await readFile(scriptPath(), 'utf8')).toBe(newTemplate)
+                expect((await readLock()).managed[SCRIPT_REL]).toBe(sha256Hex(newTemplate))
+                const third = await runScaffold({...baseArgs(), templatesDir: mutated})
+                expect(third.files_updated).toEqual([])
+            } finally {
+                await rm(mutated, {recursive: true, force: true})
+            }
+        })
+
+        it('a CUSTOMIZED managed file (hash mismatch) conflicts even against unchanged templates', async () => {
+            await runScaffold(baseArgs())
+            const customized = '// locally patched shard helper\n'
+            await writeFile(scriptPath(), customized, 'utf8')
+            const lockBefore = await readFile(lockPath(), 'utf8')
+
+            await expect(runScaffold(baseArgs())).rejects.toThrow(/files_conflict.*shard-mutation-scope/s)
+            expect(await readFile(scriptPath(), 'utf8')).toBe(customized)
+            expect(await readFile(lockPath(), 'utf8')).toBe(lockBefore)
+        })
+
+        it('a GARBAGE lock + moved template conflicts (cannot prove pristine)', async () => {
+            await runScaffold(baseArgs())
+            await writeFile(lockPath(), 'not json', 'utf8')
+            const mutated = await copyTemplates()
+            try {
+                await writeFile(join(mutated, ...SCRIPT_REL.split('/')), '// v2\n', 'utf8')
+                await expect(runScaffold({...baseArgs(), templatesDir: mutated})).rejects.toThrow(/files_conflict/)
+            } finally {
+                await rm(mutated, {recursive: true, force: true})
+            }
+        })
+
+        it('--force-managed re-adopts a customized managed file; subsequent runs are quiet', async () => {
+            await runScaffold(baseArgs())
+            await writeFile(scriptPath(), '// locally patched\n', 'utf8')
+
+            const report = await runScaffold({...baseArgs(), forceManaged: true})
+            expect(report.files_updated).toContain(SCRIPT_REL)
+            const restored = await readFile(scriptPath(), 'utf8')
+            expect(restored).not.toContain('locally patched')
+            expect((await readLock()).managed[SCRIPT_REL]).toBe(sha256Hex(restored))
+            const after = await runScaffold(baseArgs())
+            expect(after.files_updated).toEqual([])
         })
     })
 

@@ -8,7 +8,7 @@ Autonomous coding pipeline that converts GitHub PRD issues into merged pull requ
 - The plugin surface is markdown (`commands/`, `agents/`, `skills/`) + hooks. The deterministic engine owns ALL control flow and exposes ONE seam — the **orchestrator** (`factory next-task` + `factory next-action`). ONE thin runner steps it (Decision 42): the in-session parallel event loop (`skills/pipeline-runner/SKILL.md`) — every `factory` call foreground, up to `maxParallelTasks` tasks' agents spawned in the background. The runner only spawns the `Agent()`s the orchestrator's `NextAction` spawn manifest names — it carries no pipeline logic of its own.
 - The deterministic engine is one Node+TS CLI — `factory <subcommand>` — built by esbuild into two checked-in bundles: `dist/factory.js` (CLI) and `dist/factory-hook.js` (hook dispatcher, wired in `hooks/hooks.json`). `bin/factory` is the PATH shim onto the bundle.
 - The CLI is the orchestrator seam + reporters + writers, never an agent-spawner: `factory next-task` emits the ready-task result (`NextTask`); `factory next-action` emits the spawn manifest (`NextAction`) and, via `--results`, records agent output into ONE state step. The six retired single-step writers (`run-task`/`advance`/`drop`/`record-producer`/`record-holdout`/`record-reviews`) collapsed into the orchestrator; the surviving writers are `spec`, `rescue`, `reconcile` (read-only without `--adopt`; `--adopt` applies forward-only adoption — Decision 60), `scaffold`, `configure`, `state`.
-- Source lives in `src/` (vitest, colocated `*.test.ts`). `npm run verify` = typecheck && lint && test && build. `npx tsc` is shadowed — use `npm run typecheck`.
+- Source lives in `src/` (vitest, colocated `*.test.ts`). `pnpm run verify` = typecheck && lint && test && build. `npx tsc` is shadowed — use `pnpm run typecheck`.
 - Run/spec state lives OUTSIDE the target repo in `$CLAUDE_PLUGIN_DATA`: durable `specs/<repo>/<spec-id>/` + ephemeral `runs/<run-id>/`.
 
 ## Testing Discipline
@@ -37,7 +37,7 @@ Reviewer roles (risk-invariant panel — every reviewer runs on every task):
 
 ## Worktree base invariant
 
-`.claude/settings.json` sets `worktree.baseRef: "head"` so every `Agent({isolation:"worktree"})` subagent worktree branches from the runner's staging HEAD, not stale `origin/main`. The runner FFs/forks its worktree to `origin/staging` before any spawn; the preflight phase's idempotent `checkout -B … origin/staging` stays as a fallback. The `worktree` block is read at session start (not mid-session) and is project-wide — see `docs/explanation/decisions.md` Decision 12.
+`.claude/settings.json` sets `worktree.baseRef: "head"` so every `Agent({isolation:"worktree"})` subagent worktree branches from the runner's staging HEAD, not stale `origin/main`. The staging branch is per-run — `staging-<run-id>` from `runStagingBranch` (`src/git/run-staging.ts`), pinned on `RunState.staging_branch`; there is no shared `staging` branch (a repo's own `refs/heads/staging`, if any, is unrelated). The runner FFs/forks its worktree to `origin/staging-<run-id>` before any spawn; the preflight phase's idempotent `checkout -B … origin/staging-<run-id>` stays as a fallback. The `worktree` block is read at session start (not mid-session) and is project-wide — see `docs/explanation/decisions.md` Decision 12.
 
 ## Skills
 
@@ -45,7 +45,10 @@ Reviewer roles (risk-invariant panel — every reviewer runs on every task):
 - `skills/test-driven-development/SKILL.md` — TDD discipline for subagents
 - `skills/review-protocol/SKILL.md` — the RawReview JSON output contract every risk-invariant-panel reviewer emits (CLI citation-verifies + records it into the merge gate)
 - `skills/rescue-protocol/SKILL.md` — the consent-gated repair protocol behind `/factory:resume`'s repair route (scan → diagnose → propose → approved-subset apply → resume)
+- `skills/database-design-review/SKILL.md` — the schema-review checklist (Iron Laws + Decision Gates) the conditional `database-design-reviewer` applies
+- `skills/debug/SKILL.md` — the standalone review⇄fix loop behind `commands/debug.md`
+- `skills/e2e-authoring/SKILL.md` — the Playwright journey-spec discipline for the e2e phase (Decision 39)
 
 ## Known gaps (deliberate)
 
-- The SessionStart compaction re-injection hook (`src/hooks/session-start.ts`) is implemented and bundled but `hooks/hooks.json` still needs its `SessionStart`/`compact` block added by hand — `hooks/**` is TCB-protected, so the engine cannot self-wire it.
+- (none currently — the SessionStart/compact hook wiring gap closed 2026-08-13; `hooks/hooks.json` remains TCB-protected and hand-edited, with a wiring test in `src/hooks/main.test.ts`.)

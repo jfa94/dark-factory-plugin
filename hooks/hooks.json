@@ -65,6 +65,19 @@
                 ]
             }
         ],
+        "SessionStart": [
+            {
+                "matcher": "compact",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "${CLAUDE_PLUGIN_ROOT}/dist/factory-hook.js session-start",
+                        "timeout": 5,
+                        "statusMessage": "Re-injecting runner Iron Laws after compaction"
+                    }
+                ]
+            }
+        ],
         "Stop": [
             {
                 "hooks": [
@@ -85,18 +98,6 @@
                         "command": "${CLAUDE_PLUGIN_ROOT}/dist/factory-hook.js subagent-stop",
                         "timeout": 15,
                         "statusMessage": "Logging subagent verdict (observational)"
-                    }
-                ]
-            }
-        ],
-        "Notification": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "${CLAUDE_PLUGIN_ROOT}/dist/factory-hook.js notification",
-                        "timeout": 5,
-                        "statusMessage": "Logging permission request"
                     }
                 ]
             }

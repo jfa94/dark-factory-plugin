@@ -29,8 +29,10 @@ export {
 export {
     buildHoldoutPrompt,
     parseHoldoutVerdicts,
+    classifyHoldoutOutput,
     checkHoldout,
     holdoutEvidence,
+    type HoldoutOutputClassification,
     type HoldoutVerdict,
     type HoldoutCriterionResult,
     type HoldoutCheckResult,

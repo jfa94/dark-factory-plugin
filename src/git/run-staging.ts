@@ -13,6 +13,15 @@
 export const RUN_STAGING_PREFIX = 'staging'
 
 /**
+ * Legacy fallback branch name for git-module call sites whose optional
+ * `stagingBranch`/`base` argument is absent. Every live orchestrator path passes
+ * the per-run pin (`RunState.staging_branch`); this exists only so those optional
+ * parameters keep a deterministic default now that the retired `git.stagingBranch`
+ * config key is gone (it was never read — every consumer parsed the schema default).
+ */
+export const FALLBACK_STAGING_BRANCH = 'staging'
+
+/**
  * Map a run id to its per-run staging branch (`staging-<run-id>`). LOUD on empty.
  * Computed ONCE per run — at `run create`, which pins the result on the required
  * `RunState.staging_branch`; every later consumer reads the pin directly.

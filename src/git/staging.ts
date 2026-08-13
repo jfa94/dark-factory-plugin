@@ -11,6 +11,7 @@
  * touch StateManager.
  */
 import {createLogger} from '../shared/index.js'
+import {FALLBACK_STAGING_BRANCH} from './run-staging.js'
 import {GitSchema} from '../config/schema.js'
 import {ensureOnStaging} from './worktree.js'
 import type {GitClient} from './git-client.js'
@@ -58,7 +59,7 @@ export interface EnsureStagingResult {
  */
 export async function ensureStaging(args: EnsureStagingArgs): Promise<EnsureStagingResult> {
     const remote = args.remote ?? 'origin'
-    const staging = args.stagingBranch ?? GIT_DEFAULTS.stagingBranch
+    const staging = args.stagingBranch ?? FALLBACK_STAGING_BRANCH
     const base = args.baseBranch ?? GIT_DEFAULTS.baseBranch
     if (base === 'main') {
         // Belt-and-braces: even a misconfig must not point staging at main.

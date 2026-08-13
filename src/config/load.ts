@@ -68,6 +68,7 @@ const warnedRedirects = new Set<string>()
 /** Test-only: clear the once-per-process redirect-warn guard. */
 export function __resetDataDirWarnings(): void {
     warnedRedirects.clear()
+    retiredKeyWarned.clear()
 }
 
 /**
@@ -284,5 +285,38 @@ export function loadConfig(opts: DataDirOptions = {}): Config {
 
     // Lock-free read; parse errors are loud (not silently defaulted).
     const raw = parseJson(readFileSync(file, 'utf8'), file)
+    warnRetiredKeys(raw, file)
     return ConfigSchema.parse(raw)
+}
+
+/**
+ * Retired config keys Zod silently strips. A user overlay still carrying one gets a
+ * loud warning (once per process per file) instead of a silent no-op: the value was
+ * NEVER read even before retirement (`git.stagingBranch` — every consumer parsed the
+ * schema default; the real branch is per-run `staging-<run-id>`) or was frozen to
+ * its default by a superRefine (`e2e.testDir`).
+ */
+const RETIRED_KEYS: readonly [section: string, key: string][] = [
+    ['git', 'stagingBranch'],
+    ['e2e', 'testDir'],
+]
+const retiredKeyWarned = new Set<string>()
+
+function warnRetiredKeys(raw: unknown, file: string): void {
+    if (typeof raw !== 'object' || raw === null) {
+        return
+    }
+    for (const [section, key] of RETIRED_KEYS) {
+        const sectionVal = (raw as Record<string, unknown>)[section]
+        if (typeof sectionVal === 'object' && sectionVal !== null && key in sectionVal) {
+            const id = `${file}:${section}.${key}`
+            if (!retiredKeyWarned.has(id)) {
+                retiredKeyWarned.add(id)
+                log.warn(
+                    `config: '${section}.${key}' is retired and ignored (${file}) — remove it ` +
+                        `(factory configure --unset ${section}.${key})`
+                )
+            }
+        }
+    }
 }

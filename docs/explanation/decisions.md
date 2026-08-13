@@ -285,9 +285,10 @@ file policy**:
 
 - **MANAGED** — files the plugin is the sole author of: the CI net
   `.github/workflows/quality-gate.yml` and its cost-aware shard helper
-  `.github/scripts/shard-mutation-scope.mjs`. These **auto-update by default**:
-  when an already-scaffolded repo's copy drifts from the shipped template, the next
-  `factory scaffold` overwrites it (reported under `files_updated`). This is the
+  `.github/scripts/shard-mutation-scope.mjs`. These **auto-update when provably PRISTINE**:
+  when an already-scaffolded repo's untouched copy drifts from the shipped template,
+  the next `factory scaffold` overwrites it (reported under `files_updated`); a
+  CUSTOMIZED managed file is a `files_conflict` refusal instead (see the amendment below). This is the
   propagation path — a template fix (e.g. the 2026-06-18 mutation-shard rebalance)
   reaches downstream repos without a manual delete-and-re-scaffold.
 - **SEED** — files the project owns once it touches them: `.stryker.config.json`,
@@ -340,7 +341,7 @@ applies to exactly that tier.
 
 **The scaffold lock — how "pristine" is proven (`.factory/scaffold.lock`).**
 
-`{version: 1, seeds: {"<rel>": "<sha256>"}}`, written by `applyTemplate`
+`{version: 1, seeds: {"<rel>": "<sha256>"}, managed: {"<rel>": "<sha256>"}}`, written by `applyTemplate`
 (`src/cli/subcommands/scaffold.ts` + `scaffold-lock.ts`) ONLY when scaffold itself
 writes a seed, committed so pristine tracking travels with the repo, and persisted
 immediately after the seed pass — before the gate-contract/protection steps, whose
@@ -365,6 +366,34 @@ into a refreshed baseline explicitly by deleting its SEED file and re-running
 `factory scaffold` (which re-copies the current template and re-adopts it into the
 lock). Plugin-owned machinery that _must_ stay in lockstep belongs in the MANAGED
 tier, not SEED.
+
+**Amendment (2026-08-13 — MANAGED overwrite is fail-safe, not unconditional).**
+
+The original MANAGED policy ("auto-overwrite on any drift, git is the safety net")
+conflated two very different drifts: _the plugin's template moved_ and _the operator
+edited the file_. Only the first is safe to overwrite. Relying on git as the safety
+net is a real but weak guarantee — the clobber is silent, and in the pipeline's own
+autonomous re-scaffold path (every `/factory:run` preflight) there is no human at the
+keyboard to notice it.
+
+The lock now carries a second map, `managed: {"<rel>": "<sha256>"}` — the hash of
+the content scaffold last wrote — alongside `seeds`, and a **preflight runs before
+any write in the whole command**:
+
+- on-disk bytes equal the new render → no-op;
+- bytes differ from the render but match the recorded managed hash → **pristine**,
+  auto-update (the propagation path survives intact);
+- bytes match neither → **`files_conflict`, ZERO writes** (no seeds, no gate
+  contract, no lock, no protection change), naming the offending files;
+- `--force-managed` → re-adopt: overwrite with the template and re-record the hash.
+
+The key is additive to lock version 1, so an older engine ignores it; a legacy lock
+with no `managed` entries simply cannot prove pristineness and therefore reports a
+conflict rather than clobbering — the failure mode points the right way. The
+propagation guarantee is unchanged for untouched repos; what changed is that a
+customized managed file now _fails loudly at the operator_ instead of being
+overwritten behind their back, which is the same fail-closed posture the rest of the
+engine takes.
 
 ---
 
@@ -740,7 +769,7 @@ Both are subscription-only; there is no headless `claude -p` / API-token path.
 
 ## Decision 31: Run-Entry Preflight Auto-Scaffolds Autonomous Settings
 
-**Choice:** `/factory:run` (and `/factory:debug`) call `factory autonomy preflight` as their first setup step. Preflight is a thin CLI wrapper around a **pure decision** (`decideAutonomyPreflight`, `src/autonomy/mode.ts`) over three inputs — is this session autonomous, does `merged-settings.json` exist, and does its stamped `_factoryVersion` match the installed plugin. It **regenerates the merged settings (via `ensure`) and halts for a relaunch** when the session is not autonomous OR the settings are stale / missing / unstamped; it **proceeds** when they are already fresh, or when the session is autonomous via a directly-exported env (the CI path), or when the plugin version is unreadable (regenerating would only churn). It exits 0 to proceed, 1 to halt, and — like `status` — never throws on the decision path. `ensure`/`status` remain the manual primitives.
+**Choice:** `/factory:run` (and `/factory:debug`) call `factory autonomy preflight` as their first setup step. Preflight is a thin CLI wrapper around a **pure decision** (`decideAutonomyPreflight`, `src/autonomy/mode.ts`) over three inputs — is this session autonomous, does `merged-settings.json` exist, and does its stamped `env.FACTORY_SETTINGS_HASH` (a canonical-JSON content hash of the fully merged settings, plugin-root paths normalized — replaced the original `_factoryVersion` stamp so a template edit without a version bump is caught, 2026-08-13) match the hash a regenerate would produce now. It **regenerates the merged settings (via `ensure`) and halts for a relaunch** when the session is not autonomous OR the settings are stale / missing / unstamped; it **proceeds** when they are already fresh, or when the session is autonomous via a directly-exported env (the CI path), or when the expected hash is uncomputable (regenerating would only churn). It exits 0 to proceed, 1 to halt, and — like `status` — never throws on the decision path. `ensure`/`status` remain the manual primitives.
 
 **Why:**
 
@@ -1083,9 +1112,10 @@ a plain local/CI `playwright test` may reuse a running server. This keeps a sing
 code path shared by the mechanical run and a human's local run, and avoids re-implementing
 process supervision (a "no process manager primitive" constraint the runner already works
 around by being the control loop). Because both the scaffolded config and CI
-`quality-gate.yml` hardcode `testDir: "e2e"`, `e2e.testDir` is now **schema-locked** to
-that default (rejected at config-parse time) rather than a documented-but-unenforced
-convention — a custom value could only diverge from what actually runs and gates.
+`quality-gate.yml` hardcode `testDir: "e2e"`, the path is not configurable — originally `e2e.testDir` schema-locked to that default,
+and since 2026-08-13 the key is retired outright in favour of the `E2E_TEST_DIR`
+constant — rather than a documented-but-unenforced convention: a custom value could
+only diverge from what actually runs and gates.
 
 **App provisioning mirrors task worktrees.** Each e2e worktree (author, base-proof, and the
 persistent run worktree) is `provisionWorktree`'d (`npm ci`-equivalent) right after it is
@@ -2680,9 +2710,9 @@ path-resolving hook layer already enforces):
   holdout-guard already govern sensitive `.claude` access with path resolution; the blanket
   `ls`/`find`/`cat .claude*` denies blocked harmless introspection.
 - **Repo-relative sensitive-file writes (~10: `.env`, `**/secrets/**`, `**/migrations/**`,
-`**/_.tfstate_`, repo-relative `**/.npmrc`/`**/.gitconfig`/`**/.mcp.json`/`**/.claude.json`)**
-— these live inside the ephemeral task worktree, are often the task itself (a migration, an
-`.env.example`), never reach `main`if junk, and`secret-guard` already blocks committing an
+  `**/_.tfstate_`, repo-relative `**/.npmrc`/`**/.gitconfig`/`**/.mcp.json`/`**/.claude.json`)**
+  — these live inside the ephemeral task worktree, are often the task itself (a migration, an
+  `.env.example`), never reach `main`if junk, and`secret-guard` already blocks committing an
   actual secret.
 - **Theater/misc (~6): `chmod 777`/`chmod -R 777`, `sudo *`, `npx *create-*`, `*base64 -d*`,
   `*--no-verify*`/`*--no-gpg-sign*`** — `sudo` fails with no TTY regardless; `--no-verify`
@@ -3341,6 +3371,25 @@ observed on goodbyespy PR #76 where 3 of 8 shards drew all-quarantined slices.
 Both workflow templates' scope-compute steps now drop marker-bearing files before
 sharding (an `awk` first-line check; the shard script itself stays pure/no-I/O).
 Contract: the marker must be the file's FIRST line to be recognised.
+
+**Amendment (2026-08-13 — mutable-source predicate single-sourced; PR shard cache
+saves unconditionally).** Two defects in the warm-base architecture, both fixed at
+the root:
+
+1. **Scope drift between the two renders.** Each workflow template carried its own
+   hand-maintained `grep -Ev` exclude line, and they diverged — the
+   `src/app/(robots|sitemap)\.ts` clause existed only in the PR gate. Divergent scope
+   poisons the warm base: the nightly seeds an incremental cache over a _different_
+   file set than the PR shards restore, so the mutants never line up. The predicate
+   is now ONE constant in `src/ci/render-quality-gate.ts` (`MUTABLE_SOURCE_EXCLUDE`),
+   substituted at render time into **both** `renderMutationRegion` (quality-gate) and
+   `renderMutationNightly`. The templates' literal `grep -Ev '…'` line is now just a
+   placeholder — editing it has no effect; edit the constant.
+2. **A failing shard threw away its cache.** The PR shard's cache-save step was
+   `if: success() && …`, so a shard with surviving mutants (a _red gate_ — the
+   common case a warm base most helps) saved nothing and re-ran cold next time. It
+   is now `if: always() && …`: Stryker writes a valid incremental file regardless of
+   the mutation score, and the score, not the cache, is what gates the merge.
 
 ---
 

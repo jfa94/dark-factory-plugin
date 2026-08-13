@@ -173,9 +173,8 @@ describe('ConfigSchema', () => {
     })
 
     describe('e2e (Decision 39 — Playwright config)', () => {
-        it('defaults testDir, readyTimeoutMs, reopenCap; leaves startCommand/baseURL unset', () => {
+        it('defaults readyTimeoutMs, reopenCap; leaves startCommand/baseURL unset', () => {
             const cfg = ConfigSchema.parse({})
-            expect(cfg.e2e.testDir).toBe('e2e')
             expect(cfg.e2e.readyTimeoutMs).toBe(30_000)
             expect(cfg.e2e.reopenCap).toBe(2)
             expect(cfg.e2e.startCommand).toBeUndefined()
@@ -187,7 +186,6 @@ describe('ConfigSchema', () => {
                 e2e: {
                     startCommand: 'npm run dev',
                     baseURL: 'http://localhost:3000',
-                    testDir: 'e2e',
                     readyTimeoutMs: 60_000,
                     reopenCap: 1,
                 },
@@ -195,7 +193,6 @@ describe('ConfigSchema', () => {
             expect(cfg.e2e).toEqual({
                 startCommand: 'npm run dev',
                 baseURL: 'http://localhost:3000',
-                testDir: 'e2e',
                 readyTimeoutMs: 60_000,
                 reopenCap: 1,
             })
@@ -204,17 +201,12 @@ describe('ConfigSchema', () => {
         it('merges a partial e2e override while defaulting siblings', () => {
             const cfg = ConfigSchema.parse({e2e: {startCommand: 'npm start'}})
             expect(cfg.e2e.startCommand).toBe('npm start')
-            expect(cfg.e2e.testDir).toBe('e2e')
             expect(cfg.e2e.reopenCap).toBe(2)
         })
 
-        it('rejects an empty testDir and a negative reopenCap (loud, not silent)', () => {
-            expect(() => ConfigSchema.parse({e2e: {testDir: ''}})).toThrow()
+        it('rejects a negative reopenCap (loud, not silent); a retired testDir key is stripped', () => {
             expect(() => ConfigSchema.parse({e2e: {reopenCap: -1}})).toThrow()
-        })
-
-        it("rejects a non-default testDir — the scaffolded template and CI workflow hardcode 'e2e' today, so a custom value would silently diverge from what actually runs", () => {
-            expect(() => ConfigSchema.parse({e2e: {testDir: 'tests/e2e'}})).toThrow()
+            expect('testDir' in ConfigSchema.parse({e2e: {testDir: 'other'}}).e2e).toBe(false)
         })
 
         it('rejects a non-URL baseURL (loud, not silent)', () => {

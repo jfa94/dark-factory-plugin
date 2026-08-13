@@ -20,6 +20,7 @@ import {injectGateEnvIntoWorkflow} from './inject-gate-env.js'
 import {resolveTemplatesDir} from '../cli/subcommands/scaffold.js'
 import {GATE_IDS, type GateId} from '../verifier/deterministic/gate-id.js'
 import type {GateContract} from '../verifier/deterministic/gate-contract.js'
+import {nonNull} from '../shared/assert.js'
 
 let template: string
 
@@ -364,6 +365,26 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
     it('renderMutationNightly refuses non-npm stacks loud', () => {
         const contract = {...npmContract(), stack: 'deno' as const}
         expect(() => renderMutationNightly(nightly, {...NPM_OPTS, contract})).toThrow(/not supported/)
+    })
+
+    it('PR and nightly render ONE identical mutable-source exclude predicate (S11 drift lock)', () => {
+        const grepLines = (text: string) => text.split('\n').filter((l) => l.includes('grep -Ev'))
+        const pr = grepLines(renderQualityGate(template, rootsOpts(undefined)))
+        const nightlyOut = grepLines(renderMutationNightly(nightly, rootsOpts(undefined)) ?? '')
+        expect(pr).toHaveLength(1)
+        expect(nightlyOut).toHaveLength(1)
+        const pattern = /grep -Ev '([^']*)'/
+        expect(pattern.exec(nonNull(pr[0]))?.[1]).toBe(pattern.exec(nonNull(nightlyOut[0]))?.[1])
+        // The clause that drifted stays present in BOTH.
+        expect(nonNull(pr[0])).toContain('robots|sitemap')
+    })
+
+    it('PR shard cache SAVES on always() — a below-threshold run still warms the incremental base', () => {
+        const out = renderQualityGate(template, rootsOpts(undefined))
+        const saveIdx = out.indexOf('actions/cache/save')
+        const before = out.slice(0, saveIdx).split('\n').slice(-8).join('\n')
+        expect(before).toContain("if: always() && steps.slice.outputs.slice != ''")
+        expect(before).not.toContain('if: success()')
     })
 
     it('PR and nightly shard cache keys share one scheme (restore-keys prefix alignment)', () => {

@@ -53,11 +53,11 @@ export function requireAutonomousMode(env: NodeJS.ProcessEnv = process.env): voi
 export type PreflightReason =
     | 'not-autonomous'
     | 'missing-settings'
-    | 'stale-version'
+    | 'stale-settings'
     | 'unstamped'
     | 'fresh'
     | 'ci-raw-env'
-    | 'version-unknowable'
+    | 'hash-unknowable'
 
 /**
  * The run-entry preflight verdict.
@@ -74,8 +74,12 @@ export interface PreflightDecision {
 
 /**
  * Pure run-entry decision: given the autonomous signal, whether merged-settings
- * exist, and the plugin vs on-disk `_factoryVersion`, decide whether `/factory:run`
- * may proceed and whether the merged settings must be (re)scaffolded first.
+ * exist, and the expected vs stored settings content hash (`FACTORY_SETTINGS_HASH`,
+ * a canonical-JSON hash of the fully merged settings), decide whether
+ * `/factory:run` may proceed and whether the merged settings must be
+ * (re)scaffolded first. Content-hash freshness replaced version-only freshness:
+ * a template edit without a version bump is now stale, and a version bump alone
+ * (plugin-root paths normalized pre-hash) is not.
  *
  * Total and IO-free — the CLI wrapper (`runAutonomyPreflight`) supplies the inputs
  * and acts on the verdict. See Decision 31.
@@ -83,10 +87,12 @@ export interface PreflightDecision {
 export function decideAutonomyPreflight(input: {
     autonomous: boolean
     mergedSettingsPresent: boolean
-    pluginVersion: string | undefined
-    onDiskVersion: string | undefined
+    /** Hash of the settings a regenerate would write NOW (undefined = unknowable). */
+    expectedHash: string | undefined
+    /** Hash stamped in the on-disk merged-settings.json (undefined = unstamped). */
+    storedHash: string | undefined
 }): PreflightDecision {
-    const {autonomous, mergedSettingsPresent, pluginVersion, onDiskVersion} = input
+    const {autonomous, mergedSettingsPresent, expectedHash, storedHash} = input
 
     // Not autonomous: this session can never make itself autonomous, so always
     // (re)scaffold the settings and halt for the relaunch.
@@ -105,17 +111,17 @@ export function decideAutonomyPreflight(input: {
     }
 
     // Autonomous with a settings file. Can we prove staleness?
-    if (pluginVersion === undefined) {
-        // Plugin version is unknowable, so a regenerate could not stamp one either:
-        // regenerating would only churn. Proceed.
-        return {proceed: true, regenerate: false, reason: 'version-unknowable'}
+    if (expectedHash === undefined) {
+        // The expected hash is unknowable (template/root unreadable), so a
+        // regenerate could not stamp one either: regenerating would only churn.
+        return {proceed: true, regenerate: false, reason: 'hash-unknowable'}
     }
-    if (onDiskVersion === undefined) {
-        // A pre-versioning artifact (or hand-edited) — treat as stale.
+    if (storedHash === undefined) {
+        // A pre-hashing artifact (or hand-edited) — treat as stale.
         return {proceed: false, regenerate: true, reason: 'unstamped'}
     }
-    if (onDiskVersion !== pluginVersion) {
-        return {proceed: false, regenerate: true, reason: 'stale-version'}
+    if (storedHash !== expectedHash) {
+        return {proceed: false, regenerate: true, reason: 'stale-settings'}
     }
     return {proceed: true, regenerate: false, reason: 'fresh'}
 }

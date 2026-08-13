@@ -158,24 +158,69 @@ describe('finalize is terminal, never spins (Decision 22/24)', () => {
     it('refuses a non-terminal status for finalize', async () => {
         const m = mgr()
         await m.create({run_id: 'run-1', staging_branch: 'staging-run-1', spec})
-        await expect(m.finalize('run-1', 'paused')).rejects.toThrow(/terminal/)
-        await expect(m.finalize('run-1', 'running')).rejects.toThrow(/terminal/)
+        await expect(m.finalize('run-1', 'paused' as 'completed')).rejects.toThrow(/terminal/)
+        await expect(m.finalize('run-1', 'running' as 'completed')).rejects.toThrow(/terminal/)
     })
 
     it('refuses to re-finalize to a DIFFERENT terminal status', async () => {
         const m = mgr()
         await m.create({run_id: 'run-1', staging_branch: 'staging-run-1', spec})
         await m.finalize('run-1', 'completed')
-        await expect(m.finalize('run-1', 'failed')).rejects.toThrow(/already terminal/)
+        await expect(m.finalize('run-1', 'failed', 'boom')).rejects.toThrow(/already terminal/)
     })
 
-    it('is idempotent for the same terminal status', async () => {
+    it('is idempotent for the same terminal status + reason', async () => {
         const m = mgr()
         await m.create({run_id: 'run-1', staging_branch: 'staging-run-1', spec})
-        const a = await m.finalize('run-1', 'failed')
-        const b = await m.finalize('run-1', 'failed')
+        const a = await m.finalize('run-1', 'failed', 'evaluator exhausted')
+        const b = await m.finalize('run-1', 'failed', 'evaluator exhausted')
         expect(b.status).toBe('failed')
+        expect(b.terminal_reason).toBe('evaluator exhausted')
         expect(b.ended_at).toBe(a.ended_at) // ended_at preserved, not bumped
+    })
+
+    it('requires a non-empty reason for failed/superseded and forbids one for completed', async () => {
+        const m = mgr()
+        await m.create({run_id: 'run-1', staging_branch: 'staging-run-1', spec})
+        await expect(m.finalize('run-1', 'failed', '' as string)).rejects.toThrow(/requires a non-empty reason/)
+        await expect(m.finalize('run-1', 'failed', '   ')).rejects.toThrow(/requires a non-empty reason/)
+        await expect(
+            (m.finalize as (r: string, s: string, x?: string) => Promise<unknown>)('run-1', 'failed')
+        ).rejects.toThrow(/requires a non-empty reason/)
+        await expect(
+            (m.finalize as (r: string, s: string, x?: string) => Promise<unknown>)('run-1', 'completed', 'nope')
+        ).rejects.toThrow(/takes no reason/)
+    })
+
+    it('refuses to REPLACE a stored reason, but backfills a legacy missing one exactly once', async () => {
+        const m = mgr()
+        await m.create({run_id: 'run-1', staging_branch: 'staging-run-1', spec})
+        await m.finalize('run-1', 'failed', 'original cause')
+        await expect(m.finalize('run-1', 'failed', 'rewritten cause')).rejects.toThrow(/refusing to replace/)
+
+        // Legacy shape: terminal with no stored reason (simulated by stripping the field).
+        await m.create({run_id: 'run-2', staging_branch: 'staging-run-2', spec})
+        await m.update('run-2', (s) => ({
+            ...s,
+            status: 'failed' as const,
+            ended_at: s.ended_at ?? new Date(0).toISOString(),
+        }))
+        const backfilled = await m.finalize('run-2', 'failed', 'late-discovered cause')
+        expect(backfilled.terminal_reason).toBe('late-discovered cause')
+        await expect(m.finalize('run-2', 'failed', 'a different cause')).rejects.toThrow(/refusing to replace/)
+    })
+
+    it('reads a legacy terminal state without terminal_reason (schema-v3 compat)', async () => {
+        const m = mgr()
+        await m.create({run_id: 'run-1', staging_branch: 'staging-run-1', spec})
+        await m.update('run-1', (s) => ({
+            ...s,
+            status: 'failed' as const,
+            ended_at: new Date(0).toISOString(),
+        }))
+        const read = await m.read('run-1')
+        expect(read.status).toBe('failed')
+        expect(read.terminal_reason).toBeUndefined()
     })
 })
 

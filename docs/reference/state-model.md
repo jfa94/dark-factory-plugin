@@ -254,9 +254,11 @@ engine and the run simply drives on. Two consequences are accepted by design:
   the new engine's orchestration on its next `factory next-task`/`next-action`
   call. There is no `created_by_version` stamp — the state does not record which
   engine created it.
-- **Merged-settings staleness** (e.g. a template or hook change shipped by the
-  update) is handled by the Decision 31 preflight: rescaffold + relaunch the
-  session, not the run.
+- **Settings drift** (e.g. a template or hook change shipped by the update) is
+  handled by the Decision 31 preflight: relaunch the session, not the run. Since
+  v1.47 the autonomous settings are built in memory and passed inline
+  (`claude --worktree --settings '<json>'`), so there is no on-disk artifact to go
+  stale — a relaunch always carries the current settings by construction.
 
 A `schema_version` change fails **loud** at `StateManager.guardedParse` with the
 remedy in the error ("created by an older factory version; start a fresh run" —

@@ -99,6 +99,13 @@ export interface ResolveGatesOptions {
     readonly waiveMutation: boolean
     /** `--waive coverage`: record coverage as deliberately waived instead of refusing. */
     readonly waiveCoverage: boolean
+    /**
+     * Seed files (repo-relative) THIS scaffold run will create, treated as already
+     * present during resolution (5b). Lets the read-only preflight resolve the SAME
+     * contract the post-seed authoritative pass will (a to-be-seeded
+     * `eslint.config.mjs` flips the lint gate) without a second policy implementation.
+     */
+    readonly projectedSeedFiles?: readonly string[]
 }
 
 const yes: GateContractEntry = {contracted: true}
@@ -198,7 +205,9 @@ async function resolveNpm(opts: ResolveGatesOptions): Promise<GateContract> {
                 '(or @vitest/coverage-istanbul) or pass --waive coverage to record the waiver'
         )
     }
-    const eslintConfig = ESLINT_CONFIGS.some((c) => existsSync(join(opts.targetRoot, c)))
+    const eslintConfig = ESLINT_CONFIGS.some(
+        (c) => existsSync(join(opts.targetRoot, c)) || opts.projectedSeedFiles?.includes(c) === true
+    )
     let lint: GateContractEntry
     if (!eslintConfig) {
         lint = no('no eslint config')
@@ -293,6 +302,29 @@ export interface GateContractResult {
     readonly contract: GateContract
 }
 
+const invalidContractError = (error: string): Error =>
+    new Error(`scaffold: ${GATE_CONTRACT_REL} is INVALID (${error}) — fix it or delete it and re-run factory scaffold`)
+
+/**
+ * READ-ONLY contract preflight (5b): resolve the contract scaffold WILL end up
+ * with — the loaded committed one, or a fresh resolution with the run's seeds
+ * projected as present — WITHOUT writing anything. Every resolution/refusal
+ * error (invalid contract, below-floor, install-or-waive) propagates from here
+ * BEFORE any seed/lock write, giving refusals zero-write semantics. The
+ * authoritative `ensureGateContract` still runs after seeds and its result is
+ * what gets persisted.
+ */
+export async function preflightGateContract(opts: ResolveGatesOptions): Promise<GateContract> {
+    const load = await loadGateContract(opts.targetRoot)
+    if (load.state === 'invalid') {
+        throw invalidContractError(load.error)
+    }
+    if (load.state === 'ok') {
+        return load.contract
+    }
+    return resolveGateContract(opts)
+}
+
 /**
  * Seed-like ensure: absent → resolve + write `.factory/gates.json`; present +
  * valid → untouched (project-owned); present + invalid → refuse loud (fix or
@@ -301,9 +333,7 @@ export interface GateContractResult {
 export async function ensureGateContract(opts: ResolveGatesOptions): Promise<GateContractResult> {
     const load = await loadGateContract(opts.targetRoot)
     if (load.state === 'invalid') {
-        throw new Error(
-            `scaffold: ${GATE_CONTRACT_REL} is INVALID (${load.error}) — fix it or delete it and re-run factory scaffold`
-        )
+        throw invalidContractError(load.error)
     }
     if (load.state === 'ok') {
         return {status: 'present', stack: load.contract.stack, contract: load.contract}

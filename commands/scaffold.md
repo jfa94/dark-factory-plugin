@@ -77,8 +77,13 @@ escalated by `run create` and dropped back to baseline when the run ends. With
 `git.developProtection: "permanent"` scaffold writes the strict profile once and the
 engine never touches it again (the pre-D74 behavior).
 
-Print the emitted `ScaffoldReport` JSON: `files_created`, `files_present`, `files_updated`, and
-`protection`.
+Print the emitted `ScaffoldReport` JSON: `files_created`, `files_present`, `files_updated`,
+`files_removed`, and `protection`. `files_removed` lists managed files scaffold deleted this
+run: a stale `.github/workflows/mutation-nightly.yml` (mutation uncontracted in the gate
+contract) is removed only while its bytes provably match the scaffold lock's recorded hash —
+a customized/unknown stale nightly is a `files_conflict` refusal that `--force-managed` does
+NOT override (force overwrites toward the template; it never authorizes deleting unproven
+content).
 
 ## Step 3 — Handle a protection refusal
 
@@ -108,7 +113,8 @@ escalated profile mid-run).
 Report:
 
 - Files created by scaffold vs. already present, plus any outdated files auto-refreshed
-  (`files_updated`). Remind the user to COMMIT `.factory/scaffold.lock` alongside the seeds.
+  (`files_updated`) and any stale managed files removed (`files_removed`). Remind the user
+  to COMMIT `.factory/scaffold.lock` alongside the seeds.
 - Protection on `develop`: enabled / strict-up-to-date / required checks / whether just
   provisioned (in run-scoped mode the healthy at-rest shape is the baseline: the two
   baseline checks, strict off).

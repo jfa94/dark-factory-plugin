@@ -30,7 +30,9 @@ export interface ScaffoldLock {
     readonly seeds: Record<string, string>
     /**
      * MANAGED files (the CI net): rel path → sha256 of the content scaffold last
-     * wrote (S10). Lets a re-scaffold prove a managed file is pristine before
+     * RENDERED and either wrote or safely adopted byte-for-byte (S10) — the hash
+     * identifies content scaffold vouches for, not proof scaffold performed the
+     * write. Lets a re-scaffold prove a managed file is pristine before
      * auto-updating it; a mismatch (or a legacy lock with no entry) is a
      * files_conflict — never a silent clobber. Additive to lock version 1: old
      * engines ignore the key and degrade safely.
@@ -43,10 +45,13 @@ export function sha256Hex(text: string): string {
 }
 
 /**
- * Load the target repo's scaffold lock. NEVER throws: a missing, unparsable, or
- * wrong-shape lock degrades to an EMPTY one (every seed then reads as
- * "customized" — fail safe: nothing gets overwritten on bad data). `invalid`
- * flags an existing-but-garbage lock so the caller rewrites it valid.
+ * Load the target repo's scaffold lock. A missing, unparsable, or wrong-shape V1
+ * lock degrades to an EMPTY one (every seed then reads as "customized" — fail
+ * safe: nothing gets overwritten on bad data); `invalid` flags an
+ * existing-but-garbage lock so the caller rewrites it valid. The ONE throw: a
+ * well-formed lock declaring a version this engine does not support (written by
+ * a newer plugin) refuses loudly — silently reading it as v1, or rewriting it,
+ * would destroy data whose shape this engine cannot know.
  */
 export async function loadScaffoldLock(
     targetRoot: string
@@ -58,6 +63,10 @@ export async function loadScaffoldLock(
     }
     try {
         const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
+        const version = typeof parsed === 'object' && parsed !== null ? (parsed as {version?: unknown}).version : null
+        if (typeof version === 'number' && version !== 1) {
+            throw new UnsupportedLockVersionError(version)
+        }
         const seeds = typeof parsed === 'object' && parsed !== null ? (parsed as {seeds?: unknown}).seeds : null
         if (typeof seeds !== 'object' || seeds === null) {
             return {lock: empty, existed: true, invalid: true}
@@ -75,8 +84,23 @@ export async function loadScaffoldLock(
         }
         const managed = (parsed as {managed?: unknown}).managed
         return {lock: {version: 1, seeds: readMap(seeds), managed: readMap(managed)}, existed: true, invalid: false}
-    } catch {
+    } catch (err) {
+        if (err instanceof UnsupportedLockVersionError) {
+            throw err
+        }
         return {lock: empty, existed: true, invalid: true}
+    }
+}
+
+/** A well-formed lock from a NEWER engine — refuse rather than relabel/rewrite it. */
+export class UnsupportedLockVersionError extends Error {
+    constructor(version: number) {
+        super(
+            `scaffold: ${SCAFFOLD_LOCK_REL} declares version ${version}, but this engine supports ` +
+                `only version 1 — upgrade the factory plugin (or delete the lock to re-adopt seeds). ` +
+                `Nothing was written.`
+        )
+        this.name = 'UnsupportedLockVersionError'
     }
 }
 

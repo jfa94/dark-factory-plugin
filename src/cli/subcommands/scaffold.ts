@@ -20,7 +20,7 @@
  * read them; partial-run reporting lands in WS12.
  */
 /* eslint-disable security/detect-non-literal-fs-filename -- fs on internal derived paths (run/spec/state/repo/data dirs), never external input; runtime write-danger is covered by the TCB write-deny hook */
-import {mkdir, readFile, writeFile} from 'node:fs/promises'
+import {mkdir, readFile, unlink, writeFile} from 'node:fs/promises'
 import {existsSync} from 'node:fs'
 import {homedir} from 'node:os'
 import {dirname, join, relative} from 'node:path'
@@ -57,14 +57,9 @@ import {
 } from '../../ci/index.js'
 import {StateManager} from '../../core/state/index.js'
 import {ensureTargetSettings, buildTargetDataDirRules, type TargetDataDirRules} from './target-settings.js'
-import {ensureGateContract, recommendFastCheck, resolveGateContract} from './scaffold-gates.js'
+import {ensureGateContract, preflightGateContract, recommendFastCheck} from './scaffold-gates.js'
 import {loadScaffoldLock, saveScaffoldLock, sha256Hex, SCAFFOLD_LOCK_REL, type ScaffoldLock} from './scaffold-lock.js'
-import {
-    GATE_CONTRACT_REL,
-    loadGateContract,
-    mutationRoots,
-    requiredCheckExtras,
-} from '../../verifier/deterministic/gate-contract.js'
+import {GATE_CONTRACT_REL, mutationRoots, requiredCheckExtras} from '../../verifier/deterministic/gate-contract.js'
 import type {GateContract, GateContractStack} from '../../verifier/deterministic/gate-contract.js'
 import {UsageError} from '../../shared/usage-error.js'
 import {withUsageGuard, type Subcommand} from '../registry-types.js'
@@ -102,7 +97,9 @@ Options:
   --force-managed       Re-adopt conflicted MANAGED files: overwrite a customized
                         managed file with the plugin template and re-record its
                         hash (default: a customized managed file is a
-                        files_conflict refusal with zero writes)
+                        files_conflict refusal with zero writes). Never
+                        authorizes DELETING a customized stale nightly —
+                        force only overwrites toward the shipped template
 
 Also resolves + writes the GATE CONTRACT (.factory/gates.json, Decision 46): the
 committed per-gate applicability agreement. Refuses below the floor (test + type +
@@ -210,6 +207,13 @@ export interface ScaffoldReport {
      * shows in `git diff`); customized seeds are never touched.
      */
     readonly files_updated: string[]
+    /**
+     * Managed files DELETED this run (5c): currently only a stale
+     * `.github/workflows/mutation-nightly.yml` whose bytes provably match the
+     * scaffold lock while the contract records mutation as uncontracted. Always
+     * present (empty when nothing was removed).
+     */
+    readonly files_removed: string[]
     readonly protection: {
         readonly enabled: boolean
         readonly strict_up_to_date: boolean
@@ -342,6 +346,7 @@ interface FileLists {
     readonly created: string[]
     readonly present: string[]
     readonly updated: string[]
+    readonly removed: string[]
 }
 
 /** Mutable scaffold-lock state threaded through the seed + managed passes (see scaffold-lock.ts). */
@@ -460,8 +465,9 @@ async function applyTemplate(
     // before any write of the run landed; the written hash is recorded so the NEXT
     // scaffold can prove pristineness again.
     const [rendered, destText] = await Promise.all([render(), readFile(dest, 'utf8')])
-    if (lock && lock.managed[entry.rel] !== sha256Hex(rendered)) {
-        lock.managed[entry.rel] = sha256Hex(rendered)
+    const renderedHash = sha256Hex(rendered)
+    if (lock && lock.managed[entry.rel] !== renderedHash) {
+        lock.managed[entry.rel] = renderedHash
         lock.dirty = true
     }
     if (rendered === destText) {
@@ -613,45 +619,49 @@ function managedTransform(
  * `--force-managed` re-adopts conflicted files: the overwrite proceeds and the
  * new render's hash is recorded, restoring pristine tracking.
  *
- * The contract is resolved READ-ONLY here; if it cannot resolve (below-floor,
- * invalid gates.json) the preflight is skipped — the real `ensureGateContract`
- * below throws the identical refusal before any managed write could land.
- * KNOWN EDGE: this pre-seed render can differ from the final post-seed render
- * only when a to-be-seeded eslint config flips the contracted lint gate — a
- * byte-equal-to-render file may then read as a conflict. That direction is
- * fail-safe (a refusal, never a clobber) and `--force-managed` resolves it.
+ * `contract` is the READ-ONLY preflight contract (5b): resolved with this run's
+ * to-be-seeded files projected as present, so it matches the post-seed
+ * authoritative resolution and the renders compared here are the renders pass 2b
+ * will write.
+ *
+ * 5c: when mutation is UNCONTRACTED, an existing nightly workflow is stale.
+ * Bytes matching the lock's managed hash make it eligible for deletion (the
+ * returned hash is re-proven immediately before the delete); anything else is a
+ * files_conflict that even `--force-managed` cannot resolve — force authorizes
+ * overwriting TOWARD the shipped template, never deleting unproven content.
  */
-async function preflightManagedFiles(opts: ScaffoldOptions, lock: LockState): Promise<void> {
-    let contract: GateContract | undefined
-    try {
-        const load = await loadGateContract(opts.targetRoot)
-        contract =
-            load.state === 'ok'
-                ? load.contract
-                : await resolveGateContract({
-                      targetRoot: opts.targetRoot,
-                      securityCommand: opts.config.quality.securityCommand,
-                      waiveMutation: opts.waiveMutation === true,
-                      waiveCoverage: opts.waiveCoverage === true,
-                  })
-    } catch {
-        return
-    }
+async function preflightManagedFiles(
+    opts: ScaffoldOptions,
+    lock: LockState,
+    contract: GateContract
+): Promise<{staleNightlyHash: string | undefined}> {
     if (contract.stack !== 'npm') {
-        return // no CI net is written for non-npm stacks
+        return {staleNightlyHash: undefined} // no CI net is written for non-npm stacks
     }
     const facts = await readWorkflowFacts(opts.targetRoot)
     const conflicts: string[] = []
+    let staleNightlyConflict = false
+    let staleNightlyHash: string | undefined
     for (const entry of TEMPLATE_MANIFEST) {
         if (entry.policy !== 'managed') {
-            continue
-        }
-        if (entry.rel === MUTATION_NIGHTLY_REL && !contract.gates.mutation.contracted) {
             continue
         }
         const segs = entry.rel.split('/')
         const dest = join(opts.targetRoot, ...segs)
         const src = join(opts.templatesDir, ...segs)
+        if (entry.rel === MUTATION_NIGHTLY_REL && !contract.gates.mutation.contracted) {
+            if (!existsSync(dest)) {
+                continue // nothing rendered, nothing stale
+            }
+            const destHash = sha256Hex(await readFile(dest, 'utf8'))
+            if (destHash === lock.managed[entry.rel]) {
+                staleNightlyHash = destHash
+            } else {
+                staleNightlyConflict = true
+                conflicts.push(entry.rel)
+            }
+            continue
+        }
         if (!existsSync(dest) || !existsSync(src)) {
             continue
         }
@@ -668,19 +678,48 @@ async function preflightManagedFiles(opts: ScaffoldOptions, lock: LockState): Pr
         conflicts.push(entry.rel)
     }
     if (conflicts.length === 0) {
-        return
+        return {staleNightlyHash}
     }
-    if (opts.forceManaged === true) {
+    if (opts.forceManaged === true && !staleNightlyConflict) {
         log.warn(`--force-managed: re-adopting customized managed file(s): ${conflicts.join(', ')}`)
-        return
+        return {staleNightlyHash}
     }
     throw new UsageError(
         `files_conflict: managed file(s) differ from both the shipped template and the recorded ` +
             `scaffold hash: ${conflicts.join(', ')}. Nothing was written (no seeds, gate contract, ` +
             `lock, or protection changes). Managed files are plugin-authored by contract — restore ` +
             `them (git checkout) or pass --force-managed to overwrite them with the plugin template ` +
-            `and re-record their hashes.`
+            `and re-record their hashes.` +
+            (staleNightlyConflict
+                ? ` Note: ${MUTATION_NIGHTLY_REL} is STALE (mutation is uncontracted) and its bytes ` +
+                  `don't match the recorded scaffold hash — --force-managed cannot authorize DELETING ` +
+                  `unproven content; restore it (git checkout) or delete the file yourself.`
+                : '')
     )
+}
+
+/**
+ * Delete the stale nightly workflow (5c), re-proving pristineness IMMEDIATELY
+ * before the unlink: `expectedHash` is what preflight saw — if the file changed
+ * in between, fail without deleting.
+ */
+export async function removeStaleNightly(
+    targetRoot: string,
+    expectedHash: string,
+    lists: FileLists,
+    lock: LockState
+): Promise<void> {
+    const dest = join(targetRoot, ...MUTATION_NIGHTLY_REL.split('/'))
+    const current = sha256Hex(await readFile(dest, 'utf8'))
+    if (current !== expectedHash) {
+        throw new Error(
+            `scaffold: ${MUTATION_NIGHTLY_REL} changed since preflight — not deleting; re-run factory scaffold`
+        )
+    }
+    await unlink(dest)
+    Reflect.deleteProperty(lock.managed, MUTATION_NIGHTLY_REL)
+    lock.dirty = true
+    lists.removed.push(MUTATION_NIGHTLY_REL)
 }
 
 /**
@@ -693,19 +732,78 @@ async function preflightManagedFiles(opts: ScaffoldOptions, lock: LockState): Pr
  * scaffold no longer creates or protects a shared `staging` branch.
  */
 export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport> {
-    const lists: FileLists = {created: [], present: [], updated: []}
+    const lists: FileLists = {created: [], present: [], updated: [], removed: []}
+
+    const isNodePackage = existsSync(join(opts.targetRoot, 'package.json'))
+    // May throw (5d): a well-formed lock with an unsupported version refuses
+    // before any write. A garbage V1 lock degrades + is marked dirty so the
+    // first persist rewrites it valid.
+    const lockLoad = await loadScaffoldLock(opts.targetRoot)
+    const lock: LockState = {
+        seeds: {...lockLoad.lock.seeds},
+        managed: {...lockLoad.lock.managed},
+        dirty: lockLoad.invalid,
+    }
+
+    // 0a. READ-ONLY contract preflight (5b) — every resolution/refusal error
+    //     (invalid gates.json, below-floor, install-or-waive) propagates HERE,
+    //     before any seed/lock write. Seeds this run will create are projected as
+    //     present so the resolution matches the post-seed authoritative one
+    //     (a to-be-seeded eslint.config.mjs flips the lint gate).
+    const projectedSeedFiles = TEMPLATE_MANIFEST.filter(
+        (e) =>
+            e.policy === 'seed' &&
+            (e.nodeOnly !== true || isNodePackage) &&
+            existsSync(join(opts.templatesDir, ...e.rel.split('/'))) &&
+            !existsSync(join(opts.targetRoot, ...e.rel.split('/')))
+    ).map((e) => e.rel)
+    const preflightContract = await preflightGateContract({
+        targetRoot: opts.targetRoot,
+        securityCommand: opts.config.quality.securityCommand,
+        waiveMutation: opts.waiveMutation === true,
+        waiveCoverage: opts.waiveCoverage === true,
+        projectedSeedFiles,
+    })
+
+    // 0b. S10 managed-file preflight — a conflict must abort BEFORE any write.
+    const nightlyPreflight = await preflightManagedFiles(opts, lock, preflightContract)
+
+    // Persist the lock whenever a pass left it dirty (5a) — keyed on lock.dirty
+    // itself, never inferred from the report file lists (a byte-equal managed
+    // adoption records a hash without landing in created/updated). A lock that
+    // would be empty and never existed is skipped only in the sense that nothing
+    // marks it dirty (no `{seeds:{}}` noise on non-node targets).
+    let lockReported = false
+    const persistLock = async (): Promise<void> => {
+        if (!lock.dirty) {
+            return
+        }
+        const toSave: ScaffoldLock = {version: 1, seeds: lock.seeds, managed: lock.managed}
+        await saveScaffoldLock(opts.targetRoot, toSave)
+        lock.dirty = false
+        if (!lockReported) {
+            lockReported = true
+            if (lockLoad.existed) {
+                lists.present.push(SCAFFOLD_LOCK_REL)
+            } else {
+                lists.created.push(SCAFFOLD_LOCK_REL)
+                log.info(`wrote ${SCAFFOLD_LOCK_REL} (pristine-tracking) — COMMIT it alongside the seeds`)
+            }
+        }
+    }
+    // An unchanged existing lock still shows up in the report as `present`
+    // (closure so TS CFA doesn't over-narrow the closure-mutated flag).
+    const reportLockPresentIfUnsaved = (): void => {
+        if (!lockReported && lockLoad.existed) {
+            lists.present.push(SCAFFOLD_LOCK_REL)
+            lockReported = true
+        }
+    }
 
     // 1. SEED template artifacts (Δ Z): baseline when absent, auto-refreshed only
     //    while pristine per the scaffold lock; `nodeOnly` configs apply only to a
     //    Node-package target. Seeds go FIRST so the freshly seeded eslint config
     //    participates in the npm lint resolution below.
-    const isNodePackage = existsSync(join(opts.targetRoot, 'package.json'))
-    const lockLoad = await loadScaffoldLock(opts.targetRoot)
-    const lock: LockState = {seeds: {...lockLoad.lock.seeds}, managed: {...lockLoad.lock.managed}, dirty: false}
-
-    // 0. S10 managed-file preflight — a conflict must abort BEFORE any write.
-    await preflightManagedFiles(opts, lock)
-
     for (const entry of TEMPLATE_MANIFEST) {
         if (CI_NET_RELS.includes(entry.rel) || entry.rel === STRYKER_SEED_REL) {
             continue // the managed CI net + stryker seed render AFTER the contract (pass 2)
@@ -715,27 +813,8 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
         }
         await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock)
     }
-    // Persist the lock NOW — the gate-contract / protection steps below can throw
-    // (refusal paths) AFTER seeds already landed on disk, and losing the recorded
-    // hashes would strand those seeds as permanently "customized". A garbage lock
-    // is rewritten valid; a lock that would be empty and didn't exist is skipped
-    // (no `{seeds:{}}` noise on non-node targets where every seed is skipped).
-    let lockReported = false
-    if (lock.dirty || lockLoad.invalid) {
-        const toSave: ScaffoldLock = {version: 1, seeds: lock.seeds, managed: lock.managed}
-        await saveScaffoldLock(opts.targetRoot, toSave)
-        lock.dirty = false
-        lockReported = true
-        if (lockLoad.existed) {
-            lists.present.push(SCAFFOLD_LOCK_REL)
-        } else {
-            lists.created.push(SCAFFOLD_LOCK_REL)
-            log.info(`wrote ${SCAFFOLD_LOCK_REL} (seed pristine-tracking) — COMMIT it alongside the seeds`)
-        }
-    } else if (lockLoad.existed) {
-        lists.present.push(SCAFFOLD_LOCK_REL)
-        lockReported = true
-    }
+    await persistLock()
+    reportLockPresentIfUnsaved()
 
     // 2. The GATE CONTRACT (S7, Decision 46): resolve the stack + write
     //    `.factory/gates.json` (seed-like — an existing VALID contract is
@@ -778,23 +857,9 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
             await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock, (text) =>
                 text.replace('"src/**/*.ts"', includes)
             )
-            // A written/refreshed seed recorded a new lock hash — persist it (the
-            // pass-1 save already happened; TS CFA can't see applyTemplate's mutation
-            // of lock.dirty, so key off the file lists instead).
-            const wroteSeed = lists.created.includes(STRYKER_SEED_REL) || lists.updated.includes(STRYKER_SEED_REL)
-            if (wroteSeed) {
-                await saveScaffoldLock(opts.targetRoot, {version: 1, seeds: lock.seeds, managed: lock.managed})
-                lock.dirty = false
-                if (!lockReported) {
-                    if (lockLoad.existed) {
-                        lists.present.push(SCAFFOLD_LOCK_REL)
-                    } else {
-                        lists.created.push(SCAFFOLD_LOCK_REL)
-                        log.info(`wrote ${SCAFFOLD_LOCK_REL} (seed pristine-tracking) — COMMIT it alongside the seeds`)
-                    }
-                    lockReported = true
-                }
-            }
+            // A written/refreshed seed recorded a new lock hash — persist it (5a:
+            // keyed on lock.dirty inside the helper, never on the file lists).
+            await persistLock()
         }
     }
 
@@ -818,23 +883,14 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
             const transform = managedTransform(entry.rel, gates.contract, facts, opts.config.quality.gateEnv)
             await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock, transform)
         }
-        // Persist newly recorded managed hashes (S10 pristine tracking for the NEXT
-        // run). Same TS CFA blind spot as pass 2a: applyTemplate's mutation of
-        // lock.dirty is invisible after the pass-1 reset, so key off the file lists.
-        const wroteManaged = CI_NET_RELS.some((rel) => lists.created.includes(rel) || lists.updated.includes(rel))
-        if (wroteManaged) {
-            await saveScaffoldLock(opts.targetRoot, {version: 1, seeds: lock.seeds, managed: lock.managed})
-            lock.dirty = false
-            if (!lockReported) {
-                if (lockLoad.existed) {
-                    lists.present.push(SCAFFOLD_LOCK_REL)
-                } else {
-                    lists.created.push(SCAFFOLD_LOCK_REL)
-                    log.info(`wrote ${SCAFFOLD_LOCK_REL} (pristine-tracking) — COMMIT it alongside the seeds`)
-                }
-                lockReported = true
-            }
+        // 5c: mutation uncontracted + a preflight-proven-pristine stale nightly →
+        // delete it (re-proving the bytes immediately before the unlink).
+        if (!gates.contract.gates.mutation.contracted && nightlyPreflight.staleNightlyHash !== undefined) {
+            await removeStaleNightly(opts.targetRoot, nightlyPreflight.staleNightlyHash, lists, lock)
         }
+        // Persist newly recorded managed hashes — including byte-equal adoptions
+        // that never touch created/updated (5a) — and any nightly removal.
+        await persistLock()
         // The shard script above is an esbuild bundle in the plugin's own style —
         // exclude it from the target's prettier pass the same way the plugin repo does.
         await ensurePrettierignore(opts.targetRoot, lists)
@@ -848,6 +904,9 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
     // template change) — these are the propagation path, worth a loud line.
     if (lists.updated.length > 0) {
         log.info(`auto-updated ${lists.updated.length} outdated scaffold file(s): ${lists.updated.join(', ')}`)
+    }
+    if (lists.removed.length > 0) {
+        log.info(`removed ${lists.removed.length} stale scaffold file(s): ${lists.removed.join(', ')}`)
     }
     // S8 PBT advisory (never blocks, never installs): fast-check unlocks the
     // test-writer's property-based tests.
@@ -949,6 +1008,7 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
         files_created: lists.created,
         files_present: lists.present,
         files_updated: lists.updated,
+        files_removed: lists.removed,
         protection: {
             enabled: state.enabled,
             strict_up_to_date: state.strictUpToDate,

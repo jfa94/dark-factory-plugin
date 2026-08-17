@@ -118,7 +118,10 @@ own private `staging-<run-id>` integration branch from `develop` at
 It prints a `ScaffoldReport`: `files_created`, `files_present`, `files_updated`
 (outdated files auto-refreshed — both managed files and seed configs only while
 provably pristine per the committed `.factory/scaffold.lock` hash record; commit the
-lock alongside the seeds), `protection` (enabled / strict-up-to-date / required checks /
+lock alongside the seeds), `files_removed` (managed files deleted this run — a stale
+`mutation-nightly.yml` is removed when mutation is uncontracted, but only while its
+bytes provably match the lock; a customized one is a `files_conflict` that even
+`--force-managed` will not delete), `protection` (enabled / strict-up-to-date / required checks /
 provisioned), and `settings` (created / changed, plus a nested `local` with the same
 shape for `.claude/settings.local.json`). A CUSTOMIZED seed config is
 project-owned — reported under `files_present`, never overwritten (even a richer

@@ -112,13 +112,13 @@ branch's checks come from `git.stagingRequiredStatusChecks` (default empty) at
 factory scaffold [--repo <owner/name>] [--provision] [--waive mutation|coverage] [--force-managed]
 ```
 
-| Flag                  | Required | Notes                                                                                                                                                        |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--repo <owner/name>` | no       | Target GitHub repo (used for the protection probe). Auto-derived from the `origin` remote when omitted; an explicit value that disagrees with it fails loud. |
-| `--provision`         | no       | Write the mode's at-rest protection on develop (run-scoped: baseline; permanent: strict). Default: refuse when unprotected.                                  |
-| `--waive mutation`    | no       | Record the mutation gate as deliberately waived in the contract instead of refusing when stryker is not installed.                                           |
-| `--waive coverage`    | no       | Record the coverage gate as deliberately waived instead of refusing when no vitest coverage provider is installed.                                           |
-| `--force-managed`     | no       | Re-adopt conflicted MANAGED files: overwrite a customized managed file with the plugin template and re-record its hash. Default: refuse (`files_conflict`).  |
+| Flag                  | Required | Notes                                                                                                                                                                                                                                                                                 |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--repo <owner/name>` | no       | Target GitHub repo (used for the protection probe). Auto-derived from the `origin` remote when omitted; an explicit value that disagrees with it fails loud.                                                                                                                          |
+| `--provision`         | no       | Write the mode's at-rest protection on develop (run-scoped: baseline; permanent: strict). Default: refuse when unprotected.                                                                                                                                                           |
+| `--waive mutation`    | no       | Record the mutation gate as deliberately waived in the contract instead of refusing when stryker is not installed.                                                                                                                                                                    |
+| `--waive coverage`    | no       | Record the coverage gate as deliberately waived instead of refusing when no vitest coverage provider is installed.                                                                                                                                                                    |
+| `--force-managed`     | no       | Re-adopt conflicted MANAGED files: overwrite a customized managed file with the plugin template and re-record its hash. Default: refuse (`files_conflict`). Never authorizes DELETING a customized/unknown stale nightly (below) — force only overwrites toward the shipped template. |
 
 ### Managed-file ownership is fail-safe
 
@@ -139,8 +139,18 @@ or protection change lands, and names the offending files; restore them
 version 1, so an older engine ignores it and degrades safely, and a legacy lock
 with no `managed` entries simply reports a conflict instead of silently clobbering.
 
+When mutation is **uncontracted** in the gate contract but a previously scaffolded
+`.github/workflows/mutation-nightly.yml` still exists, scaffold removes the stale
+workflow — but only with **current proof**: its bytes must match the lock's
+recorded managed hash (re-verified immediately before the delete). A customized or
+unknown stale nightly is a `files_conflict` refusal that `--force-managed` does
+**not** override — restore it (`git checkout`) or delete it yourself. A successful
+removal drops the lock entry and lands in `files_removed`.
+
 Emits a `ScaffoldReport`: `{ repo, files_created, files_present, files_updated,
-protection, settings }`. `files_updated` carries the outdated files auto-refreshed
+files_removed, protection, settings }`. `files_removed` (always present) carries
+managed files deleted this run — currently only the stale mutation nightly above.
+`files_updated` carries the outdated files auto-refreshed
 this run: managed CI-net files **only while provably pristine** (above), and SEED
 gate configs **only while pristine** — their bytes still matching the hash the committed
 `.factory/scaffold.lock` recorded when scaffold wrote them

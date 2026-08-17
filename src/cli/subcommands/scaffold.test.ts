@@ -12,7 +12,7 @@ import {dirname, join} from 'node:path'
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 
-import {runScaffold, resolveTemplatesDir, scaffoldCommand, resolveScaffoldRepo} from './scaffold.js'
+import {runScaffold, resolveTemplatesDir, scaffoldCommand, resolveScaffoldRepo, removeStaleNightly} from './scaffold.js'
 import {sha256Hex} from './scaffold-lock.js'
 import {parseArgs} from '../args.js'
 import {EXIT} from '../../shared/exit-codes.js'
@@ -113,6 +113,8 @@ describe('runScaffold', () => {
         expect(report.files_created).toContain('.github/scripts/shard-mutation-scope.mjs')
         expect(existsSync(join(root, '.github', 'scripts', 'shard-mutation-scope.mjs'))).toBe(true)
         expect(report.files_updated).toEqual([])
+        // files_removed is ALWAYS present (5c) — empty on a plain run.
+        expect(report.files_removed).toEqual([])
         // The advisory `files_outdated` bucket was retired with the project-owned SEED
         // model (Decision 15) — a SEED file is either created or present, never "outdated".
         expect(report).not.toHaveProperty('files_outdated')
@@ -809,6 +811,26 @@ describe('runScaffold', () => {
             }
         })
 
+        it('REFUSES a well-formed lock with an unsupported version before any write (5d)', async () => {
+            // A future engine wrote version 2 — silently reading it as v1 (or
+            // rewriting it) would destroy unknown data. Refuse before writes.
+            await mkdir(join(root, '.factory'), {recursive: true})
+            const v2 = JSON.stringify({version: 2, seeds: {}, managed: {}, future: {shape: 'unknown'}}) + '\n'
+            await writeFile(lockPath(), v2, 'utf8')
+
+            await expect(runScaffold(baseArgs())).rejects.toThrow(/version 2/)
+            expect(await readFile(lockPath(), 'utf8')).toBe(v2) // preserved byte-for-byte
+            expect(existsSync(join(root, 'eslint.config.mjs'))).toBe(false) // zero writes
+            expect(existsSync(join(root, '.gitignore'))).toBe(false)
+        })
+
+        it('distinguishes malformed v1 content (degrade) from an unsupported version (refuse) (5d)', async () => {
+            await mkdir(join(root, '.factory'), {recursive: true})
+            // version 1 but garbage seeds → the existing fail-safe degrade, no throw.
+            await writeFile(lockPath(), JSON.stringify({version: 1, seeds: 'garbage'}), 'utf8')
+            await expect(runScaffold(baseArgs())).resolves.toBeDefined()
+        })
+
         it('delete-and-rescaffold re-adopts a seed into pristine tracking', async () => {
             await runScaffold(baseArgs())
             await rm(join(root, '.stryker.config.json'))
@@ -829,8 +851,9 @@ describe('runScaffold', () => {
             }
         })
 
-        it('the lock survives a gate-contract refusal (saved before the contract step)', async () => {
-            // npm fixture WITHOUT stryker → seeds land, then the contract refuses.
+        it('a gate-contract refusal is PREFLIGHTED: zero writes — no seeds, no lock (5b)', async () => {
+            // npm fixture WITHOUT stryker → the read-only contract preflight refuses
+            // BEFORE any seed or lock write lands.
             await writeFile(
                 join(root, 'package.json'),
                 JSON.stringify({
@@ -842,11 +865,9 @@ describe('runScaffold', () => {
                 'utf8'
             )
             await expect(runScaffold(baseArgs())).rejects.toThrow(/--waive mutation/)
-            const lock = await readLock()
-            // The stryker seed renders AFTER the contract (A4 roots) so it is NOT
-            // here — a pass-1 seed proves the early save.
-            expect(Object.keys(lock.seeds)).toContain('eslint.config.mjs')
-            expect(Object.keys(lock.seeds)).not.toContain('.stryker.config.json')
+            expect(existsSync(lockPath())).toBe(false)
+            expect(existsSync(join(root, 'eslint.config.mjs'))).toBe(false)
+            expect(existsSync(join(root, '.gitignore'))).toBe(false)
         })
 
         it('is idempotent: a second unchanged run leaves the lock byte-identical', async () => {
@@ -921,6 +942,33 @@ describe('runScaffold', () => {
             }
         })
 
+        it('persists a byte-equal managed adoption even when nothing was created/updated (5a)', async () => {
+            await runScaffold(baseArgs())
+            // Strip the managed entries — a legacy lock predating S10.
+            const lock = JSON.parse(await readFile(lockPath(), 'utf8')) as Record<string, unknown>
+            lock.managed = {}
+            await writeFile(lockPath(), JSON.stringify(lock) + '\n', 'utf8')
+
+            // Re-scaffold with UNCHANGED templates: every managed file is byte-equal
+            // to its render → nothing lands in created/updated, but the adoption
+            // (the recorded hashes) must still persist.
+            const second = await runScaffold(baseArgs())
+            expect(second.files_updated).toEqual([])
+            const relock = await readLock()
+            expect(relock.managed[SCRIPT_REL]).toBe(sha256Hex(await readFile(scriptPath(), 'utf8')))
+
+            // The re-adopted hash makes the NEXT template move a conflict-free
+            // pristine auto-update.
+            const mutated = await copyTemplates()
+            try {
+                await writeFile(join(mutated, ...SCRIPT_REL.split('/')), '// v2 shard helper\n', 'utf8')
+                const third = await runScaffold({...baseArgs(), templatesDir: mutated})
+                expect(third.files_updated).toContain(SCRIPT_REL)
+            } finally {
+                await rm(mutated, {recursive: true, force: true})
+            }
+        })
+
         it('--force-managed re-adopts a customized managed file; subsequent runs are quiet', async () => {
             await runScaffold(baseArgs())
             await writeFile(scriptPath(), '// locally patched\n', 'utf8')
@@ -972,6 +1020,33 @@ describe('runScaffold', () => {
             await rm(join(root, 'tsconfig.json'))
             await expect(runScaffold(baseArgs())).rejects.toThrow(/vitest[\s\S]*tsconfig\.json[\s\S]*scripts\.build/)
             expect(existsSync(gatesPath())).toBe(false)
+            // Zero-write preflight (5b): the refusal lands BEFORE any seed or lock.
+            expect(existsSync(join(root, 'eslint.config.mjs'))).toBe(false)
+            expect(existsSync(join(root, '.factory', 'scaffold.lock'))).toBe(false)
+            expect(existsSync(join(root, '.gitignore'))).toBe(false)
+        })
+
+        it('projects the eslint seed into preflight resolution: eslint dep + no config → lint contracted (5b)', async () => {
+            const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
+                devDependencies: Record<string, string>
+            }
+            pkg.devDependencies.eslint = '^9.0.0'
+            await writeFile(join(root, 'package.json'), JSON.stringify(pkg), 'utf8')
+
+            const report = await runScaffold(baseArgs())
+            expect(report.files_created).toContain('eslint.config.mjs')
+            const contract = JSON.parse(await readFile(gatesPath(), 'utf8')) as GateContractFixture
+            // The freshly seeded eslint.config.mjs participates in resolution — the
+            // persisted contract carries lint CONTRACTED, not "no eslint config".
+            expect(contract.gates.lint).toEqual({contracted: true})
+        })
+
+        it('an unexpected resolver error (garbage package.json) also writes nothing (5b)', async () => {
+            await writeFile(join(root, 'package.json'), 'not json{{{', 'utf8')
+            await expect(runScaffold(baseArgs())).rejects.toThrow(/not valid JSON/)
+            expect(existsSync(join(root, 'eslint.config.mjs'))).toBe(false)
+            expect(existsSync(join(root, '.factory', 'scaffold.lock'))).toBe(false)
+            expect(existsSync(join(root, '.gitignore'))).toBe(false)
         })
 
         it('npm without stryker REFUSES naming install-or-waive; --waive mutation records the waiver', async () => {
@@ -1149,6 +1224,77 @@ describe('runScaffold', () => {
             const report = await runScaffold(baseArgs())
             expect(existsSync(join(root, '.stryker.config.json'))).toBe(false)
             expect(report.files_created).not.toContain('.stryker.config.json')
+        })
+
+        it('removes a PRISTINE stale nightly when mutation becomes uncontracted (5c)', async () => {
+            await runScaffold(baseArgs()) // mutation contracted → nightly written + lock-tracked
+            const nightlyPath = join(root, '.github', 'workflows', 'mutation-nightly.yml')
+            expect(existsSync(nightlyPath)).toBe(true)
+
+            // The project later waives mutation in its committed contract.
+            const gatesPath = join(root, '.factory', 'gates.json')
+            const contract = JSON.parse(await readFile(gatesPath, 'utf8')) as {
+                gates: {mutation: unknown}
+            }
+            contract.gates.mutation = {contracted: false, reason: 'waived via --waive mutation'}
+            await writeFile(gatesPath, JSON.stringify(contract, null, 2) + '\n', 'utf8')
+
+            const report = await runScaffold(baseArgs())
+            expect(report.files_removed).toEqual(['.github/workflows/mutation-nightly.yml'])
+            expect(existsSync(nightlyPath)).toBe(false)
+            const lock = JSON.parse(await readFile(join(root, '.factory', 'scaffold.lock'), 'utf8')) as {
+                managed: Record<string, string>
+            }
+            expect(lock.managed).not.toHaveProperty('.github/workflows/mutation-nightly.yml')
+
+            // Idempotent: a third run has nothing to remove.
+            const third = await runScaffold(baseArgs())
+            expect(third.files_removed).toEqual([])
+        })
+
+        it('a CUSTOMIZED stale nightly is a files_conflict — untouched, zero writes (5c)', async () => {
+            await runScaffold(baseArgs())
+            const gatesPath = join(root, '.factory', 'gates.json')
+            const contract = JSON.parse(await readFile(gatesPath, 'utf8')) as {gates: {mutation: unknown}}
+            contract.gates.mutation = {contracted: false, reason: 'waived via --waive mutation'}
+            await writeFile(gatesPath, JSON.stringify(contract, null, 2) + '\n', 'utf8')
+
+            const nightlyPath = join(root, '.github', 'workflows', 'mutation-nightly.yml')
+            const customized = 'name: my own nightly\n'
+            await writeFile(nightlyPath, customized, 'utf8')
+            const lockBefore = await readFile(join(root, '.factory', 'scaffold.lock'), 'utf8')
+
+            await expect(runScaffold(baseArgs())).rejects.toThrow(/files_conflict.*mutation-nightly/s)
+            expect(await readFile(nightlyPath, 'utf8')).toBe(customized)
+            expect(await readFile(join(root, '.factory', 'scaffold.lock'), 'utf8')).toBe(lockBefore)
+
+            // --force-managed does NOT authorize DELETING a customized file (5c):
+            // re-adoption overwrites toward the template; deletion of unproven
+            // content stays refused.
+            await expect(runScaffold({...baseArgs(), forceManaged: true})).rejects.toThrow(
+                /files_conflict.*mutation-nightly/s
+            )
+            expect(await readFile(nightlyPath, 'utf8')).toBe(customized)
+        })
+
+        it('removeStaleNightly re-proves pristineness immediately before deletion (TOCTOU guard, 5c)', async () => {
+            const nightlyPath = join(root, '.github', 'workflows', 'mutation-nightly.yml')
+            await mkdir(dirname(nightlyPath), {recursive: true})
+            await writeFile(nightlyPath, 'changed after preflight\n', 'utf8')
+            const lists = {created: [], present: [], updated: [], removed: []}
+            const lock = {seeds: {}, managed: {'.github/workflows/mutation-nightly.yml': 'stale'}, dirty: false}
+
+            await expect(removeStaleNightly(root, sha256Hex('what preflight saw\n'), lists, lock)).rejects.toThrow(
+                /changed since preflight/
+            )
+            expect(existsSync(nightlyPath)).toBe(true)
+            expect(lists.removed).toEqual([])
+
+            await removeStaleNightly(root, sha256Hex('changed after preflight\n'), lists, lock)
+            expect(existsSync(nightlyPath)).toBe(false)
+            expect(lists.removed).toEqual(['.github/workflows/mutation-nightly.yml'])
+            expect(lock.managed).toEqual({})
+            expect(lock.dirty).toBe(true)
         })
 
         it('re-scaffold with roots is idempotent (seed stays pristine-tracked, no spurious update)', async () => {

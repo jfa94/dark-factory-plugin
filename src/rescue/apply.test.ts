@@ -90,6 +90,7 @@ describe('applyRescue', () => {
                 task_id: 'a',
                 status: 'shipping',
                 escalation_rung: 2,
+                holdout_evaluator_retries: 1,
                 producer_role: 'implementer',
                 branch: 'factory/run/a',
                 pr_number: 9,
@@ -110,6 +111,7 @@ describe('applyRescue', () => {
         expect(a.reviewers).toEqual([])
         expect(a.producer_role).toBeUndefined()
         expect(a.started_at).toBeUndefined()
+        expect(a.holdout_evaluator_retries).toBeUndefined() // fresh evaluator budget after rescue
         // PR pointers preserved → the next attempt reuses the branch/PR (idempotent-create).
         expect(a.branch).toBe('factory/run/a')
         expect(a.pr_number).toBe(9)

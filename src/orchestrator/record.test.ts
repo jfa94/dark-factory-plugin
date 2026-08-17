@@ -206,6 +206,20 @@ describe('applyRecordHoldout record', () => {
         expect(task?.holdout_evaluator_retries).toBeUndefined()
     })
 
+    it.each([[true], [false]])(
+        'a well-formed result (satisfied: %s) clears a prior evaluator-fault streak (consecutive-fault counter)',
+        async (sat) => {
+            await holdout.put(RUN_ID, makeHoldoutRecord('t1', ['d'], 5))
+            await state.updateTask(RUN_ID, 't1', (t) => ({...t, holdout_evaluator_retries: 1}))
+            const raw = validatorJson([['d', sat, sat ? 'src/x.ts:1' : '']])
+
+            const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, raw)
+
+            expect(result.kind).toBe('recorded')
+            expect((await state.read(RUN_ID)).tasks.t1?.holdout_evaluator_retries).toBeUndefined()
+        }
+    )
+
     const evaluatorFailures: readonly [string, (record: string) => string][] = [
         ['unparseable output', () => 'not json at all'],
         ['wrong cardinality', () => validatorJson([['d', true, 'src/x.ts:1']])],
@@ -231,6 +245,12 @@ describe('applyRecordHoldout record', () => {
         'evaluator failure (%s) retries the same-rung verify wave without persisting verdicts or bumping the rung',
         async (_name, mk) => {
             await holdout.put(RUN_ID, makeHoldoutRecord('t1', ['d', 'e'], 5))
+            // A live spawn checkpoint at the SAME (verify, rung): the retry write must
+            // clear it, or the re-entry would be charged to the spawn re-drive budget.
+            await state.updateTask(RUN_ID, 't1', (t) => ({
+                ...t,
+                spawn_in_flight: {phase: 'verify', rung: 0, tip_sha: 'sha-tip', spawned_at: 123, redrives: 1},
+            }))
 
             const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, mk('t1'))
 
@@ -243,6 +263,7 @@ describe('applyRecordHoldout record', () => {
             const task = (await state.read(RUN_ID)).tasks.t1
             expect(task?.escalation_rung).toBe(0) // producer rung untouched
             expect(task?.holdout_evaluator_retries).toBe(1)
+            expect(task?.spawn_in_flight).toBeUndefined() // cleared atomically with the increment
             expect(task?.status).not.toBe('failed')
         }
     )

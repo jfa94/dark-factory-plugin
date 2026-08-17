@@ -468,7 +468,10 @@ export async function nextAction(
                 // the checkpoint still names verify. Verify spawns read-only reviewers in their
                 // own isolated worktrees, so HEAD never moved and the reset is a no-op. Terminal
                 // writers (complete/fail) clear it; recording need not (the (phase, rung) change
-                // already shields it), so this stays the lone live read of the field.
+                // already shields it) — EXCEPT the holdout evaluator-retry path
+                // (applyRecordHoldout), which returns to the SAME (verify, rung) and therefore
+                // clears the checkpoint itself so the retry is never mistaken for a hung spawn
+                // here. This stays the lone live read of the field.
                 // Gated on the worktree existing: past preflight every producer/verify spawn
                 // has one, so this is true in any real run. When it is ABSENT (a degenerate
                 // pre-preflight state) no producer has committed, so there is nothing to

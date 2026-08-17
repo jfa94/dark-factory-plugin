@@ -749,6 +749,54 @@ describe('nextAction', () => {
         }
     })
 
+    it('a holdout evaluator failure retries verify WITHOUT spending the spawn re-drive budget (checkpoint cleared atomically)', async () => {
+        const {deps, runId, dataDir, cleanup} = await makeOrchestratorDeps({
+            tasks: [{task_id: 'T1', acceptance_criteria: ['criterion-a', 'criterion-b']}],
+        })
+        try {
+            await driveToVerify(deps, runId, 'T1')
+            const withheld = (await deps.holdout.get(runId, 'T1')).withheld_criteria
+            const panelEnv = await nextAction(deps, runId, 'T1')
+            expect(panelEnv.kind).toBe('spawn')
+            if (panelEnv.kind !== 'spawn') {
+                return
+            }
+            // panelEnv itself was a matching re-entry (driveToVerify already emitted the
+            // verify spawn), so one re-drive unit is already spent — the budget is non-zero.
+            const preFailure = await deps.state.read(runId)
+            expect(preFailure.tasks.T1?.spawn_in_flight?.redrives).toBe(1)
+
+            // Deliver MALFORMED holdout output alongside otherwise-approving reviews.
+            const results = {...approvingReviewsResults(panelEnv, withheld), holdout: {raw: 'not json at all'}}
+            const retryEnv = await nextAction(deps, runId, 'T1', results)
+
+            // The evaluator retry re-enters verify as a FRESH spawn: the checkpoint was
+            // cleared with the counter increment, so the re-drive budget is untouched
+            // (a fresh checkpoint at redrives 0, never 2).
+            expect(retryEnv.kind).toBe('spawn')
+            if (retryEnv.kind !== 'spawn') {
+                return
+            }
+            expect(retryEnv.phase).toBe('verify')
+            const run = await deps.state.read(runId)
+            expect(run.tasks.T1?.holdout_evaluator_retries).toBe(1)
+            expect(run.tasks.T1?.escalation_rung).toBe(0) // producer never charged
+            expect(run.tasks.T1?.spawn_in_flight).toMatchObject({phase: 'verify', rung: 0, redrives: 0})
+            // Neither the supplied reviews nor any verdict was persisted.
+            expect(run.tasks.T1?.reviewers).toEqual([])
+            const verdictStore = new FsHoldoutVerdictStore(dataDir)
+            expect(await verdictStore.has(runId, 'T1', 0)).toBe(false)
+
+            // A subsequent WELL-FORMED result clears the consecutive-fault counter.
+            const doneEnv = await nextAction(deps, runId, 'T1', approvingReviewsResults(retryEnv, withheld))
+            expect(doneEnv).toMatchObject({kind: 'done', outcome: {outcome: 'done'}})
+            const after = await deps.state.read(runId)
+            expect(after.tasks.T1?.holdout_evaluator_retries).toBeUndefined()
+        } finally {
+            await cleanup()
+        }
+    })
+
     it('ship pushes the task branch to origin before opening the PR', async () => {
         // Regression (CP2): preflight creates the task branch locally (checkout -B)
         // and the producers commit locally — nothing pushed it to origin, so the real

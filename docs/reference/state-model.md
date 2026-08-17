@@ -340,10 +340,21 @@ classifies the raw validator output (`classifyHoldoutOutput`); four shapes are
 - a `satisfied: true` verdict with blank evidence.
 
 An evaluator failure persists **no verdicts** and does not touch the escalation
-rung: it re-runs the verify wave at the **same rung**, incrementing this counter.
+rung: it re-runs the verify wave at the **same rung**, incrementing this counter
+and clearing `spawn_in_flight` in the same write (the retry re-enters the same
+`(verify, rung)`, so a surviving checkpoint would be mistaken for a hung spawn
+and spend the independent re-drive budget).
 The cap is `HOLDOUT_EVALUATOR_RETRY_CAP = 2` (`src/orchestrator/record.ts`);
 exhausting it fails the task **`blocked-environmental`** — the evaluator is broken,
 so charging the producer would be a lie.
+
+**Lifetime — the counter tracks _consecutive_ evaluator faults:**
+
+- incremented on each evaluator failure (as above);
+- cleared after **any well-formed holdout result** — pass or producer miss alike
+  (the evaluator proved it works, the streak is over);
+- cleared by a rescue reset (`resetTaskRow` drops it — a rescued task starts with
+  a fresh evaluator budget, like the other per-attempt retry state).
 
 This is distinct from `spawn_in_flight.redrives` (hung-spawn respawn,
 [Decision 66](../explanation/decisions.md)), which bounds output that never

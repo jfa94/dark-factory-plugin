@@ -276,6 +276,9 @@ export function resetTaskRow(task: TaskState, opts: ResetTaskRowOpts = {}): Task
         test_revision_feedback: _testRevisionFeedback,
         // D71: the failing-gate streak is per-attempt evidence — never spans a rescue.
         last_failing_gates: _lastFailingGates,
+        // The holdout evaluator-fault streak is per-attempt too (consecutive faults);
+        // a rescued task starts with a fresh evaluator budget.
+        holdout_evaluator_retries: _holdoutEvaluatorRetries,
         started_at: _startedAt,
         ended_at: _endedAt,
         phase: _phase,

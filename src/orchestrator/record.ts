@@ -276,10 +276,13 @@ export interface RecordHoldoutEnvelope {
 }
 
 /**
- * Same-rung verify re-runs allowed for holdout EVALUATOR failures (malformed
- * validator output). Distinct from SPAWN_REDRIVE_CAP (hung-spawn respawn,
- * Decision 66) — this bounds delivered-but-broken output. Exhaustion fails the
- * task `blocked-environmental`: the evaluator, not the producer, is broken.
+ * CONSECUTIVE same-rung verify re-runs allowed for holdout EVALUATOR failures
+ * (malformed validator output). Distinct from SPAWN_REDRIVE_CAP (hung-spawn
+ * respawn, Decision 66) — this bounds delivered-but-broken output, and the retry
+ * write clears `spawn_in_flight` so a retry is never charged to that budget.
+ * The counter (`holdout_evaluator_retries`) resets after ANY well-formed holdout
+ * result (pass or producer miss) and on rescue reset. Exhaustion fails the task
+ * `blocked-environmental`: the evaluator, not the producer, is broken.
  */
 export const HOLDOUT_EVALUATOR_RETRY_CAP = 2
 
@@ -313,9 +316,9 @@ export async function applyRecordHoldout(
     }
     const record = await deps.holdout.get(runId, taskId)
     const classified = classifyHoldoutOutput(record, raw)
+    const run = await deps.state.read(runId)
+    const used = run.tasks[taskId]?.holdout_evaluator_retries ?? 0
     if (classified.kind === 'evaluator-failure') {
-        const run = await deps.state.read(runId)
-        const used = run.tasks[taskId]?.holdout_evaluator_retries ?? 0
         if (used >= HOLDOUT_EVALUATOR_RETRY_CAP) {
             const step = await escalateOrFail(
                 deps,
@@ -330,7 +333,15 @@ export async function applyRecordHoldout(
             await persistStepCursor(deps, runId, taskId, step)
             return {kind: 'evaluator-failure', step}
         }
-        await deps.state.updateTask(runId, taskId, (t) => ({...t, holdout_evaluator_retries: used + 1}))
+        // Clear the spawn checkpoint ATOMICALLY with the retry increment: this retry
+        // returns to the SAME (verify, rung), so a surviving checkpoint would make the
+        // next orchestration step mistake the evaluator retry for a hung spawn and
+        // spend the independent spawn re-drive budget (Decision 66).
+        await deps.state.updateTask(runId, taskId, (t) => ({
+            ...t,
+            holdout_evaluator_retries: used + 1,
+            spawn_in_flight: undefined,
+        }))
         log.warn(
             `holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} — re-running the verify wave at the same rung`
         )
@@ -340,6 +351,11 @@ export async function applyRecordHoldout(
     }
     const verdicts = classified.verdicts
     await verdictStore.put(runId, taskId, rung, verdicts)
+    // The counter tracks CONSECUTIVE evaluator faults: any well-formed result —
+    // pass or producer miss alike — proves the evaluator works, so the streak ends.
+    if (used > 0) {
+        await deps.state.updateTask(runId, taskId, (t) => ({...t, holdout_evaluator_retries: undefined}))
+    }
 
     const check = checkHoldout(record, verdicts, deps.config.quality.holdoutPassRate)
     return {kind: 'recorded', envelope: {run_id: runId, task_id: taskId, evidence: holdoutEvidence(check), check}}

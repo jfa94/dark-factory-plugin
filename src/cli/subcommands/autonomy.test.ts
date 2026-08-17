@@ -1,34 +1,33 @@
 /**
- * Tests for E2 — `factory autonomy ensure`: the full-autonomy port of the old
- * `pipeline-ensure-autonomy`. It materializes `${CLAUDE_PLUGIN_DATA}/merged-settings.json`
- * from `templates/settings.autonomous.json` merged with the user's settings,
- * with placeholder substitution + env-baking + statusLine wiring, and prints the
- * `claude --worktree --settings <path>` relaunch command. That command carries NO
- * permission-mode override — the permissive merged settings are the point, and no
- * agent-side write lands under `~/.claude/` outside the `.claude/worktrees/`
- * exemption any more (Decision 67), so there is
- * nothing left for one to suppress. The relaunch-command assertions below use
- * EXACT equality so re-appending any flag fails them. The deny list is
- * deliberately short (accident-prevention, not containment) — see Decision 65.
+ * Tests for `factory autonomy` — inline-settings form (v1.47, Slice 6).
  *
- * The materialize core is pure + injectable (template string, user settings,
- * dataDir, pluginRoot) so units never touch the real ~/.claude or a real plugin
- * install.
+ * The settings are built IN MEMORY from `templates/settings.autonomous.json`
+ * merged with the user's settings (placeholder substitution + env-baking +
+ * statusLine wiring) and passed to `claude` as exactly ONE `--settings <json>`
+ * argument via a typed {@link RelaunchSpec} + the single audited POSIX renderer.
+ * Nothing is written to disk; the FACTORY_SETTINGS_HASH staleness machinery is
+ * gone. The relaunch command carries NO permission-mode override — the
+ * permissive merged settings are the point (Decision 67 amendment; the 2026-08-17
+ * spike chose the inline-settings fallback over native auto mode). The deny list
+ * is deliberately short (accident-prevention, not containment) — see Decision 65.
  */
-import {mkdtemp, rm, readFile, writeFile, mkdir} from 'node:fs/promises'
-import {existsSync} from 'node:fs'
+import {execFileSync} from 'node:child_process'
+import {mkdtemp, readdir, rm, readFile, writeFile, mkdir} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 
 import {
+    buildRelaunchSpec,
+    evaluateAutonomyPreflight,
     materializeMergedSettings,
-    mergedSettingsPath,
+    renderPosixCommand,
     runAutonomyEnsure,
     runAutonomyPreflight,
     runAutonomyStatus,
     type AutonomyStatus,
+    type RelaunchSpec,
 } from './autonomy.js'
 import {EXIT} from '../../shared/exit-codes.js'
 import {at} from '../../shared/index.js'
@@ -231,87 +230,15 @@ describe('materializeMergedSettings', () => {
         ).toThrow(/not a JSON object/)
     })
 
-    it('stamps env.FACTORY_SETTINGS_HASH and the hash is stable under template key order', () => {
-        const base = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {},
-            dataDir: DATA_DIR,
-            pluginRoot: PLUGIN_ROOT,
-            home: HOME,
-        })
-        const hash = (base.env as Record<string, string>).FACTORY_SETTINGS_HASH
-        expect(hash).toMatch(/^[0-9a-f]{64}$/)
-        // Same content, different top-level key order → same hash (canonical JSON).
-        const reordered = JSON.stringify(
-            Object.fromEntries(Object.entries(JSON.parse(TEMPLATE) as Record<string, unknown>).reverse())
-        )
+    it('DROPS an inherited FACTORY_SETTINGS_HASH (the staleness machinery is gone)', () => {
         const out = materializeMergedSettings({
-            template: reordered,
-            userSettings: {},
+            template: TEMPLATE,
+            userSettings: {env: {FACTORY_SETTINGS_HASH: 'stale-from-a-pre-1.47-relaunch'}},
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
         })
-        expect((out.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(hash)
-    })
-
-    it('normalizes plugin-root paths before hashing: a moved install alone does not churn the hash', () => {
-        const a = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {},
-            dataDir: DATA_DIR,
-            pluginRoot: '/opt/plugins/factory@1.0.0',
-            home: HOME,
-        })
-        const b = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {},
-            dataDir: DATA_DIR,
-            pluginRoot: '/opt/plugins/factory@2.0.0',
-            home: HOME,
-        })
-        expect((a.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(
-            (b.env as Record<string, string>).FACTORY_SETTINGS_HASH
-        )
-    })
-
-    it('a semantic template change AND a status-line change each change the hash', () => {
-        const hashOf = (template: string, userSettings: Record<string, unknown>): string => {
-            const out = materializeMergedSettings({
-                template,
-                userSettings,
-                dataDir: DATA_DIR,
-                pluginRoot: PLUGIN_ROOT,
-                home: HOME,
-            })
-            return (out.env as {FACTORY_SETTINGS_HASH: string}).FACTORY_SETTINGS_HASH
-        }
-        const base = hashOf(TEMPLATE, {})
-        const tweaked = JSON.parse(TEMPLATE) as {env: Record<string, string>}
-        tweaked.env.NEW_KEY = 'v'
-        expect(hashOf(JSON.stringify(tweaked), {})).not.toBe(base)
-        // A user statusLine changes the chained FACTORY_ORIGINAL_STATUSLINE → new hash.
-        expect(hashOf(TEMPLATE, {statusLine: {type: 'command', command: '~/mine.sh'}})).not.toBe(base)
-    })
-
-    it('a stale inherited FACTORY_SETTINGS_HASH in the user env never leaks into the hash', () => {
-        const clean = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {},
-            dataDir: DATA_DIR,
-            pluginRoot: PLUGIN_ROOT,
-            home: HOME,
-        })
-        const withStale = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {env: {FACTORY_SETTINGS_HASH: 'stale-from-a-prior-relaunch'}},
-            dataDir: DATA_DIR,
-            pluginRoot: PLUGIN_ROOT,
-            home: HOME,
-        })
-        expect((withStale.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(
-            (clean.env as Record<string, string>).FACTORY_SETTINGS_HASH
-        )
+        expect((out.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBeUndefined()
     })
 
     it('emits valid JSON (round-trips through stringify/parse)', () => {
@@ -328,9 +255,43 @@ describe('materializeMergedSettings', () => {
     })
 })
 
-describe('mergedSettingsPath', () => {
-    it('is <dataDir>/merged-settings.json', () => {
-        expect(mergedSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, 'merged-settings.json'))
+describe('renderPosixCommand', () => {
+    it('single-quotes every token and escapes embedded single quotes', () => {
+        const spec: RelaunchSpec = {executable: 'claude', argv: ['--settings', `{"a":"it's"}`]}
+        expect(renderPosixCommand(spec)).toBe(`'claude' '--settings' '{"a":"it'\\''s"}'`)
+    })
+
+    it('round-trips argv with spaces, apostrophes, semicolons, dollar signs and newlines through a real shell', () => {
+        const tricky = [
+            'plain',
+            'two words',
+            "it's got 'quotes'",
+            'a;b && c',
+            '$HOME `whoami` $(id)',
+            'line1\nline2',
+            '{"env":{"K":"v"},"deny":["Bash(rm -rf /)"]}',
+        ]
+        const spec: RelaunchSpec = {
+            executable: process.execPath,
+            argv: ['-e', 'console.log(JSON.stringify(process.argv.slice(1)))', '--', ...tricky],
+        }
+        const stdout = execFileSync('sh', ['-c', renderPosixCommand(spec)], {encoding: 'utf8'})
+        // node consumes its own `--` end-of-options marker: slice(1) is exactly the payload
+        expect(JSON.parse(stdout)).toEqual(tricky)
+    })
+})
+
+describe('buildRelaunchSpec', () => {
+    it('is claude --worktree --settings <json> with the settings as exactly ONE argv element', () => {
+        const settings = {env: {FACTORY_AUTONOMOUS_MODE: '1'}, permissions: {allow: ['Bash(*)']}}
+        const spec = buildRelaunchSpec(settings)
+        expect(spec.executable).toBe('claude')
+        expect(spec.argv).toHaveLength(3)
+        expect(spec.argv[0]).toBe('--worktree')
+        expect(spec.argv[1]).toBe('--settings')
+        expect(JSON.parse(at([...spec.argv], 2))).toEqual(settings)
+        // No permission-mode flag of any kind (spike gate: inline-settings fallback branch).
+        expect(spec.argv.join(' ')).not.toContain('--permission-mode')
     })
 })
 
@@ -342,7 +303,6 @@ describe('runAutonomyEnsure', () => {
     beforeEach(async () => {
         dataDir = await mkdtemp(join(tmpdir(), 'factory-autonomy-data-'))
         pluginRoot = await mkdtemp(join(tmpdir(), 'factory-autonomy-root-'))
-        // Phase a minimal template under the fake plugin root.
         await mkdir(join(pluginRoot, 'templates'), {recursive: true})
         await writeFile(join(pluginRoot, 'templates', 'settings.autonomous.json'), TEMPLATE, 'utf8')
         out.length = 0
@@ -353,7 +313,11 @@ describe('runAutonomyEnsure', () => {
         await rm(pluginRoot, {recursive: true, force: true})
     })
 
-    it('writes a valid merged-settings.json and prints the relaunch command', async () => {
+    /** The settings JSON carried as the one --settings argv element. */
+    const settingsOf = (spec: RelaunchSpec): Record<string, unknown> =>
+        JSON.parse(at([...spec.argv], 2)) as Record<string, unknown>
+
+    it('builds the settings in memory, writes NOTHING to disk, and prints the inline relaunch command', async () => {
         const result = await runAutonomyEnsure({
             dataDir,
             pluginRoot,
@@ -362,78 +326,82 @@ describe('runAutonomyEnsure', () => {
             writeStdout: (t) => out.push(t),
         })
 
-        const path = join(dataDir, 'merged-settings.json')
-        expect(existsSync(path)).toBe(true)
-        const written = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-        // Fully substituted + env baked + statusLine wired.
-        expect(JSON.stringify(written)).not.toContain('${CLAUDE_PLUGIN')
-        expect((written.env as Record<string, string>).CLAUDE_PLUGIN_DATA).toBe(dataDir)
-        expect((written.statusLine as {command: string}).command).toBe(`${pluginRoot}/bin/factory statusline`)
-        expect(result.path).toBe(path)
-        // Prints the relaunch command. Asserted by EXACT equality, not substring:
-        // the command must carry no permission-mode flag of any kind (Decision 67 —
-        // the permissive merged settings are the whole point), and an exact match
-        // is what fails if one is ever re-appended.
-        const printed = out.join('')
-        expect(printed).toContain(`claude --worktree --settings ${path}\n`)
-        expect(result.relaunchCommand).toBe(`claude --worktree --settings ${path}`)
+        // Nothing lands in the data dir (the merged-settings.json artifact is gone).
+        expect(await readdir(dataDir)).toEqual([])
+
+        // The one --settings argv element is the fully substituted settings object.
+        const settings = settingsOf(result.spec)
+        expect(JSON.stringify(settings)).not.toContain('${CLAUDE_PLUGIN')
+        expect((settings.env as Record<string, string>).CLAUDE_PLUGIN_DATA).toBe(dataDir)
+        expect((settings.statusLine as {command: string}).command).toBe(`${pluginRoot}/bin/factory statusline`)
+
+        // The rendered command is the renderer applied to the spec, verbatim, and
+        // carries no permission-mode flag of any kind (Decision 67 amendment).
+        expect(result.relaunchCommand).toBe(renderPosixCommand(result.spec))
+        expect(result.relaunchCommand).not.toContain('--permission-mode')
+        expect(out.join('')).toContain(result.relaunchCommand)
+    })
+
+    it('the printed command survives a real shell: argv round-trips with the settings intact', async () => {
+        const result = await runAutonomyEnsure({
+            dataDir,
+            pluginRoot,
+            userSettingsPath: join(pluginRoot, 'no-such-user-settings.json'),
+            home: HOME,
+            writeStdout: (t) => out.push(t),
+        })
+        // Re-render with a probe executable so the real shell hands us back the argv.
+        const probe: RelaunchSpec = {
+            executable: process.execPath,
+            argv: ['-e', 'console.log(JSON.stringify(process.argv.slice(1)))', '--', ...result.spec.argv],
+        }
+        const stdout = execFileSync('sh', ['-c', renderPosixCommand(probe)], {encoding: 'utf8'})
+        const roundTripped = JSON.parse(stdout) as string[]
+        // node consumes its own `--` end-of-options marker: what's left is the spec argv
+        expect(roundTripped).toEqual([...result.spec.argv])
+        expect(JSON.parse(at(roundTripped, 2))).toEqual(settingsOf(result.spec))
     })
 
     it("reads the user's settings.json when present and chains its statusLine", async () => {
         const userSettingsPath = join(pluginRoot, 'user-settings.json')
         await writeFile(userSettingsPath, JSON.stringify({statusLine: {command: '~/mine.sh'}, model: 'opus'}), 'utf8')
-        await runAutonomyEnsure({
+        const result = await runAutonomyEnsure({
             dataDir,
             pluginRoot,
             userSettingsPath,
             home: HOME,
             writeStdout: (t) => out.push(t),
         })
-        const written = JSON.parse(await readFile(join(dataDir, 'merged-settings.json'), 'utf8')) as Record<
-            string,
-            unknown
-        >
-        expect(written.model).toBe('opus')
-        expect((written.env as Record<string, string>).FACTORY_ORIGINAL_STATUSLINE).toBe(`${HOME}/mine.sh`)
+        const settings = settingsOf(result.spec)
+        expect(settings.model).toBe('opus')
+        expect((settings.env as Record<string, string>).FACTORY_ORIGINAL_STATUSLINE).toBe(`${HOME}/mine.sh`)
     })
 
     it("degrades to an empty base (no throw) when the user's settings.json is unparseable", async () => {
         const userSettingsPath = join(pluginRoot, 'user-settings.json')
         await writeFile(userSettingsPath, '{ this is : not json', 'utf8')
-        // Must NOT throw — a corrupt user settings file falls back to {} base.
-        await runAutonomyEnsure({
+        const result = await runAutonomyEnsure({
             dataDir,
             pluginRoot,
             userSettingsPath,
             home: HOME,
             writeStdout: (t) => out.push(t),
         })
-        const written = JSON.parse(await readFile(join(dataDir, 'merged-settings.json'), 'utf8')) as Record<
-            string,
-            unknown
-        >
-        // Template defaults still applied; no user statusLine chained (base was empty).
-        expect((written.env as Record<string, string>).CLAUDE_PLUGIN_DATA).toBe(dataDir)
-        expect((written.env as Record<string, string>).FACTORY_ORIGINAL_STATUSLINE).toBeUndefined()
+        const settings = settingsOf(result.spec)
+        expect((settings.env as Record<string, string>).CLAUDE_PLUGIN_DATA).toBe(dataDir)
+        expect((settings.env as Record<string, string>).FACTORY_ORIGINAL_STATUSLINE).toBeUndefined()
     })
 })
 
 describe('runAutonomyStatus', () => {
-    let dataDir: string
     const out: string[] = []
 
-    beforeEach(async () => {
-        dataDir = await mkdtemp(join(tmpdir(), 'factory-autonomy-status-'))
+    beforeEach(() => {
         out.length = 0
-    })
-
-    afterEach(async () => {
-        await rm(dataDir, {recursive: true, force: true})
     })
 
     it('exits OK and reports autonomous when FACTORY_AUTONOMOUS_MODE=1', async () => {
         const code = await runAutonomyStatus({
-            dataDir,
             env: {FACTORY_AUTONOMOUS_MODE: '1'},
             writeStdout: (t) => out.push(t),
         })
@@ -441,68 +409,39 @@ describe('runAutonomyStatus', () => {
         expect(out.join('')).toContain('autonomous: yes')
     })
 
-    it('exits ERROR and reports NOT autonomous when the var is unset', async () => {
+    it('exits ERROR and points at `factory autonomy ensure` when the var is unset', async () => {
         const code = await runAutonomyStatus({
-            dataDir,
             env: {},
             writeStdout: (t) => out.push(t),
         })
         expect(code).toBe(EXIT.ERROR)
-        expect(out.join('')).toContain('autonomous: NO')
+        const printed = out.join('')
+        expect(printed).toContain('autonomous: NO')
+        expect(printed).toContain('factory autonomy ensure')
     })
 
     it("exits ERROR for any non-'1' value (no bypass)", async () => {
         const code = await runAutonomyStatus({
-            dataDir,
             env: {FACTORY_AUTONOMOUS_MODE: 'true'},
             writeStdout: (t) => out.push(t),
         })
         expect(code).toBe(EXIT.ERROR)
     })
 
-    it('--json emits the full status shape with envSet distinguishing unset from wrong-value', async () => {
+    it('--json emits exactly {autonomous, envSet} — the merged-settings fields are GONE (v1.47 breaking)', async () => {
         await runAutonomyStatus({
-            dataDir,
             env: {FACTORY_AUTONOMOUS_MODE: '0'},
             json: true,
             writeStdout: (t) => out.push(t),
         })
         const parsed = JSON.parse(out.join('')) as AutonomyStatus
-        expect(parsed.autonomous).toBe(false)
-        expect(parsed.envSet).toBe(true) // present but "0"
-        expect(parsed.mergedSettingsPresent).toBe(false)
-        expect(parsed.mergedSettingsPath).toBe(mergedSettingsPath(dataDir))
+        expect(parsed).toEqual({autonomous: false, envSet: true}) // present but "0"
     })
 
     it('--json reports envSet:false when the var is entirely absent', async () => {
-        await runAutonomyStatus({dataDir, env: {}, json: true, writeStdout: (t) => out.push(t)})
+        await runAutonomyStatus({env: {}, json: true, writeStdout: (t) => out.push(t)})
         const parsed = JSON.parse(out.join('')) as AutonomyStatus
         expect(parsed.envSet).toBe(false)
-    })
-
-    it('detects an existing merged-settings.json', async () => {
-        await writeFile(mergedSettingsPath(dataDir), '{}', 'utf8')
-        await runAutonomyStatus({
-            dataDir,
-            env: {FACTORY_AUTONOMOUS_MODE: '1'},
-            json: true,
-            writeStdout: (t) => out.push(t),
-        })
-        const parsed = JSON.parse(out.join('')) as AutonomyStatus
-        expect(parsed.mergedSettingsPresent).toBe(true)
-    })
-
-    it('never throws even when the data dir cannot be resolved (degrades to env-only)', async () => {
-        // No dataDir + an env with no resolution hints: must still answer from the env
-        // signal rather than throw (this is the diagnostic the halted user runs).
-        const code = await runAutonomyStatus({
-            env: {FACTORY_AUTONOMOUS_MODE: '1', CLAUDE_PLUGIN_DATA: dataDir},
-            json: true,
-            writeStdout: (t) => out.push(t),
-        })
-        expect(code).toBe(EXIT.OK)
-        const parsed = JSON.parse(out.join('')) as AutonomyStatus
-        expect(parsed.autonomous).toBe(true)
     })
 })
 
@@ -510,33 +449,6 @@ describe('runAutonomyPreflight', () => {
     let dataDir: string
     let pluginRoot: string
     const out: string[] = []
-
-    /** Path of the merged settings under the current temp data dir. */
-    const settingsPath = (): string => mergedSettingsPath(dataDir)
-
-    /** The hash a regenerate would stamp NOW for this temp dataDir/pluginRoot. */
-    const expectedHash = (): string => {
-        const merged = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {},
-            dataDir,
-            pluginRoot,
-            home: HOME,
-        })
-        return (merged.env as {FACTORY_SETTINGS_HASH: string}).FACTORY_SETTINGS_HASH
-    }
-
-    /** Write a merged-settings.json carrying a sentinel key (and optional hash stamp). */
-    async function stageMergedSettings(hash?: string): Promise<void> {
-        const obj: Record<string, unknown> =
-            hash !== undefined ? {__sentinel: 'keep', env: {FACTORY_SETTINGS_HASH: hash}} : {__sentinel: 'keep'}
-        await writeFile(settingsPath(), JSON.stringify(obj), 'utf8')
-    }
-
-    /** Read back the written merged-settings.json as an object. */
-    async function readMerged(): Promise<Record<string, unknown>> {
-        return JSON.parse(await readFile(settingsPath(), 'utf8')) as Record<string, unknown>
-    }
 
     beforeEach(async () => {
         dataDir = await mkdtemp(join(tmpdir(), 'factory-preflight-data-'))
@@ -551,8 +463,7 @@ describe('runAutonomyPreflight', () => {
         await rm(pluginRoot, {recursive: true, force: true})
     })
 
-    it('exits OK and does NOT regenerate when autonomous + fresh (stored hash matches)', async () => {
-        await stageMergedSettings(expectedHash())
+    it('exits OK when autonomous — no settings involved, nothing touched (CI raw-env path included)', async () => {
         const code = await runAutonomyPreflight({
             dataDir,
             pluginRoot,
@@ -561,119 +472,64 @@ describe('runAutonomyPreflight', () => {
             writeStdout: (t) => out.push(t),
         })
         expect(code).toBe(EXIT.OK)
-        // No regenerate ⇒ the sentinel survives untouched.
-        expect((await readMerged()).__sentinel).toBe('keep')
-        // Human-facing result: an unmistakable OK: pass line + a one-sentence verdict.
-        const printed = out.join('')
-        expect(printed).toContain('OK:')
-        expect(printed).toMatch(/ready/i)
+        expect(await readdir(dataDir)).toEqual([])
+        expect(out.join('')).toContain('OK:')
     })
 
-    it('regenerates + exits ERROR with the relaunch command when the stored hash is stale', async () => {
-        await stageMergedSettings('deadbeef-not-the-real-hash')
+    it('prints the inline relaunch command + HALT and exits ERROR when not autonomous', async () => {
         const code = await runAutonomyPreflight({
             dataDir,
             pluginRoot,
-            env: {FACTORY_AUTONOMOUS_MODE: '1'},
+            env: {},
             home: HOME,
             writeStdout: (t) => out.push(t),
         })
         expect(code).toBe(EXIT.ERROR)
-        const written = await readMerged()
-        // Regenerated: sentinel gone, hash re-stamped to the expected content hash.
-        expect(written.__sentinel).toBeUndefined()
-        expect((written.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(expectedHash())
         const printed = out.join('')
-        expect(printed).toContain(`claude --worktree --settings ${settingsPath()}\n`)
-        expect(printed).toContain('stale')
-        // Human-facing result: an unmistakable HALT: line on the relaunch-required path.
         expect(printed).toContain('HALT:')
+        expect(printed).toContain(`'claude' '--worktree' '--settings'`)
+        // Still nothing on disk — the relaunch is inline.
+        expect(await readdir(dataDir)).toEqual([])
     })
 
-    it('regenerates + exits ERROR when the existing file lacks a FACTORY_SETTINGS_HASH stamp', async () => {
-        await stageMergedSettings() // unstamped
-        const code = await runAutonomyPreflight({
-            dataDir,
-            pluginRoot,
-            env: {FACTORY_AUTONOMOUS_MODE: '1'},
-            home: HOME,
-            writeStdout: (t) => out.push(t),
-        })
-        expect(code).toBe(EXIT.ERROR)
-        const written = await readMerged()
-        expect(written.__sentinel).toBeUndefined()
-        expect((written.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBe(expectedHash())
-    })
-
-    it('generates + exits ERROR when not autonomous + the file is missing (first run)', async () => {
-        expect(existsSync(settingsPath())).toBe(false)
-        const code = await runAutonomyPreflight({
-            dataDir,
-            pluginRoot,
-            env: {}, // not autonomous
-            home: HOME,
-            writeStdout: (t) => out.push(t),
-        })
-        expect(code).toBe(EXIT.ERROR)
-        expect(existsSync(settingsPath())).toBe(true)
-        expect(out.join('')).toContain(`claude --worktree --settings ${settingsPath()}\n`)
-    })
-
-    it('exits OK without writing when autonomous via raw env + no file (CI path)', async () => {
-        expect(existsSync(settingsPath())).toBe(false)
-        const code = await runAutonomyPreflight({
-            dataDir,
-            pluginRoot,
-            env: {FACTORY_AUTONOMOUS_MODE: '1'},
-            home: HOME,
-            writeStdout: (t) => out.push(t),
-        })
-        expect(code).toBe(EXIT.OK)
-        // No file existed and none was written — the env alone is sanctioned (CI).
-        expect(existsSync(settingsPath())).toBe(false)
-    })
-
-    it("exits OK without writing when the expected hash can't be computed (no churn)", async () => {
-        await rm(join(pluginRoot, 'templates'), {recursive: true, force: true})
-        await stageMergedSettings('deadbeef') // would look stale IF we could compare
-        const code = await runAutonomyPreflight({
-            dataDir,
-            pluginRoot,
-            env: {FACTORY_AUTONOMOUS_MODE: '1'},
-            home: HOME,
-            writeStdout: (t) => out.push(t),
-        })
-        expect(code).toBe(EXIT.OK)
-        // Can't prove staleness ⇒ leave the file untouched (sentinel survives).
-        expect((await readMerged()).__sentinel).toBe('keep')
-    })
-
-    it('passes --user-settings through to the regenerate (chains the statusLine)', async () => {
+    it('passes --user-settings through to the built settings (chains the statusLine)', async () => {
         const userSettingsPath = join(pluginRoot, 'user-settings.json')
         await writeFile(userSettingsPath, JSON.stringify({statusLine: {command: '~/mine.sh'}}), 'utf8')
-        const code = await runAutonomyPreflight({
+        const result = await evaluateAutonomyPreflight({
             dataDir,
             pluginRoot,
             userSettingsPath,
-            env: {}, // not autonomous + missing file ⇒ regenerate
+            env: {},
             home: HOME,
-            writeStdout: (t) => out.push(t),
         })
-        expect(code).toBe(EXIT.ERROR)
-        const written = await readMerged()
-        expect((written.env as Record<string, string>).FACTORY_ORIGINAL_STATUSLINE).toBe(`${HOME}/mine.sh`)
+        expect(result.state).toBe('relaunch')
+        if (result.state === 'relaunch') {
+            const settings = JSON.parse(at([...result.spec.argv], 2)) as {env: Record<string, string>}
+            expect(settings.env.FACTORY_ORIGINAL_STATUSLINE).toBe(`${HOME}/mine.sh`)
+        }
     })
 
-    it('the printed relaunch command points at the merged-settings path on every halt', async () => {
-        await stageMergedSettings('deadbeef') // stale ⇒ halt
-        await runAutonomyPreflight({
+    it('evaluateAutonomyPreflight is the two-state contract: ready when autonomous', async () => {
+        const result = await evaluateAutonomyPreflight({
             dataDir,
             pluginRoot,
             env: {FACTORY_AUTONOMOUS_MODE: '1'},
             home: HOME,
+        })
+        expect(result).toEqual({state: 'ready'})
+    })
+
+    it('degrades to a halt-with-message (never throws) when the relaunch cannot be built', async () => {
+        await rm(join(pluginRoot, 'templates'), {recursive: true, force: true})
+        const code = await runAutonomyPreflight({
+            dataDir,
+            pluginRoot,
+            env: {},
+            home: HOME,
             writeStdout: (t) => out.push(t),
         })
-        expect(out.join('')).toContain(`claude --worktree --settings ${settingsPath()}\n`)
+        expect(code).toBe(EXIT.ERROR)
+        expect(out.join('')).toContain('HALT:')
     })
 })
 

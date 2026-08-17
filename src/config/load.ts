@@ -181,8 +181,8 @@ export function inferPluginRoot(): string {
  * Resolve the plugin ROOT dir (the dir containing `.claude-plugin/`, `bin/`,
  * `hooks/`, `templates/`). Prefers the real `$CLAUDE_PLUGIN_ROOT` Claude Code
  * injects when the plugin is loaded, falling back to the runtime-location
- * inference. This is the value baked into `merged-settings.json` for the
- * `${CLAUDE_PLUGIN_ROOT}` placeholder (E2 autonomy port), so it must point at a
+ * inference. This is the value substituted for the `${CLAUDE_PLUGIN_ROOT}`
+ * placeholder in the inline autonomous settings (E2 autonomy port), so it must point at a
  * stable on-disk plugin install, not at `dist/`.
  *
  * @param env Override the environment (defaults to `process.env`). For tests.

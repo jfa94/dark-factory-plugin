@@ -168,27 +168,27 @@ bypass flag. The gate lives in the deterministic engine (`src/autonomy/mode.ts`,
 non-zero with the relaunch instruction rather than degrading to per-tool permission prompts.
 
 `/factory:run` calls `factory autonomy preflight` as its first step (Phase 0 of the
-runner skill). Preflight auto-scaffolds the merged settings when needed, so the user's
+runner skill). Preflight builds the settings in memory when needed, so the user's
 only manual act is the relaunch itself:
 
 ```bash
-factory autonomy preflight     # run-entry check: (re)scaffolds when needed, prints the relaunch command,
-                               #   exits 0 to proceed / 1 to halt (decides over autonomous? + settings
-                               #   present? + plugin vs on-disk version). Never throws on the decision path.
-factory autonomy ensure        # manual primitive: always (re)writes merged-settings.json + prints the command
+factory autonomy preflight     # run-entry check: exits 0 to proceed when the session is autonomous;
+                               #   otherwise prints the inline-settings relaunch command and exits 1.
+                               #   Never throws on the decision path.
+factory autonomy ensure        # manual primitive: builds the settings in memory + prints the command
 factory autonomy status        # manual primitive: exits 0 if autonomous, 1 if not (add --json for the payload)
 ```
 
-Preflight regenerates `${CLAUDE_PLUGIN_DATA}/merged-settings.json` (via `ensure`) and halts for a
-relaunch when the session is **not autonomous** OR the settings are **stale** (the stamped
-`FACTORY_SETTINGS_HASH` content fingerprint differs from what a regenerate would produce now),
-**missing**, or **unstamped**; it proceeds
-silently when the settings are already fresh, or when the session is autonomous via a
-directly-exported env (the sanctioned CI path). `ensure` merges
+Preflight is two-state (v1.47): the session is **autonomous** (`FACTORY_AUTONOMOUS_MODE=1`,
+however it got set — a prior inline-settings relaunch or a directly-exported env, the
+sanctioned CI path) → proceed; it is **not** → print the relaunch command and halt. Nothing
+is written to disk — the old `merged-settings.json` artifact and its staleness/hash machinery
+are gone; every relaunch carries the current settings by construction. `ensure` merges
 `templates/settings.autonomous.json` with the user's `~/.claude/settings.json` (placeholders
 substituted, `CLAUDE_PLUGIN_DATA` baked into `env`, `statusLine` wired to `factory statusline`, the
 user's own statusline chained via `FACTORY_ORIGINAL_STATUSLINE`), then prints
-`claude --settings <merged-settings.json>`. Relaunching with that command sets
+`claude --worktree --settings '<json>'` — the whole settings object passed inline as exactly
+one shell-quoted argument. Relaunching with that command sets
 `FACTORY_AUTONOMOUS_MODE=1` and produces a fresh `usage-cache.json` on the first turn, which the
 quota pacer reads. The relaunch is irreducible: Claude Code reads settings only at
 launch, so a running session can never make _itself_ autonomous — automation covers the scaffold,

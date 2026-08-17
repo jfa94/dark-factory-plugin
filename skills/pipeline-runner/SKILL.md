@@ -26,10 +26,10 @@ envelope names, feed the raw results back.**
 
 1. Confirm a git checkout: `git rev-parse --show-toplevel`. If not, stop.
 2. Confirm autonomous mode: `factory autonomy preflight` (exits 0 to proceed, 1 to halt).
-   It auto-scaffolds `merged-settings.json` when the session is not autonomous OR the
-   settings are stale/missing/unstamped, and prints the relaunch command. The pipeline
+   When the session is not autonomous it builds the settings in memory and prints the
+   inline-settings relaunch command (nothing is written to disk). The pipeline
    runs unattended — `run create`/`resume` HALT loud otherwise. On a non-zero exit,
-   relay the printed `claude --settings <merged-settings.json>` command to the user and
+   relay the printed `claude --worktree --settings '<json>'` command to the user and
    stop (the relaunch is the user's irreducible step; a running session cannot make
    itself autonomous). `factory autonomy status`/`ensure` remain the manual primitives.
 3. `factory scaffold` (idempotent; `--repo` is OPTIONAL — auto-derived from the

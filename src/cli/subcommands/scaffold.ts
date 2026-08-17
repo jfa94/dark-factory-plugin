@@ -923,7 +923,7 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
     // 3b. E1 (F-perm): emit / idempotently merge TWO target-repo settings files
     //     (Decision 17, corrected): the COMMITTED `.claude/settings.json` (factory
     //     allow-list + baked TILDE-form data-dir rules + worktree.baseRef:"head";
-    //     NO statusLine — that belongs to E2's merged-settings) and the GITIGNORED
+    //     NO statusLine — that belongs to E2's inline autonomous settings) and the GITIGNORED
     //     `.claude/settings.local.json` (the absolute `additionalDirectories`
     //     entry — Claude Code never expands `~/` there, so it must never be
     //     committed). Non-destructive: a user's existing keys in either file

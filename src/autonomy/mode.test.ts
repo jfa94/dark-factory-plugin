@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest'
 
-import {decideAutonomyPreflight, isAutonomous, NotAutonomousError, requireAutonomousMode} from './mode.js'
+import {isAutonomous, NotAutonomousError, requireAutonomousMode} from './mode.js'
 
 describe('isAutonomous', () => {
     it("is true only when FACTORY_AUTONOMOUS_MODE is exactly '1'", () => {
@@ -42,107 +42,6 @@ describe('requireAutonomousMode', () => {
         expect(caught).toBeInstanceOf(NotAutonomousError)
         const message = (caught as Error).message
         expect(message).toContain('factory autonomy ensure')
-        expect(message).toContain('claude --settings')
-    })
-})
-
-describe('decideAutonomyPreflight', () => {
-    it('not autonomous + no file → halt + regenerate (missing-settings)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: false,
-                mergedSettingsPresent: false,
-                expectedHash: 'aaa',
-                storedHash: undefined,
-            })
-        ).toEqual({proceed: false, regenerate: true, reason: 'missing-settings'})
-    })
-
-    it('not autonomous + file present → halt + regenerate (not-autonomous)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: false,
-                mergedSettingsPresent: true,
-                expectedHash: 'aaa',
-                storedHash: 'aaa',
-            })
-        ).toEqual({proceed: false, regenerate: true, reason: 'not-autonomous'})
-    })
-
-    it('autonomous + no file → proceed without regenerate (ci-raw-env)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: true,
-                mergedSettingsPresent: false,
-                expectedHash: 'aaa',
-                storedHash: undefined,
-            })
-        ).toEqual({proceed: true, regenerate: false, reason: 'ci-raw-env'})
-    })
-
-    it('autonomous + file + hashes differ → halt + regenerate (stale-settings)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: true,
-                mergedSettingsPresent: true,
-                expectedHash: 'aaa',
-                storedHash: 'bbb',
-            })
-        ).toEqual({proceed: false, regenerate: true, reason: 'stale-settings'})
-    })
-
-    it('autonomous + file + hashes equal → proceed without regenerate (fresh)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: true,
-                mergedSettingsPresent: true,
-                expectedHash: 'aaa',
-                storedHash: 'aaa',
-            })
-        ).toEqual({proceed: true, regenerate: false, reason: 'fresh'})
-    })
-
-    it('autonomous + file present but unstamped → halt + regenerate (unstamped)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: true,
-                mergedSettingsPresent: true,
-                expectedHash: 'aaa',
-                storedHash: undefined,
-            })
-        ).toEqual({proceed: false, regenerate: true, reason: 'unstamped'})
-    })
-
-    it('autonomous + file + expected hash unknowable → proceed without regenerate (hash-unknowable)', () => {
-        expect(
-            decideAutonomyPreflight({
-                autonomous: true,
-                mergedSettingsPresent: true,
-                expectedHash: undefined,
-                storedHash: 'aaa',
-            })
-        ).toEqual({proceed: true, regenerate: false, reason: 'hash-unknowable'})
-    })
-
-    it('invariant: regenerate === true ⟹ proceed === false (across the whole input space)', () => {
-        const bools = [true, false]
-        const hashes: (string | undefined)[] = [undefined, 'aaa', 'bbb']
-        for (const autonomous of bools) {
-            for (const mergedSettingsPresent of bools) {
-                for (const expectedHash of hashes) {
-                    for (const storedHash of hashes) {
-                        const decision = decideAutonomyPreflight({
-                            autonomous,
-                            mergedSettingsPresent,
-                            expectedHash,
-                            storedHash,
-                        })
-                        if (decision.regenerate) {
-                            expect(decision.proceed).toBe(false)
-                        }
-                    }
-                }
-            }
-        }
+        expect(message).toContain('factory autonomy status')
     })
 })

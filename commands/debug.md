@@ -34,7 +34,7 @@ Parse `--base`/`--full` (reject if both are present), `--no-ship`, `--author-e2e
 `--max-passes <n>` (positive integer), and `--session-id` from the invoking
 command's flags. Like `/factory:run`, this requires autonomous mode — the skill
 runs `factory autonomy preflight` as its own first step; a non-autonomous session
-halts with the printed relaunch command (`claude --settings <merged-settings.json>`).
+halts with the printed inline-settings relaunch command (`claude --worktree --settings '<json>'`).
 
 Then load BOTH skills — the debug skill delegates its spawn mechanics, spec loop,
 and task loop to the runner protocol, so it must be in context first:

@@ -262,6 +262,18 @@ By default Claude Code's `worktree.baseRef` is `"fresh"` — every `Agent({isola
 
 The session must start with correct settings. Subagents inherit parent session settings. A swap approach risks leaving autonomous settings in place if the pipeline crashes.
 
+**Amendment (2026-08-17, v1.47.0 — inline settings; the `merged-settings.json` artifact is retired).** `factory autonomy ensure` no longer writes anything to disk: the merged settings are built in memory and passed to `claude` as exactly **one** inline `--settings <json>` argument, carried by a typed `RelaunchSpec` (`executable` + readonly argv) and rendered by a single audited POSIX quoter (`renderPosixCommand`, `src/cli/subcommands/autonomy.ts` — every token single-quoted, embedded quotes escaped as `'\''`; round-trip-tested through a real shell with spaces/apostrophes/semicolons/dollar-signs/newlines). The merge semantics (user base, template overlay, env union + `CLAUDE_PLUGIN_DATA` baked, allow union, `FACTORY_ORIGINAL_STATUSLINE` chaining) are unchanged.
+
+_Spike evidence (live, 2026-08-17, Claude Code 2.1.233, isolated temp data dir + scratch repo with a local bare origin)._ The gate question was whether to adopt **native `--permission-mode auto`** instead of permissive inline settings. Findings, per item:
+
+1. Inline `--settings` exports `FACTORY_AUTONOMOUS_MODE=1` ✓; stored-spec read via `--add-dir` + literal path ✓; **but** a co-installed plugin's own `env` block overrode the `--settings` value of `CLAUDE_PLUGIN_DATA` in the session env (pre-existing — the file-based mechanism had the identical precedence; the `resolveDataDir()` backstop and engine-enveloped literal paths already cover it — see `docs/explanation/plugin-data-dir.md`). statusLine not verifiable headless.
+2. User settings remain an underlying layer under inline `--settings`: `permissions.deny` **unions** (a user-layer deny cannot be overridden), hooks from both layers fire, plugin env > `--settings` env, `autoMode` sections merge (user `soft_deny` stays active against an inline `autoMode.allow`).
+3. Inline-settings PreToolUse guard hooks fire under `--permission-mode auto` ✓.
+4. Under auto mode, plain push / `gh pr create` / `gh pr merge` / `gh issue comment` ran unattended, **but `gh issue close` stayed permission-denied despite an `autoMode.allow` entry naming it** — classification is probabilistic and merged user soft-deny applies.
+5. Deterministic denies (publish, repo/release delete, `gh api -X DELETE`, `~/.ssh` writes) held under auto mode ✓, **but the auto classifier approved a Write one level outside the session roots** that the non-auto boundary check would have prompted on — confirming native classification is not a replacement for deterministic deny rules or the TCB write-deny hook.
+
+_Chosen branch (per the pre-registered gate):_ the **inline-settings fallback** — no `--permission-mode` flag, today's permissive allow + short deny (Decision 65). Auto mode was rejected because a required pipeline op remained uncoverable by `autoMode.allow` (item 4) and its classifier is not deterministic (item 5). _Retained controls:_ env export, the `.claude/` guard hook, Prettier + related-tests hooks, factory statusLine + chaining, user settings as the underlying layer, `--add-dir` data-dir access, and the deterministic deny rules — all verified live under the inline form (the inline-JSON relaunch was exercised end-to-end: env exported, guard hook blocked a `.claude/` read).
+
 ---
 
 ## Decision 14: CI Integration and Conflict Handling
@@ -522,8 +534,9 @@ So E2 substitutes the placeholder to the resolved absolute path at `factory auto
 
 **Scope:** This design applies only to autonomous mode (sessions launched with `templates/settings.autonomous.json`, identified by `FACTORY_AUTONOMOUS_MODE=1`). Since autonomy is now mandatory for a run (Decision 29), every _pipeline_ session is an autonomous one; an interactive session can still use the user's normal (tighter) settings for non-pipeline work, but `factory run create`/`resume` will refuse to start there.
 
----
+**Amendment (2026-08-17, v1.47.0).** The coarse `Bash(*)` allow now travels inside the inline `--settings` JSON instead of `merged-settings.json` (Decision 13 amendment); scope and rationale unchanged. The 2026-08-17 spike confirmed the hook-enforced defense-in-depth fires identically under the inline form.
 
+---
 ## Decision 18: Reviewer Model is Fixed, Not Quota-Routed
 
 > **Refined by Decision 21** (layered model/effort): the "fixed, not quota-routed" principle stands; the canonical tier becomes Opus and an effort dimension is added.
@@ -836,8 +849,9 @@ Both are subscription-only; there is no headless `claude -p` / API-token path.
 
 **Relationship:** Sits in front of Decision 29 (the mandatory gate, untouched); operationalises Decision 13 (how a session becomes autonomous) as an automatic run-entry step.
 
----
+**Amendment (2026-08-17, v1.47.0 — the staleness state machine is retired; preflight is two-state).** With no on-disk artifact (Decision 13 amendment) there is nothing to be stale: every relaunch carries the current settings by construction, so `decideAutonomyPreflight` and the `FACTORY_SETTINGS_HASH` stamp were deleted. Preflight now decides over the env alone — autonomous (however set, including a directly-exported CI env, the preserved `ci-raw-env` path) → proceed; not → build in memory, print the inline relaunch, halt (`AutonomyPreflightResult`: `ready` | `relaunch` with a `RelaunchSpec`). The `regenerate ⟹ halt` invariant survives trivially (the relaunch is still irreducible). **Breaking:** `autonomy status --json` now emits only `{ autonomous, envSet }` — `mergedSettingsPresent`/`mergedSettingsPath` are gone.
 
+---
 ## Decision 32: Ship Live by Default; Boolean `--workflow` / `--no-ship` Run-Entry Flags
 
 **Choice:** A no-flag `/factory:run` resolves to **session mode + live ship**: the in-session runner loop drives the run, each task auto-merges into staging, and the staging→develop rollup merges into develop. The two deviations from that default are terse booleans on the user-facing lifecycle verbs:
@@ -2807,8 +2821,9 @@ this decision narrows `permissions.deny` to the residual accident-prevention rol
 structurally can't cover. Continues the Close-the-Loop stall-elimination line
 (Decision 61/62).
 
----
+**Amendment (2026-08-17, v1.47.0).** The 2026-08-17 spike validated this decision's premise from the other side: native auto-mode classification approved an out-of-root write and blocked a required op non-deterministically, so the short deterministic deny list (now carried in the inline `--settings` JSON — Decision 13 amendment) stays the accident-prevention layer and native classification was rejected as a substitute. Deny rules union across settings layers and cannot be overridden by any `--settings` layer (spike item 2).
 
+---
 ## Decision 66 — Hung-Spawn Hard Wall Clock + Bounded Re-Drive Budget
 
 **Date:** 2026-07-10
@@ -2980,8 +2995,9 @@ whose state EXISTS but cannot be read/parsed is corruption → still fail closed
 factory worktrees to a `factory/` subdir was considered and rejected: bigger diff, breaks
 paused runs' on-disk layout, and doesn't fix the orchestrator-worktree case.
 
----
+**Amendment (2026-08-17, v1.47.0).** The no-permission-mode-override property this decision made possible now applies to the inline `--settings` relaunch (Decision 13 amendment) — the command still carries no permission-mode flag; the 2026-08-17 spike's rejection of `--permission-mode auto` (probabilistic classification) makes that explicit rather than incidental.
 
+---
 ## Decision 68 — Anti-Ratcheting: Disposition Ledger + Fixer Scope Limits + Parsimony Fold-In
 
 **Date:** 2026-07-15

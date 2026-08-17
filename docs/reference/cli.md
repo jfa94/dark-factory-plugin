@@ -298,8 +298,9 @@ factory run create [--repo <owner/name>] (--issue <n> | --spec-id <id>) [--run-i
 **Autonomy gate (mandatory, no opt-out):** `run create` HALTS loud (`NotAutonomousError`,
 exit 1) unless the session is autonomous (`FACTORY_AUTONOMOUS_MODE=1`). The pipeline runs
 unattended by design; `/factory:run` calls [`factory autonomy preflight`](#autonomy-preflight)
-first, which auto-scaffolds and prints the `claude --worktree --settings <merged-settings.json>`
-relaunch command when needed (`ensure`/`status` remain the manual primitives). See
+first, which builds the settings in memory and prints the inline-settings
+`claude --worktree --settings '<json>'` relaunch command when needed (`ensure`/`status`
+remain the manual primitives). See
 [Decision 29](../explanation/decisions.md#decision-29-autonomy-is-mandatory--enforced-in-the-engine-no-opt-out)
 and [Decision 31](../explanation/decisions.md#decision-31-run-entry-preflight-auto-scaffolds-autonomous-settings).
 
@@ -1184,14 +1185,16 @@ Autonomous mode is **mandatory** for a run (`run create`/`resume` halt without i
 
 ### `autonomy ensure`
 
-Writer (default verb). Materializes the merged settings file an autonomous (headless) relaunch
-runs under. Merges `templates/settings.autonomous.json` with your existing
-user settings into `${CLAUDE_PLUGIN_DATA}/merged-settings.json`: placeholders
+Default verb. Builds the autonomous settings **in memory** (nothing is written to
+disk — v1.47 retired the `merged-settings.json` artifact). Merges
+`templates/settings.autonomous.json` with your existing user settings: placeholders
 (`${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}`) substituted, `env.CLAUDE_PLUGIN_DATA`
 baked, `permissions.allow` unioned (template wins on other keys), and the
 `statusLine` wired to `factory statusline`. If your own (non-factory) `statusLine`
 is present it is preserved by chaining it through `FACTORY_ORIGINAL_STATUSLINE`;
-a stale chain value is failed. Then prints the relaunch command.
+a stale chain value is dropped. Then prints the relaunch command, with the whole
+settings object as exactly ONE shell-quoted inline `--settings` argument (a typed
+`RelaunchSpec` — executable + argv — rendered by a single audited POSIX quoter).
 
 ```
 factory autonomy ensure [--user-settings <path>]
@@ -1204,11 +1207,14 @@ factory autonomy ensure [--user-settings <path>]
 Prints a human-readable relaunch message to stdout that includes the command
 
 ```
-claude --worktree --settings <merged-settings.json>
+claude --worktree --settings '<json>'
 ```
 
 — not a `{kind:…}` envelope. The command carries **no permission-mode override**: the
-merged settings are permissive by design and that is the entire mechanism. Task worktrees
+inline settings are permissive by design and that is the entire mechanism (the 2026-08-17
+spike on Claude Code 2.1.233 rejected native `--permission-mode auto` — its probabilistic
+classifier blocked a required pipeline op and approved an out-of-root write; see the
+Decision 65/67 amendment). Task worktrees
 and results live under the target repo's `.claude/worktrees/` — the one subtree Claude
 Code's built-in protected-path check exempts — and nothing else agent-side writes under
 `~/.claude/` (the plugin's data dir holds run/spec state, which only the engine writes,
@@ -1234,43 +1240,35 @@ factory autonomy status [--json]
 | -------- | -------- | ---------------------------------------------- |
 | `--json` | no       | Emit the machine-readable payload (see below). |
 
-`--json` emits `{ autonomous, envSet, mergedSettingsPresent, mergedSettingsPath }`:
-`autonomous` is the gate predicate (`FACTORY_AUTONOMOUS_MODE === "1"`); `envSet`
-distinguishes an unset var from a wrong value; `mergedSettingsPresent`/`mergedSettingsPath`
-report whether the `ensure` output exists and where.
+`--json` emits `{ autonomous, envSet }`: `autonomous` is the gate predicate
+(`FACTORY_AUTONOMOUS_MODE === "1"`); `envSet` distinguishes an unset var from a wrong
+value. **Breaking (v1.47):** the `mergedSettingsPresent`/`mergedSettingsPath` fields are
+gone with the on-disk artifact.
 
 ### `autonomy preflight`
 
 Composer — the run-entry check `/factory:run` (and `/factory:debug`) calls at the top of
 setup ([Decision 31](../explanation/decisions.md#decision-31-run-entry-preflight-auto-scaffolds-autonomous-settings)).
-It restores the old auto-scaffold convenience: rather than merely halting and telling you to
-run `ensure` yourself, it **decides** whether the run may proceed and (re)scaffolds for you
-when it can't.
+Rather than merely halting and telling you to run `ensure` yourself, it builds and
+prints the relaunch for you when the session is not autonomous.
 
 ```
 factory autonomy preflight [--user-settings <path>]
 ```
 
-The verdict is a pure function of three inputs — is this session autonomous, does
-`merged-settings.json` exist, and does its stamped `env.FACTORY_SETTINGS_HASH` (a canonical-JSON
-content hash of the fully merged settings, plugin-root paths normalized) match the hash a
-regenerate would stamp now:
+The verdict is **two-state** (v1.47 — the staleness/hash state machine died with the
+on-disk artifact; every relaunch carries the current settings by construction):
 
-| Autonomous? | Settings file | Settings hash       | Outcome                                                       |
-| ----------- | ------------- | ------------------- | ------------------------------------------------------------- |
-| no          | (any)         | (any)               | **regenerate + halt** (`missing-settings` / `not-autonomous`) |
-| yes         | absent        | —                   | **proceed** (`ci-raw-env` — env exported directly)            |
-| yes         | present       | match               | **proceed** (`fresh`)                                         |
-| yes         | present       | differ              | **regenerate + halt** (`stale-settings`)                      |
-| yes         | present       | unstamped           | **regenerate + halt** (`unstamped`)                           |
-| yes         | present       | expected unknowable | **proceed** (`hash-unknowable` — no churn)                    |
+| Autonomous?                            | Outcome                                                    |
+| -------------------------------------- | ---------------------------------------------------------- |
+| yes (however the env got set, incl. a directly-exported CI env) | **proceed** (exit 0, nothing built) |
+| no                                     | **build in memory + print relaunch + halt** (exit 1)       |
 
-On a halt it delegates to `ensure` (the single writer path) to (re)materialize the settings,
-prints the same `claude --worktree --settings <merged-settings.json>`
-relaunch block ([see `ensure`](#autonomy-ensure)) plus a one-line
-reason, and **exits 1**. On proceed it writes nothing and **exits 0**. Like `status`, it is
-infallible on the decision path (an unresolvable data/root dir degrades to a halt-with-message,
-never a throw). The relaunch itself is irreducible — Claude Code reads settings only at launch,
+On a halt it delegates to `ensure` and prints the same inline-settings
+`claude --worktree --settings '<json>'` relaunch block ([see `ensure`](#autonomy-ensure)),
+and **exits 1**. On proceed it touches nothing and **exits 0**. Like `status`, it is
+infallible on the decision path (an unresolvable data/root dir or template degrades to a
+halt-with-message, never a throw). The relaunch itself is irreducible — Claude Code reads settings only at launch,
 so a running session can never make _itself_ autonomous; preflight automates the scaffold, not
 the relaunch. The mandatory-autonomy engine gate (`requireAutonomousMode`, Decision 29) stays as
 the correctness backstop behind it.

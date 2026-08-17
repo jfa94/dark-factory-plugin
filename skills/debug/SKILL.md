@@ -56,8 +56,8 @@ Violating the letter of this rule violates the spirit. No exceptions.
 
 Identical mechanics to `/factory:run`'s Phase 0 step 2, repositioned as this
 skill's own first step (standalone entry point): `factory autonomy preflight` —
-exit 0 proceeds; on exit 1 relay the printed `claude --settings
-<merged-settings.json>` relaunch command and STOP (`debug start` HALTS loud in a
+exit 0 proceeds; on exit 1 relay the printed inline-settings `claude --worktree
+--settings '<json>'` relaunch command and STOP (`debug start` HALTS loud in a
 non-autonomous session; see `skills/pipeline-runner/SKILL.md` Phase 0 for the full
 mechanics — not duplicated here).
 

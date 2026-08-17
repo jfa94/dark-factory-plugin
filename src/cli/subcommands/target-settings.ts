@@ -24,7 +24,7 @@
  * `.claude/settings.json` is the user's interactive settings for that repo.
  * Injecting `statusLine` would clobber their own statusline. The factory
  * statusline (usage-cache pacing) belongs ONLY in the separate E2
- * merged-settings.json relaunch (`factory autonomy ensure`), never here.
+ * inline-settings relaunch (`factory autonomy ensure`), never here.
  *
  * Why this allow-list and not autonomous-mode's coarse `Bash(*)`: this is an
  * INTERACTIVE session with a human present (Decision 17 "Scope"). We grant the

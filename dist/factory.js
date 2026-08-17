@@ -17800,7 +17800,7 @@ function isAutonomous(env = process.env) {
 var NotAutonomousError = class extends Error {
   constructor() {
     super(
-      "Pipeline halted: not running in autonomous mode (FACTORY_AUTONOMOUS_MODE is unset).\nThe factory runs unattended and refuses to start or resume a run otherwise.\nRun `factory autonomy ensure`, then relaunch the session with:\n  claude --settings <merged-settings.json>\nCheck the current state any time with `factory autonomy status`."
+      "Pipeline halted: not running in autonomous mode (FACTORY_AUTONOMOUS_MODE is unset).\nThe factory runs unattended and refuses to start or resume a run otherwise.\nRun `factory autonomy ensure`, then relaunch the session with the printed\ninline-settings command. Check the current state any time with `factory autonomy status`."
     );
     this.name = "NotAutonomousError";
   }
@@ -17809,29 +17809,6 @@ function requireAutonomousMode(env = process.env) {
   if (!isAutonomous(env)) {
     throw new NotAutonomousError();
   }
-}
-function decideAutonomyPreflight(input) {
-  const { autonomous, mergedSettingsPresent, expectedHash, storedHash } = input;
-  if (!autonomous) {
-    return {
-      proceed: false,
-      regenerate: true,
-      reason: mergedSettingsPresent ? "not-autonomous" : "missing-settings"
-    };
-  }
-  if (!mergedSettingsPresent) {
-    return { proceed: true, regenerate: false, reason: "ci-raw-env" };
-  }
-  if (expectedHash === void 0) {
-    return { proceed: true, regenerate: false, reason: "hash-unknowable" };
-  }
-  if (storedHash === void 0) {
-    return { proceed: false, regenerate: true, reason: "unstamped" };
-  }
-  if (storedHash !== expectedHash) {
-    return { proceed: false, regenerate: true, reason: "stale-settings" };
-  }
-  return { proceed: true, regenerate: false, reason: "fresh" };
 }
 
 // src/orchestrator/preflight.ts
@@ -21484,7 +21461,6 @@ var statuslineCommand = {
 // src/cli/subcommands/autonomy.ts
 import { existsSync as existsSync12 } from "node:fs";
 import { readFile as readFile21 } from "node:fs/promises";
-import { createHash as createHash3 } from "node:crypto";
 import { join as join32 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 var log40 = createLogger("autonomy");
@@ -21493,24 +21469,20 @@ var HELP10 = `factory autonomy <ensure|status|preflight> \u2014 manage / inspect
 The pipeline runs unattended: \`run create\`/\`run resume\` HALT unless the session
 is autonomous (FACTORY_AUTONOMOUS_MODE=1). There is no opt-out.
 
-ensure     Merges templates/settings.autonomous.json with your existing settings into
-           \${CLAUDE_PLUGIN_DATA}/merged-settings.json (placeholders substituted, env
-           baked, statusLine wired to \`factory statusline\`) and prints the relaunch
-           command:
+ensure     Builds the autonomous settings in memory (templates/settings.autonomous.json
+           merged with your existing settings \u2014 placeholders substituted, env baked,
+           statusLine wired to \`factory statusline\`) and prints the relaunch command,
+           with the settings passed inline as one --settings argument. Nothing is
+           written to disk.
 
-             claude --worktree --settings <merged-settings.json>
+status     Reports whether THIS session is autonomous (FACTORY_AUTONOMOUS_MODE=1).
+           Exits 0 when autonomous, 1 when not (never throws).
 
-status     Reports whether THIS session is autonomous and whether merged-settings.json
-           exists. Exits 0 when autonomous, 1 when not (never throws).
-
-preflight  The run-entry check (what \`/factory:run\` calls). Decides over
-           {autonomous?, merged-settings present?, expected vs stored settings
-           content hash (FACTORY_SETTINGS_HASH)} whether the run may proceed.
-           (Re)scaffolds merged-settings.json and halts for a relaunch when the
-           session is not autonomous OR the settings are stale / missing /
-           unstamped; proceeds silently when already fresh (or autonomous via a
-           directly-exported env). Exits 0 to proceed, 1 to halt. Never throws on
-           the decision path.
+preflight  The run-entry check (what \`/factory:run\` calls). Two states: the session
+           is autonomous \u2192 proceed (exit 0); it is not \u2192 print the inline-settings
+           relaunch command and halt (exit 1). A directly-exported
+           FACTORY_AUTONOMOUS_MODE=1 (CI / raw env) satisfies the gate with no
+           settings involved. Never throws on the decision path.
 
 Usage:
   factory autonomy ensure
@@ -21522,9 +21494,6 @@ Options:
   --json                   (status) Emit machine-readable JSON`;
 function factoryBinPath(pluginRoot) {
   return `${pluginRoot}/bin/factory`;
-}
-function mergedSettingsPath(dataDir) {
-  return join32(dataDir, "merged-settings.json");
 }
 function tildeExpand(value, home) {
   if (value.startsWith("~")) {
@@ -21550,30 +21519,6 @@ function substitutePlaceholders(value, vars) {
 }
 function isObject2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function canonicalSettingsHash(merged, pluginRoot) {
-  const walk = (value) => {
-    if (typeof value === "string") {
-      return value.split(pluginRoot).join("${CLAUDE_PLUGIN_ROOT}");
-    }
-    if (Array.isArray(value)) {
-      return value.map(walk);
-    }
-    if (isObject2(value)) {
-      const out = {};
-      for (const k of Object.keys(value).sort()) {
-        out[k] = walk(value[k]);
-      }
-      return out;
-    }
-    return value;
-  };
-  const env = isObject2(merged.env) ? { ...merged.env } : void 0;
-  if (env !== void 0) {
-    delete env.FACTORY_SETTINGS_HASH;
-  }
-  const input = env !== void 0 ? { ...merged, env } : merged;
-  return createHash3("sha256").update(JSON.stringify(walk(input))).digest("hex");
 }
 function statusLineCommandOf(settings) {
   const sl = settings.statusLine;
@@ -21623,8 +21568,8 @@ function materializeMergedSettings(input) {
   } else {
     delete env.FACTORY_ORIGINAL_STATUSLINE;
   }
+  delete env.FACTORY_SETTINGS_HASH;
   merged.env = env;
-  env.FACTORY_SETTINGS_HASH = canonicalSettingsHash(merged, pluginRoot);
   return merged;
 }
 async function readUserSettings(path7) {
@@ -21642,6 +21587,16 @@ async function readUserSettings(path7) {
   }
   return {};
 }
+function renderPosixCommand(spec) {
+  const quote = (s) => `'${s.replaceAll("'", `'\\''`)}'`;
+  return [spec.executable, ...spec.argv].map(quote).join(" ");
+}
+function buildRelaunchSpec(settings) {
+  return {
+    executable: "claude",
+    argv: ["--worktree", "--settings", JSON.stringify(settings)]
+  };
+}
 async function runAutonomyEnsure(opts = {}) {
   const home = opts.home ?? homedir3();
   const dataDir = opts.dataDir ?? resolveDataDir();
@@ -21651,153 +21606,71 @@ async function runAutonomyEnsure(opts = {}) {
   const userSettings = await readUserSettings(userSettingsPath);
   const templatePath = join32(pluginRoot, "templates", "settings.autonomous.json");
   const template = await readFile21(templatePath, "utf8");
-  const merged = materializeMergedSettings({
-    template,
-    userSettings,
-    dataDir,
-    pluginRoot,
-    home
-  });
-  const path7 = mergedSettingsPath(dataDir);
-  await atomicWriteFile(path7, stringifyJson(merged));
-  const relaunchCommand = `claude --worktree --settings ${path7}`;
+  const merged = materializeMergedSettings({ template, userSettings, dataDir, pluginRoot, home });
+  const spec = buildRelaunchSpec(merged);
+  const relaunchCommand = renderPosixCommand(spec);
   write(
-    `Wrote autonomous settings \u2192 ${path7}
-Relaunch the session in autonomous mode with:
+    `Relaunch the session in autonomous mode with (settings passed inline \u2014 nothing written to disk):
 
   ${relaunchCommand}
 
 (the first agent turn refreshes the usage cache \u2192 session-mode quota pacing.)
 `
   );
-  return { path: path7, relaunchCommand };
+  return { spec, relaunchCommand };
 }
 function runAutonomyStatus(opts = {}) {
   const env = opts.env ?? process.env;
   const write = opts.writeStdout ?? ((t) => process.stdout.write(t));
-  let path7 = "";
-  try {
-    const dataDir = opts.dataDir ?? resolveDataDir();
-    path7 = mergedSettingsPath(dataDir);
-  } catch {
-  }
   const status = {
     autonomous: isAutonomous(env),
-    envSet: env.FACTORY_AUTONOMOUS_MODE !== void 0,
-    mergedSettingsPresent: path7.length > 0 && existsSync12(path7),
-    mergedSettingsPath: path7
+    envSet: env.FACTORY_AUTONOMOUS_MODE !== void 0
   };
   if (opts.json === true) {
     write(stringifyJson(status) + "\n");
   } else if (status.autonomous) {
-    write(
-      `autonomous: yes (FACTORY_AUTONOMOUS_MODE=1)
-merged-settings: ${status.mergedSettingsPresent ? "present" : "absent"}${path7.length > 0 ? ` at ${path7}` : ""}
-`
-    );
+    write("autonomous: yes (FACTORY_AUTONOMOUS_MODE=1)\n");
   } else {
     write(
       `autonomous: NO \u2014 the pipeline will refuse to start or resume a run.
-merged-settings: ${status.mergedSettingsPresent ? `present at ${path7}` : "absent"}
-` + (status.mergedSettingsPresent ? `Relaunch the session with:
-  claude --worktree --settings ${path7}
-` : `Run \`factory autonomy ensure\` first, then relaunch with the printed command.
-`)
+Run \`factory autonomy ensure\` and relaunch with the printed command.
+`
     );
   }
   return Promise.resolve(status.autonomous ? EXIT.OK : EXIT.ERROR);
 }
-async function readStoredHash(path7) {
-  if (!existsSync12(path7)) {
-    return void 0;
+async function evaluateAutonomyPreflight(opts = {}) {
+  const env = opts.env ?? process.env;
+  if (isAutonomous(env)) {
+    return { state: "ready" };
   }
-  try {
-    const parsed = JSON.parse(await readFile21(path7, "utf8"));
-    if (isObject2(parsed) && isObject2(parsed.env) && typeof parsed.env.FACTORY_SETTINGS_HASH === "string") {
-      return parsed.env.FACTORY_SETTINGS_HASH;
-    }
-  } catch {
-  }
-  return void 0;
-}
-var shortHash = (h) => h === void 0 ? "?" : h.slice(0, 12);
-function describePreflightReason(reason, expectedHash, storedHash) {
-  switch (reason) {
-    case "fresh":
-      return `merged settings are current (settings hash ${shortHash(expectedHash)})`;
-    case "ci-raw-env":
-      return "autonomous via the environment directly; no merged-settings file needed";
-    case "hash-unknowable":
-      return "the expected settings hash is uncomputable \u2014 leaving the existing merged settings untouched";
-    case "missing-settings":
-      return "no merged settings exist yet";
-    case "not-autonomous":
-      return "this session is not autonomous";
-    case "stale-settings":
-      return `merged settings content is stale (${shortHash(storedHash)} \u2192 ${shortHash(expectedHash)})`;
-    case "unstamped":
-      return "merged settings predate content-hash stamping (treated as stale)";
-  }
+  const ensured = await runAutonomyEnsure({
+    ...opts.dataDir !== void 0 ? { dataDir: opts.dataDir } : {},
+    ...opts.pluginRoot !== void 0 ? { pluginRoot: opts.pluginRoot } : {},
+    ...opts.home !== void 0 ? { home: opts.home } : {},
+    userSettingsPath: opts.userSettingsPath,
+    writeStdout: opts.writeStdout ?? (() => void 0)
+  });
+  return { state: "relaunch", spec: ensured.spec, relaunchCommand: ensured.relaunchCommand };
 }
 async function runAutonomyPreflight(opts = {}) {
-  const env = opts.env ?? process.env;
-  const home = opts.home ?? homedir3();
   const write = opts.writeStdout ?? ((t) => process.stdout.write(t));
-  let dataDir;
-  let pluginRoot;
+  let result;
   try {
-    dataDir = opts.dataDir ?? resolveDataDir();
-  } catch {
-  }
-  try {
-    pluginRoot = opts.pluginRoot ?? resolvePluginRoot();
-  } catch {
-  }
-  const path7 = dataDir !== void 0 ? mergedSettingsPath(dataDir) : "";
-  const mergedSettingsPresent = path7.length > 0 && existsSync12(path7);
-  let expectedHash;
-  if (dataDir !== void 0 && pluginRoot !== void 0) {
-    try {
-      const template = await readFile21(join32(pluginRoot, "templates", "settings.autonomous.json"), "utf8");
-      const userSettings = await readUserSettings(opts.userSettingsPath ?? join32(home, ".claude", "settings.json"));
-      const merged = materializeMergedSettings({ template, userSettings, dataDir, pluginRoot, home });
-      const stamped = merged.env.FACTORY_SETTINGS_HASH;
-      expectedHash = typeof stamped === "string" ? stamped : void 0;
-    } catch {
-    }
-  }
-  const storedHash = mergedSettingsPresent ? await readStoredHash(path7) : void 0;
-  const decision = decideAutonomyPreflight({
-    autonomous: isAutonomous(env),
-    mergedSettingsPresent,
-    expectedHash,
-    storedHash
-  });
-  const verdict = describePreflightReason(decision.reason, expectedHash, storedHash);
-  if (decision.regenerate) {
-    if (dataDir === void 0 || pluginRoot === void 0) {
-      write(
-        `HALT: ${verdict}.
-Cannot resolve the plugin data/root dir to scaffold autonomous settings here \u2014 run \`factory autonomy ensure\` once the environment is set, then relaunch with the printed command.
+    result = await evaluateAutonomyPreflight({ ...opts, writeStdout: write });
+  } catch (err) {
+    write(
+      `HALT: this session is not autonomous, and the relaunch settings could not be built (${err.message}) \u2014 run \`factory autonomy ensure\` once the environment is set, then relaunch with the printed command.
 `
-      );
-      return EXIT.ERROR;
-    }
-    await runAutonomyEnsure({
-      dataDir,
-      pluginRoot,
-      userSettingsPath: opts.userSettingsPath,
-      home,
-      writeStdout: write
-    });
-    write(`
-HALT: ${verdict} \u2014 relaunch to continue (command above).
-`);
+    );
     return EXIT.ERROR;
   }
-  write(`OK: autonomous mode ready \u2014 ${verdict}.
-`);
-  return EXIT.OK;
+  if (result.state === "ready") {
+    write("OK: autonomous mode ready (FACTORY_AUTONOMOUS_MODE=1).\n");
+    return EXIT.OK;
+  }
+  write("\nHALT: this session is not autonomous \u2014 relaunch to continue (command above).\n");
+  return EXIT.ERROR;
 }
 async function run8(argv) {
   const args = parseArgs(argv, { booleans: ["json"] });
@@ -21824,7 +21697,7 @@ async function run8(argv) {
   return EXIT.OK;
 }
 var autonomyCommand = {
-  describe: "Materialize merged-settings.json for an autonomous relaunch + print the command",
+  describe: "Print the inline-settings autonomous relaunch command",
   run: withUsageGuard("autonomy", run8)
 };
 

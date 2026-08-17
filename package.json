@@ -1,6 +1,6 @@
 {
     "name": "factory-plugin",
-    "version": "1.46.0",
+    "version": "1.46.1",
     "private": true,
     "type": "module",
     "description": "Factory plugin build tooling (Node + TypeScript rewrite). NOT the scaffold shipped into target repos (see templates/package.scaffold.json).",

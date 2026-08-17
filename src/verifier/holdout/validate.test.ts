@@ -7,6 +7,7 @@ import {makeHoldoutRecord} from './store.js'
 import {
     buildHoldoutPrompt,
     checkHoldout,
+    classifyHoldoutOutput,
     holdoutEvidence,
     parseHoldoutVerdicts,
     type HoldoutVerdict,
@@ -96,14 +97,51 @@ describe('parseHoldoutVerdicts (tolerant extraction)', () => {
         expect(parseHoldoutVerdicts(raw)).toEqual([{criterion: 'x', satisfied: true, evidence: 'e'}])
     })
 
-    it('coerces malformed entries (non-string criterion, non-bool satisfied) safely', () => {
+    it('throws on malformed entry fields — never coerces them into domain verdicts', () => {
         const raw = JSON.stringify({criteria: [{criterion: 7, satisfied: 'yes', evidence: null}]})
-        expect(parseHoldoutVerdicts(raw)).toEqual([{criterion: '', satisfied: false, evidence: ''}])
+        expect(() => parseHoldoutVerdicts(raw)).toThrow(/malformed/i)
     })
 
     it('throws (fail-loud) when no .criteria object is recoverable', () => {
         expect(() => parseHoldoutVerdicts('no json here')).toThrow(/no parseable/i)
         expect(() => parseHoldoutVerdicts(JSON.stringify({other: 1}))).toThrow(/no parseable/i)
+    })
+})
+
+describe('classifyHoldoutOutput — malformed fields are evaluator failures, well-formed misses are verdicts', () => {
+    const oneCriterion = makeHoldoutRecord('task-1', ['criterion A'], 3)
+    const rawFor = (entry: Record<string, unknown>) => JSON.stringify({criteria: [entry]})
+
+    it.each([
+        ['satisfied: "yes"', {criterion: 'criterion A', satisfied: 'yes', evidence: 'src/x.ts:1'}],
+        ['satisfied: 1', {criterion: 'criterion A', satisfied: 1, evidence: 'src/x.ts:1'}],
+        ['satisfied: null', {criterion: 'criterion A', satisfied: null, evidence: 'src/x.ts:1'}],
+        ['satisfied missing', {criterion: 'criterion A', evidence: 'src/x.ts:1'}],
+        ['non-string criterion', {criterion: 7, satisfied: false, evidence: 'src/x.ts:1'}],
+        ['non-string evidence', {criterion: 'criterion A', satisfied: false, evidence: null}],
+    ])('matching criterion with %s is an evaluator failure, not a producer miss', (_name, entry) => {
+        const out = classifyHoldoutOutput(oneCriterion, rawFor(entry))
+        expect(out.kind).toBe('evaluator-failure')
+    })
+
+    it('well-formed satisfied:false — including blank evidence — remains a producer verdict', () => {
+        const out = classifyHoldoutOutput(
+            oneCriterion,
+            rawFor({criterion: 'criterion A', satisfied: false, evidence: ''})
+        )
+        expect(out.kind).toBe('verdicts')
+        if (out.kind !== 'verdicts') {
+            throw new Error('unreachable')
+        }
+        expect(out.verdicts).toEqual([{criterion: 'criterion A', satisfied: false, evidence: ''}])
+    })
+
+    it('well-formed satisfied:true still requires nonblank evidence', () => {
+        const out = classifyHoldoutOutput(
+            oneCriterion,
+            rawFor({criterion: 'criterion A', satisfied: true, evidence: '  '})
+        )
+        expect(out.kind).toBe('evaluator-failure')
     })
 })
 

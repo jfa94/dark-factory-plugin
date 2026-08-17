@@ -71,8 +71,9 @@ export interface HoldoutValidateInput {
  * The injectable holdout-validator boundary (the runner spawns this agent as
  * the verify-phase holdout). The real v1 impl builds {@link buildHoldoutPrompt},
  * spawns the agent, and parses via {@link parseHoldoutVerdicts}; units inject a
- * fake. A parse failure in the real impl should resolve to `[]` (every withheld
- * criterion then scores as a FAIL — fail-closed), never throw.
+ * fake. A parse/validation failure surfaces through {@link classifyHoldoutOutput}
+ * as an `evaluator-failure` (bounded same-rung retry) — never a silent pass, and
+ * never coerced into producer verdicts.
  */
 export interface HoldoutValidatorRunner {
     validate(input: HoldoutValidateInput): Promise<readonly HoldoutVerdict[]>
@@ -158,18 +159,26 @@ function extractCriteria(raw: string): unknown[] {
 }
 
 /**
- * Parse a holdout-validator agent's raw output into {@link HoldoutVerdict}s. LOUD
- * (throws) when no `.criteria` object can be recovered — the real runner catches
- * this and fails closed; never silently treats unparseable output as a pass.
+ * Parse a holdout-validator agent's raw output into {@link HoldoutVerdict}s.
+ * Extraction stays tolerant (prose/fences), but every extracted ENTRY is validated
+ * before a domain verdict is constructed: `criterion` must be a string, `satisfied`
+ * a boolean, `evidence` a string. LOUD (throws) on a malformed entry or when no
+ * `.criteria` object can be recovered — {@link classifyHoldoutOutput} catches the
+ * throw and classifies it `evaluator-failure` (the single retry-vs-verdict
+ * boundary). Coercing a malformed field (e.g. `satisfied: "yes"` → false) would
+ * erase the distinction between broken evaluator output and a well-formed
+ * producer miss, silently charging the producer for an evaluator fault.
  */
 export function parseHoldoutVerdicts(raw: string): readonly HoldoutVerdict[] {
-    return extractCriteria(raw).map((entry) => {
+    return extractCriteria(raw).map((entry, i) => {
         const e = (entry ?? {}) as Record<string, unknown>
-        return {
-            criterion: typeof e.criterion === 'string' ? e.criterion : '',
-            satisfied: e.satisfied === true,
-            evidence: typeof e.evidence === 'string' ? e.evidence : '',
+        if (typeof e.criterion !== 'string' || typeof e.satisfied !== 'boolean' || typeof e.evidence !== 'string') {
+            throw new Error(
+                `holdout verdict entry ${i + 1} is malformed — ` +
+                    `criterion/satisfied/evidence must be string/boolean/string`
+            )
         }
+        return {criterion: e.criterion, satisfied: e.satisfied, evidence: e.evidence}
     })
 }
 
@@ -179,8 +188,9 @@ export type HoldoutOutputClassification =
     | {readonly kind: 'evaluator-failure'; readonly reason: string}
 
 /**
- * Classify the validator's raw output BEFORE scoring: unparseable JSON, wrong
- * cardinality, criterion-text mismatch (the positional anti-spoof), or a
+ * Classify the validator's raw output BEFORE scoring: unparseable JSON, a
+ * malformed entry field (non-string criterion/evidence, non-boolean satisfied),
+ * wrong cardinality, criterion-text mismatch (the positional anti-spoof), or a
  * `satisfied` verdict with blank evidence are EVALUATOR failures — the evaluator
  * broke its contract, so the verify wave retries at the same rung instead of
  * charging the producer. A well-formed miss (`satisfied:false`, any evidence —

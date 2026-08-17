@@ -182,6 +182,12 @@ finalize(runId, 'failed' | 'superseded', reason) // non-empty reason REQUIRED
   a missing stored reason (legacy state) may be backfilled exactly once. The cause
   at flip time is history nothing can re-derive, which is why it is stored at all
   rather than derived.
+- **Cleared on reopen.** Both paths that return a terminal run to `running` —
+  `rescue apply` (`reopenFields`, `src/rescue/apply.ts`) and `reconcile --adopt`
+  (`applyAdoptions`, `src/rescue/adopt.ts`) — drop `terminal_reason` alongside
+  `status`/`ended_at`. The direction check above forbids a `running` run that still
+  carries one, so a reopen that kept it would write state that fails its own
+  re-validation. A re-finalize records the reason of the **new** terminus.
 
 Surfaced by `factory state`, the rescue scan (`/factory:resume`), and the partial
 report.
@@ -331,10 +337,14 @@ lock, so its ceiling stays well under the lock's stale window (`MERGE_LOCK_DEFAU
 ### `holdout_evaluator_retries` — evaluator faults are not producer misses
 
 The holdout validator can break its own output contract. Before scoring, the engine
-classifies the raw validator output (`classifyHoldoutOutput`); four shapes are
+classifies the raw validator output (`classifyHoldoutOutput`); five shapes are
 **evaluator failures**, not producer misses:
 
 - unparseable JSON,
+- a malformed verdict entry — `criterion`/`evidence` not a string, or `satisfied`
+  not a boolean (`parseHoldoutVerdicts` throws rather than coercing; coercing
+  `satisfied: "yes"` to `false` would forge a well-formed producer miss out of
+  broken evaluator output),
 - wrong verdict cardinality (verdict count ≠ withheld-criteria count),
 - criterion-text mismatch at a position (the positional anti-spoof check),
 - a `satisfied: true` verdict with blank evidence.

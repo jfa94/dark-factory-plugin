@@ -174,11 +174,22 @@ gets escalated (a rung burned, a fresh implementation attempt spent) for a fault
 had no part in. Worse, the signal is indistinguishable from a genuine 0/N miss, so
 a systematically broken evaluator reads as a systematically bad producer.
 
-The output is now **classified before scoring** (`classifyHoldoutOutput`). Four
-shapes are evaluator failures — unparseable JSON, verdict/criteria cardinality
-mismatch, criterion-text mismatch at a position (the positional anti-spoof), and a
-`satisfied: true` verdict with blank evidence. Each of those means the evaluator
-did not do its job, not that the code is wrong.
+The output is now **classified before scoring** (`classifyHoldoutOutput`). Five
+shapes are evaluator failures — unparseable JSON, a **malformed verdict entry**
+(non-string `criterion`/`evidence`, non-boolean `satisfied`), verdict/criteria
+cardinality mismatch, criterion-text mismatch at a position (the positional
+anti-spoof), and a `satisfied: true` verdict with blank evidence. Each of those
+means the evaluator did not do its job, not that the code is wrong.
+
+The malformed-field shape closes the last coercion leak in the same argument.
+Parsing used to _repair_ a bad field on the way in — a non-boolean `satisfied`
+became `false`, a missing `evidence` became `''` — which produced a perfectly
+well-formed-looking **miss**. That is the exact signal this section exists to
+separate: the producer got charged for an evaluator that emitted `satisfied:
+"yes"`. So `parseHoldoutVerdicts` now throws on a malformed entry instead of
+coercing it, and the throw lands in the one place that decides retry-vs-verdict.
+Extraction itself stays tolerant (prose wrappers, code fences) — the strictness is
+about _field types inside a recovered entry_, not about the LLM's formatting.
 
 An evaluator failure persists **no verdicts**, does not touch the escalation rung,
 and re-runs the verify wave at the **same rung**, bounded by
@@ -186,6 +197,20 @@ and re-runs the verify wave at the **same rung**, bounded by
 **`blocked-environmental`** — the honest classification, which routes it to the
 rescue/paging path where a human can look at a broken evaluator, rather than
 burying it in the producer's failure statistics.
+
+Two properties keep that budget honest, both of which follow from "the two budgets
+are independent":
+
+- **The retry clears the spawn checkpoint** in the same state write. The retry
+  re-enters the _same_ `(verify, rung)`, so a surviving `spawn_in_flight` would
+  read as a hung spawn on the next orchestration step and quietly spend a re-drive
+  (Decision 66) on a wave that was never hung.
+- **The counter is a _consecutive_-fault streak, not a lifetime tally.** Any
+  well-formed holdout result — a pass or a producer miss alike — proves the
+  evaluator works, so the streak resets. A rescue reset drops it too, like the rest
+  of the per-attempt retry state. Counting cumulatively would let two unrelated
+  evaluator hiccups, hours and several successful waves apart, condemn a healthy
+  task as environmentally broken.
 
 The boundary is deliberately narrow. A **well-formed miss** — `satisfied: false`
 with any evidence, including a clean 0/N sweep — is not an evaluator failure. It

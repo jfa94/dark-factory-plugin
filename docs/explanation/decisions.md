@@ -395,6 +395,60 @@ customized managed file now _fails loudly at the operator_ instead of being
 overwritten behind their back, which is the same fail-closed posture the rest of the
 engine takes.
 
+**Amendment (2026-08-17 — the refusal is zero-write _end to end_, and the lock is
+versioned data).**
+
+The preflight above promised "ZERO writes" but only covered the managed-file check.
+Three refusals still fired _after_ seeds had landed — an invalid `.factory/gates.json`,
+a below-floor contract, and the install-or-waive refusal all threw from
+`ensureGateContract`, which necessarily runs after the seed pass (a freshly seeded
+`eslint.config.mjs` is what flips the lint gate). So the strongest guarantee the
+command could actually make was "zero writes for _this class_ of refusal", which is
+not a guarantee an operator can reason about.
+
+The fix is a **read-only contract preflight** (`preflightGateContract`) that runs
+before anything is written, resolving the contract the run will _end up_ with by
+projecting this run's to-be-seeded files as already present. That projection is the
+load-bearing part: it is what lets one resolution stand in for the post-seed
+authoritative one without a second copy of the gate policy. It also retires a known
+wart — the managed-file preflight used to render against a pre-seed contract, so a
+byte-equal managed file could read as a conflict purely because the eslint seed had
+not landed yet. The authoritative `ensureGateContract` still runs after seeds and its
+result is still what gets persisted; the preflight only moves the _refusal_ earlier.
+
+Two smaller corrections in the same pass:
+
+- **The lock persists whenever it is dirty**, keyed on the flag itself rather than
+  inferred from the report's file lists. The old inference missed a real case: a
+  byte-equal managed adoption records a hash without the file appearing in
+  `files_created`/`files_updated`, so the vouched-for hash was computed and then
+  dropped. (The `managed` hash means "content scaffold vouches for", not "content
+  scaffold wrote" — adoption is a legitimate way to earn an entry.)
+- **A lock declaring an unsupported version refuses loudly**
+  (`UnsupportedLockVersionError`, version ≠ 1). A well-formed lock from a _newer_
+  plugin is data whose shape this engine cannot know; the pre-existing "degrade to
+  empty" path would have silently reinterpreted it as v1 and then rewritten it,
+  destroying it. Malformed v1 data still degrades to empty — that stays fail-safe,
+  because unreadable bytes carry nothing to destroy.
+
+**Amendment (2026-08-17 — a stale mutation nightly is removed, but only with current
+proof).**
+
+Uncontracting mutation left `.github/workflows/mutation-nightly.yml` behind: scaffold
+stopped rendering it but never removed it, so a repo that dropped mutation kept
+running a nightly for a gate it no longer had. Scaffold now deletes it — under the
+same evidence standard the rest of the tier uses. Its bytes must match the lock's
+recorded managed hash, **re-proven immediately before the `unlink`** rather than
+trusted from the preflight read (the window between the two is small, but a delete is
+not recoverable from the report). A successful removal drops the lock entry and lands
+in the report's new `files_removed`.
+
+A customized or unrecorded stale nightly is a `files_conflict` that **`--force-managed`
+deliberately does not resolve.** Force means "re-adopt toward the shipped template" —
+an overwrite whose outcome is a file the plugin can reproduce. Extending it to
+authorize deleting content nobody can prove the provenance of would make one flag mean
+two very different things, and only one of them is reversible from the template.
+
 ---
 
 ## Decision 16: Asymmetric Auto-Merge Strategy

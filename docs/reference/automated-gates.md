@@ -121,6 +121,22 @@ classified into one bucket or the other — the whole point is that adding a gat
 skip the local-vs-CI decision. No new CI steps were added by this pinning; `sast` and
 `coverage` stay local.
 
+### Template anchors are load-bearing (render throws when one is missing)
+
+`renderQualityGate` customizes the shipped template by substituting into specific
+**anchor** lines rather than by generating YAML wholesale. Two substitutions are
+guarded, because a silently-missed one renders a workflow that looks valid and gates
+the wrong thing:
+
+| Anchor                                     | Substitution                                                                        | On zero matches                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------- |
+| the `grep -Ev '…'` mutable-source filter   | the single-sourced `MUTABLE_SOURCE_EXCLUDE` predicate                               | **throws** — the mutation scope would be unfiltered |
+| the default roots pathspec `'src/**/*.ts'` | the contract's `gates.mutation.roots` (skipped when the contract keeps the default) | **throws** — mutation would run on the wrong roots  |
+
+If you edit `templates/.github/workflows/quality-gate.yml`, keep both anchors intact;
+a rename that drops one fails the render loudly at scaffold time instead of shipping a
+mis-scoped mutation run.
+
 ### Extra CI setup steps (`setup_steps`)
 
 A gate command that needs a service or toolchain the default package-manager setup does

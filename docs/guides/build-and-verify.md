@@ -56,6 +56,13 @@ Tests must be independent (no shared mutable state). For functions with broad
 input domains, prefer property-based tests to catch edge cases example-based tests
 miss.
 
+The suite is **not** limited to `src/`. `vitest.config.ts` includes
+`['src/**/*.test.ts', 'scripts/**/*.test.mjs']`, so plain-JS repo tooling under
+`scripts/` is covered by the same `pnpm run test` run as the engine — put a
+`scripts/<tool>.test.mjs` next to any script whose logic is worth pinning, and
+export the pure helpers from the script (guarding the CLI body behind an
+entrypoint check) so the test can import them without executing the tool.
+
 ## The build output
 
 `scripts/build.mjs` emits:
@@ -134,6 +141,11 @@ Every third-party action is **pinned to a full commit SHA** with the human-reada
 tag in a trailing comment. Keep it that way when bumping an action: a tag is
 mutable, a SHA is not.
 
+The workflow declares a top-level `permissions: contents: read`. Nothing in it
+writes to the repo or its APIs, so the `GITHUB_TOKEN` it hands to third-party
+actions is read-only. If you add a job that genuinely needs to write, scope the
+extra permission to **that job**, not the workflow.
+
 ## Versioning
 
 The plugin version is `package.json#version` — the **canonical** source. Two
@@ -149,3 +161,17 @@ Bump `package.json#version` per the significance of your change (patch for
 fixes/refactors, minor for new backward-compatible capabilities, major for breaking
 changes), then run `version:sync` and commit all three files together. Never edit
 the manifest versions by hand — `version:check` is a CI step and will fail on drift.
+
+Both verbs fail loud rather than guessing:
+
+- `package.json#version` must be **canonical SemVer 2.0.0** (core triple, optional
+  prerelease and build metadata). A non-conforming value aborts both verbs instead
+  of being propagated into the manifests.
+- `sync` does a targeted replace of the `"version"` literal only — a full
+  re-serialize would reformat unrelated manifest content on every bump. If the
+  expected literal is absent from a manifest, it throws naming that file rather
+  than leaving it silently unwritten.
+
+The pure helpers (`readCanonicalVersion`, `manifestDrift`, `bumpVersionLiteral`)
+are exported and covered by `scripts/version.test.mjs`; the CLI body runs only when
+the script is the entrypoint.

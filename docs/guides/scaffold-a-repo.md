@@ -159,6 +159,32 @@ records the hashes, after which pristine files auto-update silently. If you need
 behavior the template does not give you, express it in the committed gate contract
 (`.factory/gates.json`) rather than by editing the managed workflow.
 
+The same zero-write promise now covers the **gate-contract** refusals too — an
+invalid `.factory/gates.json`, a below-floor contract, and the install-or-waive
+refusal are all raised by a read-only preflight before the first seed lands, so any
+failed `factory scaffold` leaves the working tree exactly as it found it.
+
+One conflict `--force-managed` will **not** clear: a stale
+`.github/workflows/mutation-nightly.yml` (mutation is uncontracted) whose bytes do
+not match the recorded hash. Force authorizes overwriting toward the shipped
+template, never deleting content of unknown provenance. Restore it
+(`git checkout .github/workflows/mutation-nightly.yml`) and re-scaffold to have it
+removed cleanly, or delete the file yourself.
+
+## 2a. Handle an unsupported lock version
+
+```
+scaffold: .factory/scaffold.lock declares version 2, but this engine supports
+only version 1 — upgrade the factory plugin (or delete the lock to re-adopt
+seeds). Nothing was written.
+```
+
+The repo was last scaffolded by a **newer** plugin. Upgrade the plugin rather than
+working around it — the older engine cannot know the newer lock's shape, and
+rewriting it as v1 would destroy the record. Deleting the lock is the escape hatch
+of last resort: every seed then reads as customized (project-owned) until it is
+re-adopted.
+
 ## 3. Handle a protection refusal
 
 If scaffold refuses because `develop` is unprotected, you have two options.

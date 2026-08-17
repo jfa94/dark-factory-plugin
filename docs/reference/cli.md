@@ -139,6 +139,23 @@ or protection change lands, and names the offending files; restore them
 version 1, so an older engine ignores it and degrades safely, and a legacy lock
 with no `managed` entries simply reports a conflict instead of silently clobbering.
 
+**Every refusal is zero-write.** Before the managed preflight, a **read-only gate
+contract preflight** (`preflightGateContract`) resolves the contract this run will
+end up with — the committed `.factory/gates.json` when valid, else a fresh
+resolution with this run's to-be-seeded files projected as present (a to-be-seeded
+`eslint.config.mjs` flips the lint gate). So an invalid `gates.json`, a below-floor
+contract, and the install-or-waive refusal all throw **before any seed, lock, or
+workflow is written**, and the managed preflight compares against the same renders
+pass 2 will write. The authoritative `ensureGateContract` still runs after seeds and
+its result is what gets persisted.
+
+**Lock versions.** A `.factory/scaffold.lock` declaring a `version` other than `1`
+(written by a newer plugin) refuses loudly with `UnsupportedLockVersionError` and
+writes nothing — upgrade the plugin, or delete the lock to re-adopt seeds from
+scratch. A missing or malformed **v1** lock still degrades to an empty one (every
+seed then reads as customized — fail-safe) and is rewritten valid on the next
+persist.
+
 When mutation is **uncontracted** in the gate contract but a previously scaffolded
 `.github/workflows/mutation-nightly.yml` still exists, scaffold removes the stale
 workflow — but only with **current proof**: its bytes must match the lock's

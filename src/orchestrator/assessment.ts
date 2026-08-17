@@ -24,7 +24,7 @@
  * ({@link MAX_ASSESS_ATTEMPTS}); the cap converts it to the same loud fail.
  */
 import {join} from 'node:path'
-import {E2E_TEST_DIR} from '../config/schema.js'
+import {E2E_TEST_DIR} from './e2e-paths.js'
 import {ensureStageWorktree, publishToStaging, specTaskLines} from './stage-helpers.js'
 import type {StageDone, StageFailed, StageSpawnBase} from './stage-helpers.js'
 import {z} from 'zod'

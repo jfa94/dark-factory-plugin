@@ -306,16 +306,6 @@ export const E2eConfigSchema = z
 export type E2eConfig = z.infer<typeof E2eConfigSchema>
 
 /**
- * Repo-relative directory the COMMITTED critical e2e suite lives in. Persistence in
- * this directory IS the criticality signal (Decision 39) — no `@critical` tag exists.
- * NOT configurable: the scaffolded `templates/playwright.config.ts` hardcodes `e2e/`
- * and the TCB write-deny protects the literal path, so a config knob could only
- * silently diverge from what actually runs (the retired `e2e.testDir` key's
- * superRefine already rejected every non-default value).
- */
-export const E2E_TEST_DIR = 'e2e'
-
-/**
  * The single root config schema. Every sub-block defaults, so an empty object
  * (or a missing config file) parses to a complete config.
  */

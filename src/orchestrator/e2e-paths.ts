@@ -16,6 +16,17 @@ import type {Config, RunState} from './deps.js'
 // validateId-constrained to [a-zA-Z0-9_-], never a leading dot), and the pipeline-guards
 // write-scope arm resolves run `<runId>` (exists) / task `.e2e-…` (unknown → no scope).
 
+/**
+ * Repo-relative directory the COMMITTED critical e2e suite lives in. Persistence in
+ * this directory IS the criticality signal (Decision 39) — no `@critical` tag exists.
+ * NOT configurable: the scaffolded `templates/playwright.config.ts` hardcodes `e2e/`
+ * and the TCB write-deny protects the literal path, so a config knob could only
+ * silently diverge from what actually runs (the retired `e2e.testDir` key's
+ * superRefine already rejected every non-default value). Lives here (the e2e
+ * path leaf) rather than the config schema — it is a path constant, not a knob.
+ */
+export const E2E_TEST_DIR = 'e2e'
+
 /** The e2e-phase author worktree path (torn down once its specs are merged/rejected). */
 export function e2eWorktreePath(workDir: string, runId: string): string {
     return join(workDir, runId, '.e2e-author')

@@ -7,7 +7,7 @@
  * crash-retry re-enters the facade's dispatch via the threaded {@link EmitFn}.
  */
 import {join} from 'node:path'
-import {E2E_TEST_DIR} from '../config/schema.js'
+import {E2E_TEST_DIR} from './e2e-paths.js'
 import {ensureStageWorktree, publishToStaging, specTaskLines} from './stage-helpers.js'
 import {
     resetTaskRow,

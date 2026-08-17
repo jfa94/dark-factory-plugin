@@ -298,7 +298,9 @@ const MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/i
 function applyMutableSourceExclude(lines: string[]): string[] {
     let matches = 0
     const out = lines.map((l) => {
-        if (!l.includes('grep -Ev')) return l
+        if (!l.includes('grep -Ev')) {
+            return l
+        }
         matches++
         return l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`)
     })
@@ -318,10 +320,14 @@ function rootsPathspec(roots: readonly string[]): string {
 function applyMutationRoots(lines: string[], contract: GateContract): string[] {
     const roots = mutationRoots(contract)
     const spec = rootsPathspec(roots)
-    if (spec === DEFAULT_ROOTS_PATHSPEC) return lines
+    if (spec === DEFAULT_ROOTS_PATHSPEC) {
+        return lines
+    }
     let matches = 0
     const out = lines.map((l) => {
-        if (!l.includes(DEFAULT_ROOTS_PATHSPEC)) return l
+        if (!l.includes(DEFAULT_ROOTS_PATHSPEC)) {
+            return l
+        }
         matches++
         return l.replace(DEFAULT_ROOTS_PATHSPEC, spec)
     })

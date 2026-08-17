@@ -30,7 +30,7 @@
  * start reading `result.mergeGate`/`result.result` off of this call.
  */
 import {buildPanelManifest} from '../verifier/judgment/panel.js'
-import {E2E_TEST_DIR} from '../config/schema.js'
+import {E2E_TEST_DIR} from '../orchestrator/e2e-paths.js'
 import {composeCrossVendorPrompt} from '../verifier/judgment/cross-vendor-prompt.js'
 import type {CrossVendorResolution} from '../verifier/judgment/vendor.js'
 import {resolvePluginRoot} from '../config/index.js'

@@ -11,14 +11,29 @@
 import {readFileSync, writeFileSync} from 'node:fs'
 import {pathToFileURL} from 'node:url'
 
-// Canonical SemVer 2.0.0 (semver.org), incl. prerelease + build metadata.
-const SEMVER =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
+const NUMERIC = /^(0|[1-9]\d*)$/
+const PRE_IDENT = /^(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)$/
+const BUILD_IDENT = /^[0-9a-zA-Z-]+$/
+
+/** Canonical SemVer 2.0.0 (semver.org), incl. prerelease + build metadata. */
+function isCanonicalSemVer(v) {
+    const plus = v.indexOf('+')
+    const build = plus === -1 ? undefined : v.slice(plus + 1)
+    const beforeBuild = plus === -1 ? v : v.slice(0, plus)
+    const dash = beforeBuild.indexOf('-')
+    const pre = dash === -1 ? undefined : beforeBuild.slice(dash + 1)
+    const core = dash === -1 ? beforeBuild : beforeBuild.slice(0, dash)
+    const nums = core.split('.')
+    if (nums.length !== 3 || !nums.every((n) => NUMERIC.test(n))) return false
+    if (pre !== undefined && !pre.split('.').every((id) => PRE_IDENT.test(id))) return false
+    if (build !== undefined && !build.split('.').every((id) => BUILD_IDENT.test(id))) return false
+    return true
+}
 
 /** Parse package.json text and return its version, or throw naming what's wrong. */
 export function readCanonicalVersion(pkgText) {
     const version = JSON.parse(pkgText).version
-    if (typeof version !== 'string' || !SEMVER.test(version)) {
+    if (typeof version !== 'string' || !isCanonicalSemVer(version)) {
         throw new Error(`version: package.json "version" is not a canonical SemVer string: ${JSON.stringify(version)}`)
     }
     return version
@@ -87,6 +102,8 @@ function main() {
             return
         }
         for (const d of drift) {
+            // d.file comes from the fixed two-manifest set in manifestDrift, never user input.
+            // eslint-disable-next-line security/detect-non-literal-fs-filename
             writeFileSync(d.file, bumpVersionLiteral(readFileSync(d.file, 'utf8'), d.current, canonical, d.file))
         }
         console.log(`version:sync — wrote ${canonical} to ${drift.length} manifest(s)`)

@@ -227,7 +227,7 @@ factory configure --set e2e.baseURL="http://localhost:3000"
 > `templates/playwright.config.ts` hardcodes `e2e`, and the TCB `e2e-suite` write-guard is
 > hardcoded to the same path component; a custom `testDir` would silently diverge from what
 > actually runs and gates, so the engine holds the path as the constant `E2E_TEST_DIR`
-> (`src/config/schema.ts`) rather than leaving it a knob. The **target repo's own** `playwright.config.ts` is checked against the same
+> (`src/orchestrator/e2e-paths.ts`) rather than leaving it a knob. The **target repo's own** `playwright.config.ts` is checked against the same
 > literal at run birth (S4): `run create --e2e` refuses a config whose declared `testDir` is
 > not `e2e`/`./e2e` (an absent declaration fails closed — Playwright defaults to `tests`,
 > outside the write-deny). (There is **no** CI `e2e` job — [Decision 40 D11](../explanation/decisions.md#decision-40--e2e-overhaul-zero-knowledge-ux-via-assessment-adjudication-and-plain-language)
@@ -254,10 +254,10 @@ These schema keys were removed because they were **never actually consumed**. Zo
 strips an unknown key silently, so `loadConfig` warns loudly (once per process per
 file) when a raw overlay still carries one:
 
-| Retired key         | Why it is gone                                                                                                                                                     | Replacement                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| `git.stagingBranch` | Every consumer read the schema default, never a set value — there is no shared staging branch. The real branch is per-run `staging-<run-id>` (`runStagingBranch`). | none needed (the prefix is a constant)               |
-| `e2e.testDir`       | A `superRefine` already rejected every non-default value, so the knob could only ever hold `e2e`. Both the template and the TCB write-guard hardcode that path.    | the `E2E_TEST_DIR` constant (`src/config/schema.ts`) |
+| Retired key         | Why it is gone                                                                                                                                                     | Replacement                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `git.stagingBranch` | Every consumer read the schema default, never a set value — there is no shared staging branch. The real branch is per-run `staging-<run-id>` (`runStagingBranch`). | none needed (the prefix is a constant)                        |
+| `e2e.testDir`       | A `superRefine` already rejected every non-default value, so the knob could only ever hold `e2e`. Both the template and the TCB write-guard hardcode that path.    | the `E2E_TEST_DIR` constant (`src/orchestrator/e2e-paths.ts`) |
 
 Remove them from your overlay:
 

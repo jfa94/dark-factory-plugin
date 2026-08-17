@@ -38,7 +38,7 @@
  * `e2e-proof.ts` (the fail-first proof), and `e2e-shared.ts` (types + phase writers).
  */
 import {createLogger} from '../shared/index.js'
-import {E2E_TEST_DIR} from '../config/schema.js'
+import {E2E_TEST_DIR} from './e2e-paths.js'
 import {CONTROL_TITLE_PREFIX, E2eResultsSchema, type E2eAuthorResults} from './e2e-schemas.js'
 import {
     e2eWorktreePath,

@@ -220,7 +220,7 @@ describe('applyRecordHoldout record', () => {
         }
     )
 
-    const evaluatorFailures: readonly [string, (record: string) => string][] = [
+    const evaluatorFailures: readonly [string, () => string][] = [
         ['unparseable output', () => 'not json at all'],
         ['wrong cardinality', () => validatorJson([['d', true, 'src/x.ts:1']])],
         [
@@ -252,7 +252,7 @@ describe('applyRecordHoldout record', () => {
                 spawn_in_flight: {phase: 'verify', rung: 0, tip_sha: 'sha-tip', spawned_at: 123, redrives: 1},
             }))
 
-            const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, mk('t1'))
+            const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, mk())
 
             expect(result.kind).toBe('evaluator-failure')
             if (result.kind !== 'evaluator-failure') {

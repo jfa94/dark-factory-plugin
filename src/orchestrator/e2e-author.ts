@@ -6,7 +6,7 @@
  * facade (`e2e.ts`); the crash-retry re-enters it via the threaded {@link EmitFn}.
  */
 import {isAbsolute} from 'node:path'
-import {E2E_TEST_DIR} from '../config/schema.js'
+import {E2E_TEST_DIR} from './e2e-paths.js'
 import {ensureStageWorktree, publishToStaging, specTaskLines} from './stage-helpers.js'
 import {
     parseProducerStatus,

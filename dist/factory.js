@@ -6335,7 +6335,6 @@ var E2eConfigSchema = external_exports.object({
    */
   reopenCap: external_exports.number().int().nonnegative().default(2)
 }).default({});
-var E2E_TEST_DIR = "e2e";
 var ConfigSchema = external_exports.object({
   quality: QualitySchema,
   quota: QuotaSchema,
@@ -16465,42 +16464,9 @@ async function nextTask(deps, runId) {
   };
 }
 
-// src/orchestrator/e2e-schemas.ts
-var CONTROL_TITLE_PREFIX = "control:";
-var E2eAdjudicationVerdictSchema = external_exports.object({
-  spec_path: external_exports.string().min(1),
-  verdict: external_exports.enum(["regression", "intentional-change"]),
-  /** Plain-language explanation — surfaced verbatim on a regression fail. */
-  reason: external_exports.string().min(1),
-  /**
-   * The authorizing task/spec language quoted verbatim. REQUIRED on every
-   * intentional-change verdict — enforced at record (retry), not here, so a
-   * missing citation reads as an incomplete response rather than a parse crash.
-   */
-  citation: external_exports.string().optional()
-}).strict();
-var E2eResultsSchema = external_exports.object({
-  status: external_exports.string().min(1),
-  /** Empty when the author judged no task in this run to be UI-facing. */
-  manifest: external_exports.array(E2eManifestEntrySchema).default([]),
-  /**
-   * Explicit "nothing UI-facing" signal — must be `true` whenever `manifest` is
-   * empty. Distinguishes a genuine no-op from a malformed/incomplete author
-   * response that the `manifest` field's own `.default([])` would otherwise
-   * silently paper over as an unremarkable green. Omitted/false + an empty
-   * manifest is treated as ambiguous, not a silent pass.
-   */
-  no_ui_surface: external_exports.boolean().optional(),
-  /**
-   * The adjudication-results leg's payload (D7) — populated only when an
-   * adjudication cursor is in flight (the cursor's presence in run state, not
-   * any field here, is what routes the record; author results omit it).
-   */
-  verdicts: external_exports.array(E2eAdjudicationVerdictSchema).optional()
-}).strict();
-
 // src/orchestrator/e2e-paths.ts
 import { join as join19 } from "node:path";
+var E2E_TEST_DIR = "e2e";
 function e2eWorktreePath(workDir, runId) {
   return join19(workDir, runId, ".e2e-author");
 }
@@ -16545,6 +16511,40 @@ function scrubbedE2eEnv(cfg, boot) {
   }
   return env;
 }
+
+// src/orchestrator/e2e-schemas.ts
+var CONTROL_TITLE_PREFIX = "control:";
+var E2eAdjudicationVerdictSchema = external_exports.object({
+  spec_path: external_exports.string().min(1),
+  verdict: external_exports.enum(["regression", "intentional-change"]),
+  /** Plain-language explanation — surfaced verbatim on a regression fail. */
+  reason: external_exports.string().min(1),
+  /**
+   * The authorizing task/spec language quoted verbatim. REQUIRED on every
+   * intentional-change verdict — enforced at record (retry), not here, so a
+   * missing citation reads as an incomplete response rather than a parse crash.
+   */
+  citation: external_exports.string().optional()
+}).strict();
+var E2eResultsSchema = external_exports.object({
+  status: external_exports.string().min(1),
+  /** Empty when the author judged no task in this run to be UI-facing. */
+  manifest: external_exports.array(E2eManifestEntrySchema).default([]),
+  /**
+   * Explicit "nothing UI-facing" signal — must be `true` whenever `manifest` is
+   * empty. Distinguishes a genuine no-op from a malformed/incomplete author
+   * response that the `manifest` field's own `.default([])` would otherwise
+   * silently paper over as an unremarkable green. Omitted/false + an empty
+   * manifest is treated as ambiguous, not a silent pass.
+   */
+  no_ui_surface: external_exports.boolean().optional(),
+  /**
+   * The adjudication-results leg's payload (D7) — populated only when an
+   * adjudication cursor is in flight (the cursor's presence in run state, not
+   * any field here, is what routes the record; author results omit it).
+   */
+  verdicts: external_exports.array(E2eAdjudicationVerdictSchema).optional()
+}).strict();
 
 // src/orchestrator/e2e-author.ts
 import { isAbsolute as isAbsolute2 } from "node:path";
@@ -19286,7 +19286,7 @@ var stateCommand = {
 };
 
 // src/cli/subcommands/scaffold.ts
-import { mkdir as mkdir14, readFile as readFile19, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir14, readFile as readFile19, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
 import { existsSync as existsSync11 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname12, join as join30, relative as relative2 } from "node:path";
@@ -19495,9 +19495,20 @@ function waivedMutationBlock(reason) {
 var DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'";
 var MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts`;
 function applyMutableSourceExclude(lines) {
-  return lines.map(
-    (l) => l.includes("grep -Ev") ? l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`) : l
-  );
+  let matches = 0;
+  const out = lines.map((l) => {
+    if (!l.includes("grep -Ev")) {
+      return l;
+    }
+    matches++;
+    return l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`);
+  });
+  if (matches === 0) {
+    throw new Error(
+      "renderQualityGate: template has no `grep -Ev` mutable-source exclude line \u2014 the anchor the single-predicate replacement (S11) targets is gone"
+    );
+  }
+  return out;
 }
 function rootsPathspec(roots) {
   return roots.map((r) => `'${r}/**/*.ts'`).join(" ");
@@ -19505,7 +19516,23 @@ function rootsPathspec(roots) {
 function applyMutationRoots(lines, contract) {
   const roots = mutationRoots(contract);
   const spec = rootsPathspec(roots);
-  return spec === DEFAULT_ROOTS_PATHSPEC ? lines : lines.map((l) => l.replace(DEFAULT_ROOTS_PATHSPEC, spec));
+  if (spec === DEFAULT_ROOTS_PATHSPEC) {
+    return lines;
+  }
+  let matches = 0;
+  const out = lines.map((l) => {
+    if (!l.includes(DEFAULT_ROOTS_PATHSPEC)) {
+      return l;
+    }
+    matches++;
+    return l.replace(DEFAULT_ROOTS_PATHSPEC, spec);
+  });
+  if (matches === 0) {
+    throw new Error(
+      `renderQualityGate: contract mutation roots need re-pointing but the template has no ${DEFAULT_ROOTS_PATHSPEC} default-roots pathspec to replace`
+    );
+  }
+  return out;
 }
 function renderMutationRegion(lines, opts) {
   const begin = lines.findIndex((l) => l.trim() === "# factory:mutation-begin");
@@ -19834,7 +19861,9 @@ async function resolveNpm(opts) {
       "scaffold: coverage gate: no vitest coverage provider \u2014 install @vitest/coverage-v8 (or @vitest/coverage-istanbul) or pass --waive coverage to record the waiver"
     );
   }
-  const eslintConfig = ESLINT_CONFIGS.some((c) => existsSync9(join28(opts.targetRoot, c)));
+  const eslintConfig = ESLINT_CONFIGS.some(
+    (c) => existsSync9(join28(opts.targetRoot, c)) || opts.projectedSeedFiles?.includes(c) === true
+  );
   let lint;
   if (!eslintConfig) {
     lint = no("no eslint config");
@@ -19893,12 +19922,21 @@ async function recommendFastCheck(targetRoot) {
   }
   return !hasDep(await readPackageJson(targetRoot), "fast-check");
 }
+var invalidContractError = (error) => new Error(`scaffold: ${GATE_CONTRACT_REL} is INVALID (${error}) \u2014 fix it or delete it and re-run factory scaffold`);
+async function preflightGateContract(opts) {
+  const load = await loadGateContract(opts.targetRoot);
+  if (load.state === "invalid") {
+    throw invalidContractError(load.error);
+  }
+  if (load.state === "ok") {
+    return load.contract;
+  }
+  return resolveGateContract(opts);
+}
 async function ensureGateContract(opts) {
   const load = await loadGateContract(opts.targetRoot);
   if (load.state === "invalid") {
-    throw new Error(
-      `scaffold: ${GATE_CONTRACT_REL} is INVALID (${load.error}) \u2014 fix it or delete it and re-run factory scaffold`
-    );
+    throw invalidContractError(load.error);
   }
   if (load.state === "ok") {
     return { status: "present", stack: load.contract.stack, contract: load.contract };
@@ -19927,6 +19965,10 @@ async function loadScaffoldLock(targetRoot) {
   }
   try {
     const parsed = JSON.parse(await readFile18(path7, "utf8"));
+    const version = typeof parsed === "object" && parsed !== null ? parsed.version : null;
+    if (typeof version === "number" && version !== 1) {
+      throw new UnsupportedLockVersionError(version);
+    }
     const seeds = typeof parsed === "object" && parsed !== null ? parsed.seeds : null;
     if (typeof seeds !== "object" || seeds === null) {
       return { lock: empty, existed: true, invalid: true };
@@ -19944,10 +19986,21 @@ async function loadScaffoldLock(targetRoot) {
     };
     const managed = parsed.managed;
     return { lock: { version: 1, seeds: readMap(seeds), managed: readMap(managed) }, existed: true, invalid: false };
-  } catch {
+  } catch (err) {
+    if (err instanceof UnsupportedLockVersionError) {
+      throw err;
+    }
     return { lock: empty, existed: true, invalid: true };
   }
 }
+var UnsupportedLockVersionError = class extends Error {
+  constructor(version) {
+    super(
+      `scaffold: ${SCAFFOLD_LOCK_REL} declares version ${version}, but this engine supports only version 1 \u2014 upgrade the factory plugin (or delete the lock to re-adopt seeds). Nothing was written.`
+    );
+    this.name = "UnsupportedLockVersionError";
+  }
+};
 async function saveScaffoldLock(targetRoot, lock2) {
   const path7 = join29(targetRoot, SCAFFOLD_LOCK_REL);
   const sorted = (map) => {
@@ -19998,7 +20051,9 @@ Options:
   --force-managed       Re-adopt conflicted MANAGED files: overwrite a customized
                         managed file with the plugin template and re-record its
                         hash (default: a customized managed file is a
-                        files_conflict refusal with zero writes)
+                        files_conflict refusal with zero writes). Never
+                        authorizes DELETING a customized stale nightly \u2014
+                        force only overwrites toward the shipped template
 
 Also resolves + writes the GATE CONTRACT (.factory/gates.json, Decision 46): the
 committed per-gate applicability agreement. Refuses below the floor (test + type +
@@ -20146,8 +20201,9 @@ async function applyTemplate(entry, templatesDir, targetRoot, lists, lock2, tran
     return;
   }
   const [rendered, destText] = await Promise.all([render(), readFile19(dest, "utf8")]);
-  if (lock2 && lock2.managed[entry.rel] !== sha256Hex(rendered)) {
-    lock2.managed[entry.rel] = sha256Hex(rendered);
+  const renderedHash = sha256Hex(rendered);
+  if (lock2 && lock2.managed[entry.rel] !== renderedHash) {
+    lock2.managed[entry.rel] = renderedHash;
     lock2.dirty = true;
   }
   if (rendered === destText) {
@@ -20234,34 +20290,34 @@ function managedTransform(rel, contract, facts, gateEnv) {
   }
   return void 0;
 }
-async function preflightManagedFiles(opts, lock2) {
-  let contract;
-  try {
-    const load = await loadGateContract(opts.targetRoot);
-    contract = load.state === "ok" ? load.contract : await resolveGateContract({
-      targetRoot: opts.targetRoot,
-      securityCommand: opts.config.quality.securityCommand,
-      waiveMutation: opts.waiveMutation === true,
-      waiveCoverage: opts.waiveCoverage === true
-    });
-  } catch {
-    return;
-  }
+async function preflightManagedFiles(opts, lock2, contract) {
   if (contract.stack !== "npm") {
-    return;
+    return { staleNightlyHash: void 0 };
   }
   const facts = await readWorkflowFacts(opts.targetRoot);
   const conflicts = [];
+  let staleNightlyConflict = false;
+  let staleNightlyHash;
   for (const entry of TEMPLATE_MANIFEST) {
     if (entry.policy !== "managed") {
-      continue;
-    }
-    if (entry.rel === MUTATION_NIGHTLY_REL && !contract.gates.mutation.contracted) {
       continue;
     }
     const segs = entry.rel.split("/");
     const dest = join30(opts.targetRoot, ...segs);
     const src = join30(opts.templatesDir, ...segs);
+    if (entry.rel === MUTATION_NIGHTLY_REL && !contract.gates.mutation.contracted) {
+      if (!existsSync11(dest)) {
+        continue;
+      }
+      const destHash = sha256Hex(await readFile19(dest, "utf8"));
+      if (destHash === lock2.managed[entry.rel]) {
+        staleNightlyHash = destHash;
+      } else {
+        staleNightlyConflict = true;
+        conflicts.push(entry.rel);
+      }
+      continue;
+    }
     if (!existsSync11(dest) || !existsSync11(src)) {
       continue;
     }
@@ -20278,22 +20334,73 @@ async function preflightManagedFiles(opts, lock2) {
     conflicts.push(entry.rel);
   }
   if (conflicts.length === 0) {
-    return;
+    return { staleNightlyHash };
   }
-  if (opts.forceManaged === true) {
+  if (opts.forceManaged === true && !staleNightlyConflict) {
     log36.warn(`--force-managed: re-adopting customized managed file(s): ${conflicts.join(", ")}`);
-    return;
+    return { staleNightlyHash };
   }
   throw new UsageError(
-    `files_conflict: managed file(s) differ from both the shipped template and the recorded scaffold hash: ${conflicts.join(", ")}. Nothing was written (no seeds, gate contract, lock, or protection changes). Managed files are plugin-authored by contract \u2014 restore them (git checkout) or pass --force-managed to overwrite them with the plugin template and re-record their hashes.`
+    `files_conflict: managed file(s) differ from both the shipped template and the recorded scaffold hash: ${conflicts.join(", ")}. Nothing was written (no seeds, gate contract, lock, or protection changes). Managed files are plugin-authored by contract \u2014 restore them (git checkout) or pass --force-managed to overwrite them with the plugin template and re-record their hashes.` + (staleNightlyConflict ? ` Note: ${MUTATION_NIGHTLY_REL} is STALE (mutation is uncontracted) and its bytes don't match the recorded scaffold hash \u2014 --force-managed cannot authorize DELETING unproven content; restore it (git checkout) or delete the file yourself.` : "")
   );
 }
+async function removeStaleNightly(targetRoot, expectedHash, lists, lock2) {
+  const dest = join30(targetRoot, ...MUTATION_NIGHTLY_REL.split("/"));
+  const current = sha256Hex(await readFile19(dest, "utf8"));
+  if (current !== expectedHash) {
+    throw new Error(
+      `scaffold: ${MUTATION_NIGHTLY_REL} changed since preflight \u2014 not deleting; re-run factory scaffold`
+    );
+  }
+  await unlink3(dest);
+  Reflect.deleteProperty(lock2.managed, MUTATION_NIGHTLY_REL);
+  lock2.dirty = true;
+  lists.removed.push(MUTATION_NIGHTLY_REL);
+}
 async function runScaffold(opts) {
-  const lists = { created: [], present: [], updated: [] };
+  const lists = { created: [], present: [], updated: [], removed: [] };
   const isNodePackage = existsSync11(join30(opts.targetRoot, "package.json"));
   const lockLoad = await loadScaffoldLock(opts.targetRoot);
-  const lock2 = { seeds: { ...lockLoad.lock.seeds }, managed: { ...lockLoad.lock.managed }, dirty: false };
-  await preflightManagedFiles(opts, lock2);
+  const lock2 = {
+    seeds: { ...lockLoad.lock.seeds },
+    managed: { ...lockLoad.lock.managed },
+    dirty: lockLoad.invalid
+  };
+  const projectedSeedFiles = TEMPLATE_MANIFEST.filter(
+    (e) => e.policy === "seed" && (e.nodeOnly !== true || isNodePackage) && existsSync11(join30(opts.templatesDir, ...e.rel.split("/"))) && !existsSync11(join30(opts.targetRoot, ...e.rel.split("/")))
+  ).map((e) => e.rel);
+  const preflightContract = await preflightGateContract({
+    targetRoot: opts.targetRoot,
+    securityCommand: opts.config.quality.securityCommand,
+    waiveMutation: opts.waiveMutation === true,
+    waiveCoverage: opts.waiveCoverage === true,
+    projectedSeedFiles
+  });
+  const nightlyPreflight = await preflightManagedFiles(opts, lock2, preflightContract);
+  let lockReported = false;
+  const persistLock = async () => {
+    if (!lock2.dirty) {
+      return;
+    }
+    const toSave = { version: 1, seeds: lock2.seeds, managed: lock2.managed };
+    await saveScaffoldLock(opts.targetRoot, toSave);
+    lock2.dirty = false;
+    if (!lockReported) {
+      lockReported = true;
+      if (lockLoad.existed) {
+        lists.present.push(SCAFFOLD_LOCK_REL);
+      } else {
+        lists.created.push(SCAFFOLD_LOCK_REL);
+        log36.info(`wrote ${SCAFFOLD_LOCK_REL} (pristine-tracking) \u2014 COMMIT it alongside the seeds`);
+      }
+    }
+  };
+  const reportLockPresentIfUnsaved = () => {
+    if (!lockReported && lockLoad.existed) {
+      lists.present.push(SCAFFOLD_LOCK_REL);
+      lockReported = true;
+    }
+  };
   for (const entry of TEMPLATE_MANIFEST) {
     if (CI_NET_RELS.includes(entry.rel) || entry.rel === STRYKER_SEED_REL) {
       continue;
@@ -20303,22 +20410,8 @@ async function runScaffold(opts) {
     }
     await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock2);
   }
-  let lockReported = false;
-  if (lock2.dirty || lockLoad.invalid) {
-    const toSave = { version: 1, seeds: lock2.seeds, managed: lock2.managed };
-    await saveScaffoldLock(opts.targetRoot, toSave);
-    lock2.dirty = false;
-    lockReported = true;
-    if (lockLoad.existed) {
-      lists.present.push(SCAFFOLD_LOCK_REL);
-    } else {
-      lists.created.push(SCAFFOLD_LOCK_REL);
-      log36.info(`wrote ${SCAFFOLD_LOCK_REL} (seed pristine-tracking) \u2014 COMMIT it alongside the seeds`);
-    }
-  } else if (lockLoad.existed) {
-    lists.present.push(SCAFFOLD_LOCK_REL);
-    lockReported = true;
-  }
+  await persistLock();
+  reportLockPresentIfUnsaved();
   const gates = await ensureGateContract({
     targetRoot: opts.targetRoot,
     securityCommand: opts.config.quality.securityCommand,
@@ -20352,20 +20445,7 @@ async function runScaffold(opts) {
         lock2,
         (text) => text.replace('"src/**/*.ts"', includes)
       );
-      const wroteSeed = lists.created.includes(STRYKER_SEED_REL) || lists.updated.includes(STRYKER_SEED_REL);
-      if (wroteSeed) {
-        await saveScaffoldLock(opts.targetRoot, { version: 1, seeds: lock2.seeds, managed: lock2.managed });
-        lock2.dirty = false;
-        if (!lockReported) {
-          if (lockLoad.existed) {
-            lists.present.push(SCAFFOLD_LOCK_REL);
-          } else {
-            lists.created.push(SCAFFOLD_LOCK_REL);
-            log36.info(`wrote ${SCAFFOLD_LOCK_REL} (seed pristine-tracking) \u2014 COMMIT it alongside the seeds`);
-          }
-          lockReported = true;
-        }
-      }
+      await persistLock();
     }
   }
   if (gates.contract.stack === "npm") {
@@ -20380,20 +20460,10 @@ async function runScaffold(opts) {
       const transform = managedTransform(entry.rel, gates.contract, facts, opts.config.quality.gateEnv);
       await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock2, transform);
     }
-    const wroteManaged = CI_NET_RELS.some((rel) => lists.created.includes(rel) || lists.updated.includes(rel));
-    if (wroteManaged) {
-      await saveScaffoldLock(opts.targetRoot, { version: 1, seeds: lock2.seeds, managed: lock2.managed });
-      lock2.dirty = false;
-      if (!lockReported) {
-        if (lockLoad.existed) {
-          lists.present.push(SCAFFOLD_LOCK_REL);
-        } else {
-          lists.created.push(SCAFFOLD_LOCK_REL);
-          log36.info(`wrote ${SCAFFOLD_LOCK_REL} (pristine-tracking) \u2014 COMMIT it alongside the seeds`);
-        }
-        lockReported = true;
-      }
+    if (!gates.contract.gates.mutation.contracted && nightlyPreflight.staleNightlyHash !== void 0) {
+      await removeStaleNightly(opts.targetRoot, nightlyPreflight.staleNightlyHash, lists, lock2);
     }
+    await persistLock();
     await ensurePrettierignore(opts.targetRoot, lists);
   } else {
     log36.info(
@@ -20402,6 +20472,9 @@ async function runScaffold(opts) {
   }
   if (lists.updated.length > 0) {
     log36.info(`auto-updated ${lists.updated.length} outdated scaffold file(s): ${lists.updated.join(", ")}`);
+  }
+  if (lists.removed.length > 0) {
+    log36.info(`removed ${lists.removed.length} stale scaffold file(s): ${lists.removed.join(", ")}`);
   }
   if (await recommendFastCheck(opts.targetRoot)) {
     log36.info(
@@ -20463,6 +20536,7 @@ async function runScaffold(opts) {
     files_created: lists.created,
     files_present: lists.present,
     files_updated: lists.updated,
+    files_removed: lists.removed,
     protection: {
       enabled: state.enabled,
       strict_up_to_date: state.strictUpToDate,

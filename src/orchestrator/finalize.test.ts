@@ -19,7 +19,7 @@ import {mkdtemp, rm, readFile, mkdir, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 
-import {finalizeRun, prdDoneComment, type FinalizeRunDeps} from './finalize.js'
+import {finalizeRun, prdDoneComment, deriveTerminalReason, type FinalizeRunDeps} from './finalize.js'
 import {StateManager} from '../core/state/manager.js'
 import {FakeGhClient, FakeGitClient} from '../git/fakes.js'
 import {parseSpecManifest, type SpecManifest} from '../spec/index.js'
@@ -32,6 +32,7 @@ import {GATE_CONTRACT_REL} from '../verifier/deterministic/gate-contract.js'
 import {validContract} from '../verifier/deterministic/gate-contract.test.js'
 import type {ShipMode} from './types.js'
 import type {FailureClass, TaskState} from '../types/index.js'
+import type {RunState} from '../core/state/schema.js'
 import {nonNull, at, getOrThrow} from '../shared/index.js'
 
 const RUN_ID = 'run-final-1'
@@ -208,7 +209,10 @@ describe('finalizeRun', () => {
         expect(gh.merges).toHaveLength(0)
         // The PRD comment fires even with zero task failures (an e2e-only veto).
         expect(result.failureCommentPosted).toBe(true)
-        expect((await state.read(RUN_ID)).status).toBe('failed')
+        const persisted = await state.read(RUN_ID)
+        expect(persisted.status).toBe('failed')
+        // The WHY names the actual condemner (deriveTerminalReason, persisted step 7).
+        expect(persisted.terminal_reason).toBe('e2e phase failed: checkout: cap-exhausted critical')
     })
 
     it('assessment-failed override (Decision 40): all tasks done on resume but a failed assessment vetoes → failed, no rollup', async () => {
@@ -1113,5 +1117,70 @@ describe('prdDoneComment', () => {
         const c = prdDoneComment(baseReport, {number: 42, url: '', resumed: false, merged: true})
         expect(c).toContain('#42')
         expect(c).not.toContain('[#42](')
+    })
+})
+
+describe('deriveTerminalReason', () => {
+    /** Minimal RunState slice — the function reads only the override phases + tasks. */
+    function run(over: Partial<RunState>): RunState {
+        return {tasks: {}, ...over} as RunState
+    }
+    const failedPhase = {status: 'failed' as const, reason: 'boom'}
+
+    it.each([
+        ['e2e phase failed with reason', run({e2e_phase: failedPhase as never}), 'completed', 'e2e phase failed: boom'],
+        [
+            'e2e phase failed without reason',
+            run({e2e_phase: {status: 'failed'} as never}),
+            'completed',
+            'e2e phase failed: no reason recorded',
+        ],
+        ['assessment failed', run({e2e_assessment: failedPhase as never}), 'completed', 'e2e assessment failed: boom'],
+        [
+            'traceability failed',
+            run({traceability: failedPhase as never}),
+            'completed',
+            'traceability audit failed: boom',
+        ],
+        [
+            'e2e phase outranks assessment + traceability',
+            run({
+                e2e_phase: failedPhase as never,
+                e2e_assessment: failedPhase as never,
+                traceability: failedPhase as never,
+            }),
+            'failed',
+            'e2e phase failed: boom',
+        ],
+        ['no override + completed tasks', run({}), 'completed', undefined],
+        ['failed with zero tasks', run({}), 'failed', 'no tasks (nothing was shippable)'],
+    ])('%s', (_label, state, taskTerminal, expected) => {
+        expect(deriveTerminalReason(state, taskTerminal)).toBe(expected)
+    })
+
+    it('tallies failed tasks, naming failure classes', () => {
+        const state = run({
+            tasks: {
+                t1: taskRow({task_id: 't1', status: 'done'}),
+                t2: taskRow({task_id: 't2', status: 'failed', failure_class: 'capability-budget'}),
+                t3: taskRow({task_id: 't3', status: 'failed', failure_class: 'blocked-environmental'}),
+            },
+        })
+        expect(deriveTerminalReason(state, 'failed')).toBe(
+            '2 of 3 task(s) failed: t2 (capability-budget), t3 (blocked-environmental)'
+        )
+    })
+
+    it('names at most three failed tasks, then elides', () => {
+        const seeds: TaskSeed[] = ['t1', 't2', 't3', 't4', 't5'].map((task_id) => ({
+            task_id,
+            status: 'failed' as const,
+        }))
+        const state = run({tasks: Object.fromEntries(seeds.map((t) => [t.task_id, taskRow(t)]))})
+        const reason = deriveTerminalReason(state, 'failed')
+        expect(reason).toContain('5 of 5 task(s) failed:')
+        expect(reason).toContain('t3')
+        expect(reason).not.toContain('t4')
+        expect(reason).toMatch(/, …$/)
     })
 })

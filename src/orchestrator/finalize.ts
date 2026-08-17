@@ -188,7 +188,7 @@ async function commentFailuresOnPrd(deps: FinalizeRunDeps, run: RunState, report
  * phase's own reason), else the task tally. Mirrors the status-override ordering
  * in {@link finalizeRun} step 1 so the reason always names the actual condemner.
  */
-function deriveTerminalReason(run: RunState, taskTerminal: string): string | undefined {
+export function deriveTerminalReason(run: RunState, taskTerminal: string): string | undefined {
     if (run.e2e_phase?.status === 'failed') {
         return `e2e phase failed: ${run.e2e_phase.reason ?? 'no reason recorded'}`
     }

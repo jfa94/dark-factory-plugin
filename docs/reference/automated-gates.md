@@ -345,7 +345,8 @@ workflow, `.github/workflows/mutation-nightly.yml` (rendered by
 mutation is contracted), runs the full mutable surface on the default branch
 nightly and saves per-shard Stryker incremental caches there — where
 `actions/cache` makes them readable by every PR. Sharding is a **stable hash**
-(`fnv1a(path) % 4`, `src/verifier/deterministic/shard.ts` / `src/bin/shard-mutation-scope.ts`),
+(`fnv1a(path) % 8`, `src/verifier/deterministic/shard.ts` / `src/bin/shard-mutation-scope.ts`;
+each nightly shard bounded by `timeout-minutes: 360`),
 not cost-balanced: a file's shard depends only on its path, so a PR's diff files
 always land on the shard whose nightly-seeded cache already holds their results and
 only genuinely changed mutants re-run. The retired LPT-by-sloc packer balanced a

@@ -19,7 +19,7 @@ exits `2`.
 | `holdout-guard`     | PreToolUse `Read\|Grep\|Glob`, `Bash`       | Deny reads of the holdout answer-key store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `write-protection`  | PreToolUse `Bash`, `Edit\|Write\|MultiEdit` | Deny writes to hardcoded TCB (trusted-computing-base) paths — via the `Edit`/`Write`/`MultiEdit` `file_path`(s) **and** via a `Bash` command's write targets (redirects, `tee`/`cp`/`mv`/`install`, `dd of=`, `sed`/`perl -i`, `truncate`, `rm`).                                                                                                                                                                                                                                                                                                                          |
 | `subagent-stop`     | SubagentStop                                | Log a stopping reviewer's parsed verdict (observational — the runner record is the single writer of `task.reviewers[]`).                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `stop-gate`         | Stop                                        | **One-shot recovery block** + corruption block. NEVER finalizes and performs NO state mutation. An owned run left `running` with every task terminal blocks **once** with an instruction to run `factory resume` (the real `finalizeRun`); an inaccessible data directory blocks once too. Both arms are guarded by `stop_hook_active` — a re-entry after a block always allows (loop guard), degrading to a log hint. Never blocks a session end with pending work — the run stays resumable via `factory resume`. See [one-shot recovery](#stop-gate-one-shot-recovery). |
+| `stop-gate`         | Stop                                        | **One-shot recovery block** + corruption block. NEVER finalizes and performs NO state mutation. An owned run left `running` with every task terminal blocks **once** with an instruction to run `/factory:resume` (the runner frontend that reaches the real `finalizeRun`); an inaccessible data directory blocks once too. Both arms are guarded by `stop_hook_active` — a re-entry after a block always allows (loop guard), degrading to a log hint. Never blocks a session end with pending work — the run stays resumable via `/factory:resume`. See [one-shot recovery](#stop-gate-one-shot-recovery). |
 | `session-start`     | SessionStart (`compact`)                    | Re-inject the runner's Iron Laws + a pointer to reload `skills/pipeline-runner/SKILL.md`. A mid-run **compaction** can drop the runner's protocol from conversation context; this emits an `additionalContext` reminder so a compacted session never loses the pointer. Reads no state (the reminder is static).                                                                                                                                                                                                                                                           |
 
 ## `hooks.json` wiring
@@ -57,13 +57,13 @@ The Stop hook has two blocking arms, and both block **at most once**:
 
 | Situation                                              | First stop                                                          | Re-entry (`stop_hook_active`) |
 | ------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------- |
-| Owned run `running`, ≥1 task, all tasks terminal       | **block** — "run `factory resume` now to execute the real finalize" | allow (log hint only)         |
+| Owned run `running`, ≥1 task, all tasks terminal       | **block** — "run `/factory:resume` now to execute the real finalize" | allow (log hint only)         |
 | Data directory unreadable / unenumerable               | **block** — investigate before stopping                             | allow                         |
 | Pending work, foreign run, debug run, no run, no owner | allow                                                               | allow                         |
 
 Claude Code sets `stop_hook_active` on a Stop event that fires because a previous
 Stop-hook block continued the session. Reading it is what makes the recovery
-**one-shot**: the session gets exactly one push toward `factory resume`, and can
+**one-shot**: the session gets exactly one push toward `/factory:resume`, and can
 never be held hostage in a block loop. The hook still never mutates state — a
 state-only status flip would bypass the real `finalizeRun` delivery (rollup PR,
 PRD close, e2e-failed override).
@@ -117,7 +117,7 @@ cross-contamination:
   run — no active run, an unknown session, or an ambiguous ≥2-owned set — it passes
   through (allow), logging the pass-through. It **never** finalizes and **never** mutates
   state: an owned, all-terminal run stays `running`, and the block (or, on a
-  `stop_hook_active` re-entry, the log hint) points at `factory resume`, which
+  `stop_hook_active` re-entry, the log hint) points at `/factory:resume`, which
   re-derives all-terminal and routes through the real `finalizeRun` (a state-only
   status flip would bypass the rollup PR, PRD close, and e2e-failed override — see
   [one-shot recovery](#stop-gate-one-shot-recovery)).

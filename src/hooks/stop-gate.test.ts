@@ -7,7 +7,7 @@
  * terminal state). null/terminal/paused/suspended pass through; debug runs and a
  * non-owner session pass through; a live run with pending work passes
  * through (it stays resumable); an owned run whose tasks are ALL terminal is
- * left `running` with the `allow-unfinalized` hint — `factory resume` routes it
+ * left `running` with the `allow-unfinalized` hint — `/factory:resume` routes it
  * through the real finalizeRun. runStopGate wires that to the StateManager; the only
  * `{decision:"block"}` output left is the data-dir corruption case.
  */
@@ -174,7 +174,7 @@ describe('runStopGate — I/O wiring', () => {
         expect(out).toEqual([])
     })
 
-    it('all-terminal run → one-shot block naming `factory resume`, run left untouched (resume finalizes, not the hook)', async () => {
+    it('all-terminal run → one-shot block naming `/factory:resume` (the runner frontend that can finalize), run left untouched', async () => {
         const {out, emit} = emitter()
         const owned = run({}, {a: task({task_id: 'a', status: 'done'})})
         const manager = {
@@ -183,7 +183,7 @@ describe('runStopGate — I/O wiring', () => {
         const code = await runStopGate([], {manager, emit, readRaw: stdin('sess-a')})
         expect(code).toBe(EXIT.OK)
         expect(JSON.parse(at(out, 0))).toMatchObject({decision: 'block'})
-        expect(at(out, 0)).toContain('factory resume')
+        expect(at(out, 0)).toContain('/factory:resume')
         expect(owned.status).toBe('running') // no mutation of any kind
     })
 

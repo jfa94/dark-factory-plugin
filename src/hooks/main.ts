@@ -53,7 +53,7 @@ export const hookRegistry: Record<string, Hook> = {
     },
     'stop-gate': {
         describe:
-            'Stop: one-shot block telling the session to `factory resume` an owned all-terminal unfinalized run (never mutates state); one-shot block on state corruption; stop_hook_active re-entries always allow',
+            'Stop: one-shot block telling the session to `/factory:resume` an owned all-terminal unfinalized run (never mutates state); one-shot block on state corruption; stop_hook_active re-entries always allow',
         run: (argv) => runStopGate(argv),
     },
     'session-start': {

@@ -13291,13 +13291,14 @@ function extractCriteria(raw) {
   throw new Error("holdout validator output has no parseable JSON object with .criteria");
 }
 function parseHoldoutVerdicts(raw) {
-  return extractCriteria(raw).map((entry) => {
+  return extractCriteria(raw).map((entry, i) => {
     const e = entry ?? {};
-    return {
-      criterion: typeof e.criterion === "string" ? e.criterion : "",
-      satisfied: e.satisfied === true,
-      evidence: typeof e.evidence === "string" ? e.evidence : ""
-    };
+    if (typeof e.criterion !== "string" || typeof e.satisfied !== "boolean" || typeof e.evidence !== "string") {
+      throw new Error(
+        `holdout verdict entry ${i + 1} is malformed \u2014 criterion/satisfied/evidence must be string/boolean/string`
+      );
+    }
+    return { criterion: e.criterion, satisfied: e.satisfied, evidence: e.evidence };
   });
 }
 function classifyHoldoutOutput(record, raw) {
@@ -13987,6 +13988,9 @@ function resetTaskRow(task, opts = {}) {
     test_revision_feedback: _testRevisionFeedback,
     // D71: the failing-gate streak is per-attempt evidence — never spans a rescue.
     last_failing_gates: _lastFailingGates,
+    // The holdout evaluator-fault streak is per-attempt too (consecutive faults);
+    // a rescued task starts with a fresh evaluator budget.
+    holdout_evaluator_retries: _holdoutEvaluatorRetries,
     started_at: _startedAt,
     ended_at: _endedAt,
     phase: _phase,
@@ -14021,7 +14025,7 @@ function resetTasks(run9, targets, answer) {
   return nextTasks;
 }
 function reopenFields(reopen) {
-  return reopen ? { status: "running", ended_at: null } : {};
+  return reopen ? { status: "running", ended_at: null, terminal_reason: void 0 } : {};
 }
 function selectTargets(run9, opts) {
   const explicit = opts.tasks ?? [];
@@ -14264,7 +14268,7 @@ async function applyAdoptions(deps, runId, plan, opts) {
           reopened = "all-done";
         }
         if (reopened !== false) {
-          reopenFields2 = { status: "running", ended_at: null };
+          reopenFields2 = { status: "running", ended_at: null, terminal_reason: void 0 };
           actions.push({
             class: reopened === "rollup" ? "rollup-landed" : "all-done",
             action: "reopen"
@@ -15265,9 +15269,9 @@ async function applyRecordHoldout(deps, runId, taskId, rung, verdictStore, raw) 
   }
   const record = await deps.holdout.get(runId, taskId);
   const classified = classifyHoldoutOutput(record, raw);
+  const run9 = await deps.state.read(runId);
+  const used = run9.tasks[taskId]?.holdout_evaluator_retries ?? 0;
   if (classified.kind === "evaluator-failure") {
-    const run9 = await deps.state.read(runId);
-    const used = run9.tasks[taskId]?.holdout_evaluator_retries ?? 0;
     if (used >= HOLDOUT_EVALUATOR_RETRY_CAP) {
       const step2 = await escalateOrFail(
         deps,
@@ -15282,7 +15286,11 @@ async function applyRecordHoldout(deps, runId, taskId, rung, verdictStore, raw) 
       await persistStepCursor(deps, runId, taskId, step2);
       return { kind: "evaluator-failure", step: step2 };
     }
-    await deps.state.updateTask(runId, taskId, (t) => ({ ...t, holdout_evaluator_retries: used + 1 }));
+    await deps.state.updateTask(runId, taskId, (t) => ({
+      ...t,
+      holdout_evaluator_retries: used + 1,
+      spawn_in_flight: void 0
+    }));
     log24.warn(
       `holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} \u2014 re-running the verify wave at the same rung`
     );
@@ -15292,6 +15300,9 @@ async function applyRecordHoldout(deps, runId, taskId, rung, verdictStore, raw) 
   }
   const verdicts = classified.verdicts;
   await verdictStore.put(runId, taskId, rung, verdicts);
+  if (used > 0) {
+    await deps.state.updateTask(runId, taskId, (t) => ({ ...t, holdout_evaluator_retries: void 0 }));
+  }
   const check = checkHoldout(record, verdicts, deps.config.quality.holdoutPassRate);
   return { kind: "recorded", envelope: { run_id: runId, task_id: taskId, evidence: holdoutEvidence(check), check } };
 }

@@ -9628,14 +9628,14 @@ async function runStopGate(_argv = [], deps = {}) {
   }
   const action = decideStop(run, stoppingSession, stopHookActive);
   if (action.kind === "block-finalize") {
-    const reason = `run ${action.run_id}: all tasks are terminal but the run is not finalized. Run \`factory resume\` now to execute the real finalize (rollup PR, PRD close, report) \u2014 never flip run status by hand.`;
+    const reason = `run ${action.run_id}: all tasks are terminal but the run is not finalized. Run \`/factory:resume\` now to execute the real finalize (rollup PR, PRD close, report) \u2014 never flip run status by hand.`;
     log19.info(reason);
     emitBlockDecision(deny(reason), emit2);
     return EXIT.OK;
   }
   if (action.kind === "allow-unfinalized") {
     log19.info(
-      `run ${action.run_id}: all tasks terminal but the run is not finalized \u2014 left running; \`factory resume\` will run the real finalize`
+      `run ${action.run_id}: all tasks terminal but the run is not finalized \u2014 left running; \`/factory:resume\` will run the real finalize`
     );
   }
   return EXIT.OK;
@@ -9681,7 +9681,7 @@ var hookRegistry = {
     run: (argv) => runSubagentStop(argv)
   },
   "stop-gate": {
-    describe: "Stop: one-shot block telling the session to `factory resume` an owned all-terminal unfinalized run (never mutates state); one-shot block on state corruption; stop_hook_active re-entries always allow",
+    describe: "Stop: one-shot block telling the session to `/factory:resume` an owned all-terminal unfinalized run (never mutates state); one-shot block on state corruption; stop_hook_active re-entries always allow",
     run: (argv) => runStopGate(argv)
   },
   "session-start": {

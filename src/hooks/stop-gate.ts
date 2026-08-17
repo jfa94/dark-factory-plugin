@@ -6,7 +6,9 @@
  * the "session-hostage" behaviour that trapped a session which could not progress.
  * That arm (and its `FACTORY_ALLOW_STOP` escape hatch) is removed: a session may
  * always stop, and a run left `running` with pending work stays cleanly resumable via
- * `factory resume`. Re-entry is idempotent even when the stop landed mid-spawn: the
+ * `/factory:resume` (the runner frontend; the bare `factory resume` CLI only
+ * updates/emits engine state — it drives no runner loop and so can never reach
+ * `finalizeRun`). Re-entry is idempotent even when the stop landed mid-spawn: the
  * orchestrator records a `spawn_in_flight` checkpoint at every spawn emit, so a resume that
  * re-enters the same (phase, rung) before results were recorded resets the task worktree to
  * the captured pre-spawn tip — discarding the abandoned producer's partial work — before
@@ -19,7 +21,7 @@
  * for a terminal run so resume never re-enters finalize, and rescue's rollup detector
  * requires a `run.rollup` that finalizeRun never wrote. Now an owned, session-mode run
  * whose tasks are ALL terminal is simply LEFT `running` (with a log hint): the next
- * `factory resume` re-derives all-terminal and routes through the real `finalizeRun`.
+ * `/factory:resume` re-derives all-terminal and routes through the real `finalizeRun`.
  * The hook performs NO state mutation at all.
  *
  * SESSION-SCOPED (Prompt J — so the hint names the RIGHT run, and only this
@@ -31,7 +33,8 @@
  * inconsistency, never silently accept a corrupt-state stop; a foreign run's
  * unreadable state.json never surfaces here — listRuns skips unreadable runs
  * silently), and an owned all-terminal unfinalized run — the block's reason tells
- * the session to run `factory resume` (the REAL finalize), never flipping status here.
+ * the session to run `/factory:resume` (the runner loop that reaches the REAL
+ * finalize), never flipping status here.
  *
  * Output contract (Stop hook): a block (corruption only) is `{decision:"block",reason}`
  * on STDOUT with exit 0 (the JSON is the block signal). Allow = no output, exit 0.
@@ -47,8 +50,9 @@ const log = createLogger('hook:stop-gate')
 /**
  * The pure stop decision (separated from I/O so it is trivially unit-testable). The
  * hook NEVER mutates state. An owned run left `running` with every task terminal
- * blocks ONCE (`block-finalize`) so the session itself runs `factory resume` — the
- * REAL `finalizeRun`, never a state-only status flip; the `stop_hook_active`
+ * blocks ONCE (`block-finalize`) so the session itself runs `/factory:resume` — the
+ * runner loop that executes the REAL `finalizeRun`, never a state-only status flip;
+ * the `stop_hook_active`
  * re-entry is `allow-unfinalized` (log hint only). The corruption block
  * (inaccessible data directory) is emitted directly by {@link runStopGate},
  * not modelled here.
@@ -58,7 +62,7 @@ export type StopAction =
     /** stop_hook_active pass: hint only — never a second block (loop guard). */
     | {kind: 'allow-unfinalized'; run_id: string}
     /** First stop on an owned all-terminal unfinalized run: block ONCE with the
-     * `factory resume` instruction so the session runs the REAL finalize. */
+     * `/factory:resume` instruction so the session runs the REAL finalize. */
     | {kind: 'block-finalize'; run_id: string}
 
 const ALLOW: StopAction = {kind: 'allow'}
@@ -76,9 +80,9 @@ const ALLOW: StopAction = {kind: 'allow'}
  *   3. owner KNOWN and stopping session ≠ owner  → allow (another session's run is
  *      none of this session's business).
  *   4. pending work (in-flight tasks, or setup unfinished) → allow (NO hostage: the run
- *      stays `running` and resumable via `factory resume`).
+ *      stays `running` and resumable via `/factory:resume`).
  *   5. otherwise (≥1 task, all terminal)         → block-finalize ONCE (tell the session
- *      to run `factory resume`); on a stop_hook_active re-entry → allow-unfinalized
+ *      to run `/factory:resume`); on a stop_hook_active re-entry → allow-unfinalized
  *      (hint only, never a second block — the loop guard).
  */
 export function decideStop(run: RunState | null, stoppingSession?: string, stopHookActive = false): StopAction {
@@ -110,13 +114,13 @@ export function decideStop(run: RunState | null, stoppingSession?: string, stopH
     const pending = tasks.length === 0 || nonTerminal.length > 0
 
     // Pending work NO LONGER blocks the stop (the session-hostage fix). The session may
-    // end; the run stays `running` and is resumed idempotently by `factory resume`.
+    // end; the run stays `running` and is resumed idempotently by `/factory:resume`.
     if (pending) {
         return ALLOW
     }
 
     // ≥1 task, all terminal, run still `running` → NO status flip ever (only the real
-    // finalizeRun may deliver). One-shot: the FIRST stop blocks with the `factory resume`
+    // finalizeRun may deliver). One-shot: the FIRST stop blocks with the `/factory:resume`
     // instruction; a stop_hook_active re-entry passes through with the log hint only.
     return stopHookActive
         ? {kind: 'allow-unfinalized', run_id: run.run_id}
@@ -195,7 +199,7 @@ export async function runStopGate(_argv: string[] = [], deps: StopGateDeps = {})
     if (action.kind === 'block-finalize') {
         const reason =
             `run ${action.run_id}: all tasks are terminal but the run is not finalized. ` +
-            `Run \`factory resume\` now to execute the real finalize (rollup PR, PRD close, report) — ` +
+            `Run \`/factory:resume\` now to execute the real finalize (rollup PR, PRD close, report) — ` +
             `never flip run status by hand.`
         log.info(reason)
         emitBlockDecision(deny(reason), emit)
@@ -207,7 +211,7 @@ export async function runStopGate(_argv: string[] = [], deps: StopGateDeps = {})
         // run in a healthy-looking but undelivered terminal state.
         log.info(
             `run ${action.run_id}: all tasks terminal but the run is not finalized — ` +
-                `left running; \`factory resume\` will run the real finalize`
+                `left running; \`/factory:resume\` will run the real finalize`
         )
     }
     return EXIT.OK

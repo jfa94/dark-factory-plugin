@@ -1,5 +1,9 @@
 name: tests
 
+# Read-only token: nothing in this workflow writes to the repo or its APIs.
+permissions:
+    contents: read
+
 on:
     push:
         branches: [main]

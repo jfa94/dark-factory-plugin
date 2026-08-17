@@ -4,54 +4,95 @@
  * plugin manifests (.claude-plugin/plugin.json + the marketplace.json plugin
  * entry) must mirror it. `check` exits 1 naming any drift; `sync` rewrites the
  * two manifests from package.json. Scoped to exactly these files — nothing else.
+ *
+ * Pure helpers below (exported for scripts/version.test.mjs); the CLI runs only
+ * when this file is the entrypoint.
  */
 import {readFileSync, writeFileSync} from 'node:fs'
+import {pathToFileURL} from 'node:url'
 
-const mode = process.argv[2]
-if (mode !== 'check' && mode !== 'sync') {
-    console.error('usage: node scripts/version.mjs <check|sync>')
-    process.exit(2)
+// Canonical SemVer 2.0.0 (semver.org), incl. prerelease + build metadata.
+const SEMVER =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
+
+/** Parse package.json text and return its version, or throw naming what's wrong. */
+export function readCanonicalVersion(pkgText) {
+    const version = JSON.parse(pkgText).version
+    if (typeof version !== 'string' || !SEMVER.test(version)) {
+        throw new Error(`version: package.json "version" is not a canonical SemVer string: ${JSON.stringify(version)}`)
+    }
+    return version
 }
 
-const canonical = JSON.parse(readFileSync('package.json', 'utf8')).version
-const plugin = JSON.parse(readFileSync('.claude-plugin/plugin.json', 'utf8'))
-const marketplace = JSON.parse(readFileSync('.claude-plugin/marketplace.json', 'utf8'))
-const entry = marketplace.plugins?.[0]
-if (entry === undefined) {
-    console.error('version: .claude-plugin/marketplace.json has no plugins[0] entry')
-    process.exit(1)
-}
-
-const drift = []
-if (plugin.version !== canonical) drift.push(`.claude-plugin/plugin.json: ${plugin.version}`)
-if (entry.version !== canonical) drift.push(`.claude-plugin/marketplace.json plugins[0]: ${entry.version}`)
-
-if (mode === 'check') {
-    if (drift.length > 0) {
-        console.error(`version:check FAILED — package.json is ${canonical} but:\n  ${drift.join('\n  ')}`)
-        console.error('Run `npm run version:sync` to repair.')
-        process.exit(1)
+/** Compare both manifests against the canonical version → [{file, label, current}]. */
+export function manifestDrift(canonical, pluginText, marketplaceText) {
+    const plugin = JSON.parse(pluginText)
+    const entry = JSON.parse(marketplaceText).plugins?.[0]
+    if (entry === undefined) {
+        throw new Error('version: .claude-plugin/marketplace.json has no plugins[0] entry')
     }
-    console.log(`version:check OK (${canonical})`)
-} else {
-    if (drift.length === 0) {
-        console.log(`version:sync — already in sync (${canonical})`)
-        process.exit(0)
-    }
-    // Targeted string replace of the "version" value only — a full re-serialize
-    // would reformat unrelated parts of the manifests (cosmetic churn per sync).
-    const bump = (text, from) => text.replace(`"version": "${from}"`, `"version": "${canonical}"`)
+    const drift = []
     if (plugin.version !== canonical) {
-        writeFileSync(
-            '.claude-plugin/plugin.json',
-            bump(readFileSync('.claude-plugin/plugin.json', 'utf8'), plugin.version)
-        )
+        drift.push({file: '.claude-plugin/plugin.json', label: '.claude-plugin/plugin.json', current: plugin.version})
     }
     if (entry.version !== canonical) {
-        writeFileSync(
-            '.claude-plugin/marketplace.json',
-            bump(readFileSync('.claude-plugin/marketplace.json', 'utf8'), entry.version)
-        )
+        drift.push({
+            file: '.claude-plugin/marketplace.json',
+            label: '.claude-plugin/marketplace.json plugins[0]',
+            current: entry.version,
+        })
     }
-    console.log(`version:sync — wrote ${canonical} to ${drift.length} manifest(s)`)
+    return drift
+}
+
+/**
+ * Targeted string replace of the "version" value only — a full re-serialize
+ * would reformat unrelated parts of the manifests (cosmetic churn per sync).
+ * Replacement is a FUNCTION so `to` is inert (no `$&`-pattern hazards); throws
+ * naming the file when the expected literal is absent (nothing changed).
+ */
+export function bumpVersionLiteral(text, from, to, file) {
+    const needle = `"version": "${from}"`
+    if (!text.includes(needle)) {
+        throw new Error(`version:sync — ${file} does not contain the literal ${needle}; repair the manifest by hand`)
+    }
+    return text.replace(needle, () => `"version": "${to}"`)
+}
+
+function main() {
+    const mode = process.argv[2]
+    if (mode !== 'check' && mode !== 'sync') {
+        console.error('usage: node scripts/version.mjs <check|sync>')
+        process.exit(2)
+    }
+
+    const canonical = readCanonicalVersion(readFileSync('package.json', 'utf8'))
+    const drift = manifestDrift(
+        canonical,
+        readFileSync('.claude-plugin/plugin.json', 'utf8'),
+        readFileSync('.claude-plugin/marketplace.json', 'utf8')
+    )
+
+    if (mode === 'check') {
+        if (drift.length > 0) {
+            const lines = drift.map((d) => `${d.label}: ${d.current}`)
+            console.error(`version:check FAILED — package.json is ${canonical} but:\n  ${lines.join('\n  ')}`)
+            console.error('Run `pnpm run version:sync` to repair.')
+            process.exit(1)
+        }
+        console.log(`version:check OK (${canonical})`)
+    } else {
+        if (drift.length === 0) {
+            console.log(`version:sync — already in sync (${canonical})`)
+            return
+        }
+        for (const d of drift) {
+            writeFileSync(d.file, bumpVersionLiteral(readFileSync(d.file, 'utf8'), d.current, canonical, d.file))
+        }
+        console.log(`version:sync — wrote ${canonical} to ${drift.length} manifest(s)`)
+    }
+}
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main()
 }

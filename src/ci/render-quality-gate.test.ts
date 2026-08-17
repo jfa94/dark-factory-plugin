@@ -380,11 +380,28 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
     })
 
     it('PR shard cache SAVES on always() — a below-threshold run still warms the incremental base', () => {
-        const out = renderQualityGate(template, rootsOpts(undefined))
-        const saveIdx = out.indexOf('actions/cache/save')
-        const before = out.slice(0, saveIdx).split('\n').slice(-8).join('\n')
-        expect(before).toContain("if: always() && steps.slice.outputs.slice != ''")
-        expect(before).not.toContain('if: success()')
+        const lines = renderQualityGate(template, rootsOpts(undefined)).split('\n')
+        const idx = lines.findIndex((l) => l.includes('- name: Save Stryker incremental cache'))
+        expect(idx).toBeGreaterThan(-1)
+        expect(nonNull(lines[idx + 1]).trim()).toBe("if: always() && steps.slice.outputs.slice != ''")
+    })
+
+    it('throws loud when the grep -Ev exclude anchor is missing from the template', () => {
+        const stripped = template
+            .split('\n')
+            .filter((l) => !l.includes('grep -Ev'))
+            .join('\n')
+        expect(() => renderQualityGate(stripped, rootsOpts(undefined))).toThrow(/grep -Ev/)
+    })
+
+    it('throws loud when non-default roots find no default pathspec to re-point', () => {
+        const stripped = template.replaceAll("'src/**/*.ts'", "'lib/**/*.ts'")
+        expect(() => renderQualityGate(stripped, rootsOpts(['app']))).toThrow(/default-roots pathspec/)
+    })
+
+    it('default roots do not require the pathspec literal to be present', () => {
+        const stripped = template.replaceAll("'src/**/*.ts'", "'lib/**/*.ts'")
+        expect(() => renderQualityGate(stripped, rootsOpts(undefined))).not.toThrow()
     })
 
     it('PR and nightly shard cache keys share one scheme (restore-keys prefix alignment)', () => {

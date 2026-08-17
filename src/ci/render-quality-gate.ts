@@ -296,9 +296,19 @@ const DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'"
 const MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts`
 
 function applyMutableSourceExclude(lines: string[]): string[] {
-    return lines.map((l) =>
-        l.includes('grep -Ev') ? l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`) : l
-    )
+    let matches = 0
+    const out = lines.map((l) => {
+        if (!l.includes('grep -Ev')) return l
+        matches++
+        return l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`)
+    })
+    if (matches === 0) {
+        throw new Error(
+            'renderQualityGate: template has no `grep -Ev` mutable-source exclude line — ' +
+                'the anchor the single-predicate replacement (S11) targets is gone'
+        )
+    }
+    return out
 }
 
 function rootsPathspec(roots: readonly string[]): string {
@@ -308,7 +318,20 @@ function rootsPathspec(roots: readonly string[]): string {
 function applyMutationRoots(lines: string[], contract: GateContract): string[] {
     const roots = mutationRoots(contract)
     const spec = rootsPathspec(roots)
-    return spec === DEFAULT_ROOTS_PATHSPEC ? lines : lines.map((l) => l.replace(DEFAULT_ROOTS_PATHSPEC, spec))
+    if (spec === DEFAULT_ROOTS_PATHSPEC) return lines
+    let matches = 0
+    const out = lines.map((l) => {
+        if (!l.includes(DEFAULT_ROOTS_PATHSPEC)) return l
+        matches++
+        return l.replace(DEFAULT_ROOTS_PATHSPEC, spec)
+    })
+    if (matches === 0) {
+        throw new Error(
+            `renderQualityGate: contract mutation roots need re-pointing but the template has no ` +
+                `${DEFAULT_ROOTS_PATHSPEC} default-roots pathspec to replace`
+        )
+    }
+    return out
 }
 
 /** Collapse the `# factory:mutation-begin` … `# factory:mutation-end` region. */

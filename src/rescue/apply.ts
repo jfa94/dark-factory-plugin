@@ -321,11 +321,12 @@ function resetTasks(run: RunState, targets: readonly string[], answer?: string):
 
 /**
  * The status fields a reopened terminal run gets (pure — shared by both apply
- * branches). A terminal run carries no quota checkpoint (finalize cleared it), so
- * returning to `running` with `ended_at:null` satisfies every invariant.
+ * branches). A terminal run carries no quota checkpoint (finalize cleared it), and
+ * `terminal_reason` must be dropped: the schema forbids a `running` run that still
+ * carries one, so a reopen that kept it would fail re-validation.
  */
 function reopenFields(reopen: boolean): Partial<RunState> {
-    return reopen ? {status: 'running' as const, ended_at: null} : {}
+    return reopen ? {status: 'running' as const, ended_at: null, terminal_reason: undefined} : {}
 }
 
 function selectTargets(run: RunState, opts: RescueApplyOptions): {targets: string[]; skipped: string[]} {

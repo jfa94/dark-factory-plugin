@@ -231,7 +231,8 @@ export async function applyAdoptions(
                     reopened = 'all-done'
                 }
                 if (reopened !== false) {
-                    reopenFields = {status: 'running', ended_at: null}
+                    // terminal_reason must go too: the schema forbids running+reason.
+                    reopenFields = {status: 'running', ended_at: null, terminal_reason: undefined}
                     actions.push({
                         class: reopened === 'rollup' ? 'rollup-landed' : 'all-done',
                         action: 'reopen',

@@ -173,6 +173,22 @@ describe('applyRescue', () => {
         expect(run.ended_at).toBeNull()
     })
 
+    it('clears terminal_reason when reopening a REAL finalized-failed run (schema forbids running+reason)', async () => {
+        await seed([
+            {task_id: 'a', status: 'done', pr_number: 11},
+            {task_id: 'b', status: 'failed', failure_class: 'blocked-environmental'},
+        ])
+        await state.finalize(RUN_ID, 'failed', 'evaluator exhausted')
+
+        const result = await applyRescue(state, RUN_ID)
+        expect(result.reopened).toBe(true)
+
+        const run = await state.read(RUN_ID)
+        expect(run.status).toBe('running')
+        expect(run.ended_at).toBeNull()
+        expect(run).not.toHaveProperty('terminal_reason')
+    })
+
     it('resetE2e:true clears a failed e2e_phase verdict and reopens the run even with NO resettable tasks (Decision 39 repair path)', async () => {
         // Every task shipped `done` (e.g. the e2e phase failed on a reopen-cap
         // exhaustion or an unmappable/tooling failure AFTER all tasks had already

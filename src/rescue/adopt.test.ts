@@ -474,6 +474,34 @@ describe('applyAdoptions — executor', () => {
         expect(after.human_touches).toEqual([])
     })
 
+    it('clears terminal_reason when reopening a REAL finalized-failed run (schema forbids running+reason)', async () => {
+        await seed([
+            {task_id: 't1', status: 'done'},
+            {task_id: 't2', status: 'shipping', branch: BRANCH, pr_number: 101},
+        ])
+        await state.finalize(RUN_ID, 'failed', 'drop condemned the run')
+
+        const report = await applyAdoptions(
+            {state, git: git()},
+            RUN_ID,
+            {
+                done: [{task_id: 't2', pr_number: 101}],
+                rebind: [],
+                clear: [],
+                repush: [],
+                reopen: 'all-done',
+                surfaced: [],
+            },
+            {at: '2026-07-08T02:00:00.000Z'}
+        )
+        expect(report.reopened).toBe('all-done')
+
+        const after = await state.read(RUN_ID)
+        expect(after.status).toBe('running')
+        expect(after.ended_at).toBeNull()
+        expect(after).not.toHaveProperty('terminal_reason')
+    })
+
     it('adoptFromReport plans + applies from an already-computed report (no re-probe)', async () => {
         await seed([{task_id: 't1', status: 'shipping', branch: BRANCH, pr_number: 101}])
         const run = await state.read(RUN_ID)

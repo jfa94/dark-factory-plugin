@@ -277,69 +277,19 @@ function waivedMutationBlock(reason: string): readonly string[] {
 }
 
 /**
- * The templates' scope computations carry the default-roots pathspec literal
- * (`'src/**\/*.ts'`); a contract with non-default mutation roots re-points them.
- * Replacing the literal keeps the templates valid workflows on their own while
- * making the CI scope, the local gate's {@link mutationScope}, and the seeded
- * stryker `mutate` globs agree on ONE roots source (the contract).
+ * Replace the helper's roots placeholder with shell-quoted contracted roots.
+ * Gate-contract root validation restricts these to plain relative directories;
+ * quoting still keeps the generated command robust and reviewable.
  */
-const DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'"
+const MUTATION_ROOTS_PLACEHOLDER = '__MUTATION_ROOTS__'
 
-/**
- * Single source of the mutable-source predicate: files matching this ERE are
- * EXCLUDED from mutation scope. Both workflow templates carry a `grep -Ev`
- * line; render-time replacement from this constant keeps the PR gate and the
- * nightly warm-base scoping identical — they drifted once (the
- * `src/app/(robots|sitemap)` clause existed only in the PR gate), which
- * poisons the incremental-cache warm base.
- */
-const MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts`
-
-const GREP_EV_EXCLUDE = /grep -Ev '[^']*'/
-
-function applyMutableSourceExclude(lines: string[]): string[] {
-    let matches = 0
-    const out = lines.map((l) => {
-        if (!GREP_EV_EXCLUDE.test(l)) {
-            return l
-        }
-        matches++
-        return l.replace(GREP_EV_EXCLUDE, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`)
-    })
-    if (matches === 0) {
-        throw new Error(
-            "renderQualityGate: template has no `grep -Ev '...'` mutable-source exclude line — " +
-                'the anchor the single-predicate replacement (S11) targets is gone'
-        )
-    }
-    return out
-}
-
-function rootsPathspec(roots: readonly string[]): string {
-    return roots.map((r) => `'${r}/**/*.ts'`).join(' ')
+function rootsArgs(roots: readonly string[]): string {
+    return roots.map((r) => `'${r}'`).join(' ')
 }
 
 function applyMutationRoots(lines: string[], contract: GateContract): string[] {
-    const roots = mutationRoots(contract)
-    const spec = rootsPathspec(roots)
-    if (spec === DEFAULT_ROOTS_PATHSPEC) {
-        return lines
-    }
-    let matches = 0
-    const out = lines.map((l) => {
-        if (!l.includes(DEFAULT_ROOTS_PATHSPEC)) {
-            return l
-        }
-        matches++
-        return l.replace(DEFAULT_ROOTS_PATHSPEC, spec)
-    })
-    if (matches === 0) {
-        throw new Error(
-            `renderQualityGate: contract mutation roots need re-pointing but the template has no ` +
-                `${DEFAULT_ROOTS_PATHSPEC} default-roots pathspec to replace`
-        )
-    }
-    return out
+    const args = rootsArgs(mutationRoots(contract))
+    return lines.map((line) => line.replace(MUTATION_ROOTS_PLACEHOLDER, args))
 }
 
 /** Collapse the `# factory:mutation-begin` … `# factory:mutation-end` region. */
@@ -360,18 +310,15 @@ function renderMutationRegion(lines: string[], opts: RenderQualityGateOpts): str
     let kept = [...lines.slice(0, begin), ...lines.slice(begin + 1, end), ...lines.slice(end + 1)]
     kept = replaceMarker(kept, '# factory:mutation-setup', mutationSetupBlock(opts))
     kept = applyMutationRoots(kept, opts.contract)
-    kept = applyMutableSourceExclude(kept)
     if (opts.packageManager === 'npm') {
-        kept = kept.map((l) => l.replace('pnpm exec stryker run \\', 'npx stryker run \\'))
+        kept = kept.map((l) => l.replace('pnpm exec stryker run', 'npx stryker run'))
     }
     return kept
 }
 
 /**
- * Render the mutation-nightly warm-base workflow (the scheduled default-branch
- * run that seeds the per-shard incremental caches every PR restores). Returns
- * null when the contract waives mutation — the scaffold then writes no nightly
- * workflow at all. Same npm-stack constraint as {@link renderQualityGate}.
+ * Render the manually dispatched full-surface mutation workflow. Returns null
+ * when the contract waives mutation, so scaffold writes no full workflow.
  */
 export function renderMutationNightly(template: string, opts: RenderQualityGateOpts): string | null {
     if (opts.contract.stack !== 'npm') {
@@ -386,9 +333,8 @@ export function renderMutationNightly(template: string, opts: RenderQualityGateO
     let lines = template.split('\n')
     lines = replaceMarker(lines, '# factory:mutation-setup', mutationSetupBlock(opts))
     lines = applyMutationRoots(lines, opts.contract)
-    lines = applyMutableSourceExclude(lines)
     if (opts.packageManager === 'npm') {
-        lines = lines.map((l) => l.replace('pnpm exec stryker run \\', 'npx stryker run \\'))
+        lines = lines.map((l) => l.replace('pnpm exec stryker run', 'npx stryker run'))
     }
     return lines.join('\n')
 }

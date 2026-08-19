@@ -20,7 +20,7 @@
  * read them; partial-run reporting lands in WS12.
  */
 /* eslint-disable security/detect-non-literal-fs-filename -- fs on internal derived paths (run/spec/state/repo/data dirs), never external input; runtime write-danger is covered by the TCB write-deny hook */
-import {mkdir, readFile, unlink, writeFile} from 'node:fs/promises'
+import {mkdir, readFile, rm, unlink, writeFile} from 'node:fs/promises'
 import {existsSync} from 'node:fs'
 import {homedir} from 'node:os'
 import {dirname, join, relative} from 'node:path'
@@ -306,8 +306,11 @@ const LEGACY_E2E_EXAMPLE_HASHES: readonly string[] = [
     '629824a48477223cfcef02bcb6c850aa9622d73d41c93bc3b76486831a98770e',
 ]
 
-/** The nightly warm-base workflow — rendered only when mutation is contracted. */
+/** The manual full-surface workflow — rendered only when mutation is contracted. */
 const MUTATION_NIGHTLY_REL = '.github/workflows/mutation-nightly.yml'
+
+/** Pre-v1.46.1 Node test name, which broad Vitest discovery mistakes for a Vitest suite. */
+const LEGACY_SHARD_TEST_REL = '.github/scripts/shard-mutation-scope.test.mjs'
 
 /** The stryker seed — deferred to pass 2a: its `mutate` globs render from the contract's roots. */
 const STRYKER_SEED_REL = '.stryker.config.json'
@@ -316,12 +319,14 @@ const STRYKER_SEED_REL = '.stryker.config.json'
 const CI_NET_RELS: readonly string[] = [
     QUALITY_GATE_REL,
     '.github/scripts/shard-mutation-scope.mjs',
+    '.github/scripts/shard-mutation-scope.node-test.mjs',
     MUTATION_NIGHTLY_REL,
 ]
 
 const TEMPLATE_MANIFEST: readonly TemplateEntry[] = [
     {rel: QUALITY_GATE_REL, policy: 'managed'},
     {rel: '.github/scripts/shard-mutation-scope.mjs', policy: 'managed'},
+    {rel: '.github/scripts/shard-mutation-scope.node-test.mjs', policy: 'managed'},
     {rel: MUTATION_NIGHTLY_REL, policy: 'managed'},
     {rel: STRYKER_SEED_REL, policy: 'seed', nodeOnly: true},
     {rel: '.dependency-cruiser.cjs', policy: 'seed', nodeOnly: true},
@@ -885,13 +890,20 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
     //     hardcoded workflow would fail at its install step (fail loud, not broken).
     if (gates.contract.stack === 'npm') {
         const facts = await readWorkflowFacts(opts.targetRoot)
+        // This was always plugin-MANAGED. Remove it before installing the renamed
+        // Node test so Vitest's default `*.test.mjs` discovery cannot collect a
+        // dependency-free `node:test` suite and fail with "No test suite found".
+        const legacyShardTest = join(opts.targetRoot, ...LEGACY_SHARD_TEST_REL.split('/'))
+        if (existsSync(legacyShardTest)) {
+            await rm(legacyShardTest)
+            lists.updated.push(LEGACY_SHARD_TEST_REL)
+        }
         for (const entry of TEMPLATE_MANIFEST) {
             if (!CI_NET_RELS.includes(entry.rel)) {
                 continue
             }
-            // The nightly warm-base workflow exists ONLY where mutation is contracted
-            // (renderMutationNightly returns null otherwise) — no cron burn on repos
-            // that waived mutation.
+            // The manual full-surface workflow exists only where mutation is
+            // contracted (renderMutationNightly returns null otherwise).
             if (entry.rel === MUTATION_NIGHTLY_REL && !gates.contract.gates.mutation.contracted) {
                 continue
             }

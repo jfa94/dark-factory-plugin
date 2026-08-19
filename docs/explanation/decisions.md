@@ -2824,9 +2824,9 @@ path-resolving hook layer already enforces):
   holdout-guard already govern sensitive `.claude` access with path resolution; the blanket
   `ls`/`find`/`cat .claude*` denies blocked harmless introspection.
 - **Repo-relative sensitive-file writes (~10: `.env`, `**/secrets/**`, `**/migrations/**`,
-  `**/_.tfstate_`, repo-relative `**/.npmrc`/`**/.gitconfig`/`**/.mcp.json`/`**/.claude.json`)**
-  — these live inside the ephemeral task worktree, are often the task itself (a migration, an
-  `.env.example`), never reach `main`if junk, and`secret-guard` already blocks committing an
+`**/_.tfstate_`, repo-relative `**/.npmrc`/`**/.gitconfig`/`**/.mcp.json`/`**/.claude.json`)**
+— these live inside the ephemeral task worktree, are often the task itself (a migration, an
+`.env.example`), never reach `main`if junk, and`secret-guard` already blocks committing an
   actual secret.
 - **Theater/misc (~6): `chmod 777`/`chmod -R 777`, `sudo *`, `npx *create-*`, `*base64 -d*`,
   `*--no-verify*`/`*--no-gpg-sign*`** — `sudo` fails with no TTY regardless; `--no-verify`
@@ -3489,6 +3489,38 @@ observed on goodbyespy PR #76 where 3 of 8 shards drew all-quarantined slices.
 Both workflow templates' scope-compute steps now drop marker-bearing files before
 sharding (an `awk` first-line check; the shard script itself stays pure/no-I/O).
 Contract: the marker must be the file's FIRST line to be recognised.
+
+**Amendment (2026-08-07, v1.46.0 — manual full tracking, hunk-scoped PR verdicts).**
+Seven days of private-repository job timestamps showed the two scheduled full-surface
+workflows consumed 98.3% of Actions minutes. Because GitHub bills every matrix job
+separately, nightly eight-shard runs cost the sum of their runtimes; some shards also
+reached the six-hour ceiling. The cache key used `github.sha` even though the workflow
+checked out `develop`, so repeated immutable keys could restore but not publish newer
+incremental state.
+
+The managed filename remains `mutation-nightly.yml` for in-place rollout, but the
+workflow is now **Mutation Full (Manual)** with `workflow_dispatch` only. Full shards
+run sequential eight-file chunks against one incremental file, stop starting chunks
+after a 330-minute soft budget, and save partial progress on threshold failure. Cache
+write keys include shard, checked-out `develop` SHA, run id, and attempt; restoration
+uses only the stable OS/shard prefix.
+
+The rollup PR workflow no longer consumes full-run caches. It derives Stryker line
+ranges from zero-context hunks (new files whole; modified/deletion seams padded two
+lines and merged) and runs cold, making `thresholds.break` a verdict on the PR alone.
+The generated `shard-mutation-scope` helper now owns both `diff <base-ref> <roots...>`
+and `full <roots...>` modes plus the shared exclusions and first-line quarantine
+rule. Its scaffolded test pins empty/added/modified/deletion/overlap/root/filter cases.
+The Stryker seed carries the same test, declaration, type-only, `types/`, `data/`,
+barrel, and Next metadata exclusions.
+
+**Amendment (2026-08-09, v1.46.1 — isolate the generated Node helper test).**
+The scaffolded helper test is dependency-free `node:test`, but its original
+`*.test.mjs` name matched Vitest's default discovery in targets such as GoodbyeSpy.
+Vitest then failed the otherwise-passing suite with "No test suite found" because
+the file deliberately contains no Vitest tests. The managed artifact is now named
+`shard-mutation-scope.node-test.mjs`; re-scaffolding removes the legacy managed path
+before installing the renamed test.
 
 **Amendment (2026-08-13 — mutable-source predicate single-sourced; PR shard cache
 saves unconditionally).** Two defects in the warm-base architecture, both fixed at

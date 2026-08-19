@@ -50,28 +50,19 @@ jobs:
           extra_args: --only-verified
 
   # factory:mutation-begin
-  # Mutation testing strategy (redesigned 2026-07-18):
+  # PR mutation verdict (hunk-scoped 2026-08-07):
   #   Runs ONLY on PRs targeting develop (the rollup — the merge point it
   #     actually gates). Task PRs into staging-* skip it: the factory's local
   #     per-task gate already enforced mutation pre-merge, nothing waits on the
   #     CI result there (stagingRequiredStatusChecks is empty), and PR-scoped
   #     caches can't warm anything downstream.
-  #   mutation-scope: single runner. Diffs HEAD against origin/<base_ref>
-  #     to produce a comma-separated list of changed mutable .ts files, then
-  #     splits them into 8 shards via `.github/scripts/shard-mutation-scope.mjs`
-  #     (JSON job output).
-  #   mutation: matrix x8. Each shard runs `stryker run --mutate <slice>`
-  #     against its slice, restoring its incremental cache. Empty slices no-op.
-  #   Sharding is STABLE-HASH (fnv1a(path) % 8), not cost-balanced: a file's
-  #     shard never depends on the rest of the scope, so per-shard incremental
-  #     caches stay aligned with the nightly full-surface seeding run on develop
-  #     (mutation-nightly.yml — default-branch caches are readable by every PR).
-  #     With warm caches only genuinely changed mutants re-run, which beats any
-  #     single-run bin-packing (the retired LPT-by-sloc reshuffled files between
-  #     shards as scopes changed, invalidating exactly those caches). The script
-  #     is a checked-in build artifact generated from the plugin's tested TS
-  #     source (src/bin/shard-mutation-scope.ts); the factory scaffolds +
-  #     auto-updates it as a plugin-managed file.
+  #   The managed helper diffs with zero context. Added files mutate in full;
+  #     modified/deletion-seam hunks are padded two lines and merged, so the
+  #     threshold grades code the PR changed instead of every touched file.
+  #   The eight shards run COLD. Replayed incremental results would make
+  #     thresholds.break depend on cache history rather than only this PR.
+  #   The same helper owns diff/full filtering (tests, declarations, type-only
+  #     files, types/data directories, barrels, Next metadata, and quarantine).
   mutation-scope:
     name: Mutation Scope
     runs-on: ubuntu-latest
@@ -79,58 +70,27 @@ jobs:
     if: github.base_ref == 'develop'
     needs: quality
     outputs:
-      shards: ${{ steps.split.outputs.shards }}
-      any: ${{ steps.split.outputs.any }}
+      shards: ${{ steps.scope.outputs.shards }}
+      any: ${{ steps.scope.outputs.any }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      - name: Compute changed src files
-        id: compute
+      - name: Compute and shard changed hunks
+        id: scope
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch origin "$BASE_REF" --depth=50
-          mapfile -t files < <(
-              git diff --name-only --diff-filter=AM "origin/$BASE_REF"...HEAD -- 'src/**/*.ts' \
-              | grep -Ev '\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts' || true
-          )
-          # Quarantined files (file-wide '// Stryker disable all' marker on line 1)
-          # produce only Ignored mutants; a shard slice containing nothing else makes
-          # Stryker's dry run abort with "No tests were executed" (exit 1). Drop them
-          # from scope — they contribute nothing to the score either way.
-          if [ ${#files[@]} -gt 0 ]; then
-              mapfile -t files < <(
-                  awk 'FNR==1 { if ($0 !~ /^\/\/ Stryker disable all/) print FILENAME; nextfile }' "${files[@]}"
-              )
-          fi
-          if [ ${#files[@]} -eq 0 ]; then
-              echo "scope=" >> "$GITHUB_OUTPUT"
-          else
-              printf -v joined '%s,' "${files[@]}"
-              echo "scope=${joined%,}" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Split scope into 8 shards
-        id: split
-        env:
-          SCOPE: ${{ steps.compute.outputs.scope }}
-        run: |
-          if [ -z "$SCOPE" ]; then
-              echo 'any=false' >> "$GITHUB_OUTPUT"
-              echo 'shards=["","","","","","","",""]' >> "$GITHUB_OUTPUT"
-              exit 0
-          fi
-          # Stable-hash split (fnv1a(path) % 8): a file's shard depends only on
-          # its path, keeping per-shard incremental caches aligned with the
-          # nightly seeding run. Uses ubuntu's preinstalled node.
-          shards_json=$(node .github/scripts/shard-mutation-scope.mjs "$SCOPE")
-          echo "any=true" >> "$GITHUB_OUTPUT"
+          shards_json=$(node .github/scripts/shard-mutation-scope.mjs diff "origin/$BASE_REF" __MUTATION_ROOTS__)
+          any=$(jq -r 'any(.[]; length > 0)' <<< "$shards_json")
+          echo "any=$any" >> "$GITHUB_OUTPUT"
           echo "shards=$shards_json" >> "$GITHUB_OUTPUT"
 
   mutation:
     name: Mutation
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     needs: mutation-scope
     strategy:
       fail-fast: false
@@ -153,17 +113,8 @@ jobs:
         with:
           fetch-depth: 0
       # factory:mutation-setup
-      - name: Restore Stryker incremental cache (shard ${{ matrix.shard }})
-        if: steps.slice.outputs.slice != ''
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: reports/mutation/.stryker-incremental-shard-${{ matrix.shard }}.json
-          # Per-shard rolling cache. Stryker's incremental file is keyed by file hash
-          # + mutator location, so a slice that used to live in shard 2 staying in
-          # shard 2 keeps prior results; reshuffles harmlessly invalidate.
-          key: ${{ runner.os }}-stryker-shard-${{ matrix.shard }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-stryker-shard-${{ matrix.shard }}-
+      # Deliberately cold: thresholds.break must be a verdict on this PR's
+      # hunk-scoped mutants, independent of prior full-run cache history.
       - name: Run Stryker on shard ${{ matrix.shard }}
         if: steps.slice.outputs.slice != ''
         env:
@@ -171,14 +122,7 @@ jobs:
         run: |
           pnpm exec stryker run \
               --mutate "$SLICE" \
-              --concurrency 2 \
-              --incrementalFile "reports/mutation/.stryker-incremental-shard-${{ matrix.shard }}.json"
-      - name: Save Stryker incremental cache (shard ${{ matrix.shard }})
-        if: always() && steps.slice.outputs.slice != ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: reports/mutation/.stryker-incremental-shard-${{ matrix.shard }}.json
-          key: ${{ runner.os }}-stryker-shard-${{ matrix.shard }}-${{ github.sha }}
+              --concurrency 2
       - name: Upload shard report
         if: always() && steps.slice.outputs.slice != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

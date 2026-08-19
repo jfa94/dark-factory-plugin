@@ -363,23 +363,26 @@ skip it: the local per-task gate already enforced mutation pre-merge and
 "Mutation Testing" check name stays satisfiable on every PR. Every quality-gate
 job now carries a `timeout-minutes` bound.
 
-CI cost is kept low by a **warm-base incremental** architecture. A second MANAGED
-workflow, `.github/workflows/mutation-nightly.yml` (rendered by
-`renderMutationNightly`, `src/ci/render-quality-gate.ts`; scaffolded **only** when
-mutation is contracted), runs the full mutable surface on the default branch
-nightly and saves per-shard Stryker incremental caches there — where
-`actions/cache` makes them readable by every PR. Sharding is a **stable hash**
-(`fnv1a(path) % 8`, `src/verifier/deterministic/shard.ts` / `src/bin/shard-mutation-scope.ts`;
-each nightly shard bounded by `timeout-minutes: 360`),
-not cost-balanced: a file's shard depends only on its path, so a PR's diff files
-always land on the shard whose nightly-seeded cache already holds their results and
-only genuinely changed mutants re-run. The retired LPT-by-sloc packer balanced a
-single run better but reshuffled files between shards as scopes changed,
-invalidating exactly those caches. The seed `.stryker.config.json` is retuned to
-match: `timeoutMS: 10000`, no TypeScript checker (the `type` gate already runs
-`tsc --noEmit`), `ignoreStatic: true`, and no pinned `concurrency` (CI passes
-`--concurrency 2` for its 2-vCPU runners); `@stryker-mutator/typescript-checker`
-is no longer a scaffolded devDependency.
+The rollup verdict is **hunk-scoped and cold**. The managed helper reads zero-context
+diff hunks, mutates added files in full, pads modified and deletion-seam ranges by two
+lines, merges adjacent ranges, and stable-hash splits the patterns eight ways. PR jobs
+do not restore incremental files: replayed results would make `thresholds.break`
+depend on cache history rather than only the PR.
+
+The second MANAGED workflow keeps the historical filename
+`.github/workflows/mutation-nightly.yml`, but is displayed as **Mutation Full
+(Manual)** and has only `workflow_dispatch`. It checks out `develop`, computes the
+full surface with the same helper/exclusions/quarantine rules, and processes each
+shard sequentially in eight-file chunks. A 330-minute soft cap leaves publication
+headroom under the 360-minute job timeout; at least one chunk always runs. One
+incremental file is reused per shard, and partial progress saves even when Stryker's
+threshold exits non-zero. Cache restores use the stable OS/shard prefix, while saves
+include the checked-out `develop` SHA, `run_id`, and `run_attempt`, avoiding immutable
+key reservation collisions. The seed `.stryker.config.json` mirrors the helper's
+tests/declarations/type-only/types/data/barrel/Next-metadata exclusions so a CLI
+`--mutate` override cannot reintroduce a zero-mutant shard.
+
+> > > > > > > origin/main
 
 ## Beyond the deterministic gates
 

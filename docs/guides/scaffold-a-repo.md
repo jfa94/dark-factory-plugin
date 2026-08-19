@@ -28,8 +28,11 @@ This is idempotent. It:
   `.dependency-cruiser.cjs`, `eslint.config.mjs`) when the target is a Node package,
   resolves the repo's gate contract (`.factory/gates.json`), then writes the
   plugin-managed CI net (`.github/workflows/quality-gate.yml`, its
-  `.github/scripts/shard-mutation-scope.mjs` helper, and — only when mutation is
-  contracted — the warm-base `.github/workflows/mutation-nightly.yml`). The
+  `.github/scripts/shard-mutation-scope.mjs` helper plus its generated test, and —
+  only when mutation is contracted — the manually dispatched full-surface
+  `.github/workflows/mutation-nightly.yml`). The filename remains stable so
+  scaffold updates existing installations in place; its displayed name is
+  **Mutation Full (Manual)** and it has no schedule trigger. The
   `.stryker.config.json` seed is deferred until the contract exists so its `mutate`
   globs render from the contracted mutation roots, and it is **shadow-guarded**:
   scaffold refuses to seed it when any sibling Stryker config already exists, naming

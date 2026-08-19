@@ -14,7 +14,11 @@
         "!**/*.d.ts",
         "!**/types/**",
         "!**/data/**",
-        "!**/index.ts"
+        "!**/index.ts",
+        "!**/*-types.ts",
+        "!**/types.ts",
+        "!**/app/robots.ts",
+        "!**/app/sitemap.ts"
     ],
     "incremental": true,
     "incrementalFile": "reports/mutation/.stryker-incremental.json",

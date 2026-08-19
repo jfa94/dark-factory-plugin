@@ -19263,7 +19263,7 @@ var stateCommand = {
 };
 
 // src/cli/subcommands/scaffold.ts
-import { mkdir as mkdir14, readFile as readFile19, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir14, readFile as readFile19, rm as rm4, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
 import { existsSync as existsSync11 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname12, join as join30, relative as relative2 } from "node:path";
@@ -19469,48 +19469,13 @@ function waivedMutationBlock(reason) {
     `    - run: echo 'Mutation testing waived (gate contract): ${quoted}'`
   ];
 }
-var DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'";
-var MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts`;
-var GREP_EV_EXCLUDE = /grep -Ev '[^']*'/;
-function applyMutableSourceExclude(lines) {
-  let matches = 0;
-  const out = lines.map((l) => {
-    if (!GREP_EV_EXCLUDE.test(l)) {
-      return l;
-    }
-    matches++;
-    return l.replace(GREP_EV_EXCLUDE, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`);
-  });
-  if (matches === 0) {
-    throw new Error(
-      "renderQualityGate: template has no `grep -Ev '...'` mutable-source exclude line \u2014 the anchor the single-predicate replacement (S11) targets is gone"
-    );
-  }
-  return out;
-}
-function rootsPathspec(roots) {
-  return roots.map((r) => `'${r}/**/*.ts'`).join(" ");
+var MUTATION_ROOTS_PLACEHOLDER = "__MUTATION_ROOTS__";
+function rootsArgs(roots) {
+  return roots.map((r) => `'${r}'`).join(" ");
 }
 function applyMutationRoots(lines, contract) {
-  const roots = mutationRoots(contract);
-  const spec = rootsPathspec(roots);
-  if (spec === DEFAULT_ROOTS_PATHSPEC) {
-    return lines;
-  }
-  let matches = 0;
-  const out = lines.map((l) => {
-    if (!l.includes(DEFAULT_ROOTS_PATHSPEC)) {
-      return l;
-    }
-    matches++;
-    return l.replace(DEFAULT_ROOTS_PATHSPEC, spec);
-  });
-  if (matches === 0) {
-    throw new Error(
-      `renderQualityGate: contract mutation roots need re-pointing but the template has no ${DEFAULT_ROOTS_PATHSPEC} default-roots pathspec to replace`
-    );
-  }
-  return out;
+  const args = rootsArgs(mutationRoots(contract));
+  return lines.map((line) => line.replace(MUTATION_ROOTS_PLACEHOLDER, args));
 }
 function renderMutationRegion(lines, opts) {
   const begin = lines.findIndex((l) => l.trim() === "# factory:mutation-begin");
@@ -19528,9 +19493,8 @@ function renderMutationRegion(lines, opts) {
   let kept = [...lines.slice(0, begin), ...lines.slice(begin + 1, end), ...lines.slice(end + 1)];
   kept = replaceMarker(kept, "# factory:mutation-setup", mutationSetupBlock(opts));
   kept = applyMutationRoots(kept, opts.contract);
-  kept = applyMutableSourceExclude(kept);
   if (opts.packageManager === "npm") {
-    kept = kept.map((l) => l.replace("pnpm exec stryker run \\", "npx stryker run \\"));
+    kept = kept.map((l) => l.replace("pnpm exec stryker run", "npx stryker run"));
   }
   return kept;
 }
@@ -19546,9 +19510,8 @@ function renderMutationNightly(template, opts) {
   let lines = template.split("\n");
   lines = replaceMarker(lines, "# factory:mutation-setup", mutationSetupBlock(opts));
   lines = applyMutationRoots(lines, opts.contract);
-  lines = applyMutableSourceExclude(lines);
   if (opts.packageManager === "npm") {
-    lines = lines.map((l) => l.replace("pnpm exec stryker run \\", "npx stryker run \\"));
+    lines = lines.map((l) => l.replace("pnpm exec stryker run", "npx stryker run"));
   }
   return lines.join("\n");
 }
@@ -20092,15 +20055,18 @@ var LEGACY_E2E_EXAMPLE_HASHES = [
   "629824a48477223cfcef02bcb6c850aa9622d73d41c93bc3b76486831a98770e"
 ];
 var MUTATION_NIGHTLY_REL = ".github/workflows/mutation-nightly.yml";
+var LEGACY_SHARD_TEST_REL = ".github/scripts/shard-mutation-scope.test.mjs";
 var STRYKER_SEED_REL = ".stryker.config.json";
 var CI_NET_RELS = [
   QUALITY_GATE_REL,
   ".github/scripts/shard-mutation-scope.mjs",
+  ".github/scripts/shard-mutation-scope.node-test.mjs",
   MUTATION_NIGHTLY_REL
 ];
 var TEMPLATE_MANIFEST = [
   { rel: QUALITY_GATE_REL, policy: "managed" },
   { rel: ".github/scripts/shard-mutation-scope.mjs", policy: "managed" },
+  { rel: ".github/scripts/shard-mutation-scope.node-test.mjs", policy: "managed" },
   { rel: MUTATION_NIGHTLY_REL, policy: "managed" },
   { rel: STRYKER_SEED_REL, policy: "seed", nodeOnly: true },
   { rel: ".dependency-cruiser.cjs", policy: "seed", nodeOnly: true },
@@ -20437,6 +20403,11 @@ async function runScaffold(opts) {
   }
   if (gates.contract.stack === "npm") {
     const facts = await readWorkflowFacts(opts.targetRoot);
+    const legacyShardTest = join30(opts.targetRoot, ...LEGACY_SHARD_TEST_REL.split("/"));
+    if (existsSync11(legacyShardTest)) {
+      await rm4(legacyShardTest);
+      lists.updated.push(LEGACY_SHARD_TEST_REL);
+    }
     for (const entry of TEMPLATE_MANIFEST) {
       if (!CI_NET_RELS.includes(entry.rel)) {
         continue;

@@ -20,7 +20,6 @@ import {injectGateEnvIntoWorkflow} from './inject-gate-env.js'
 import {resolveTemplatesDir} from '../cli/subcommands/scaffold.js'
 import {GATE_IDS, type GateId} from '../verifier/deterministic/gate-id.js'
 import type {GateContract} from '../verifier/deterministic/gate-contract.js'
-import {nonNull} from '../shared/assert.js'
 
 let template: string
 
@@ -328,30 +327,30 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
         contract: npmContract({mutation: roots === undefined ? {contracted: true} : {contracted: true, roots}}),
     })
 
-    it('renderQualityGate rewrites the diff pathspec from contracted roots', () => {
+    it('renderQualityGate passes contracted roots to diff mode', () => {
         const out = renderQualityGate(template, rootsOpts(['app', 'utils']))
-        expect(out).toContain("-- 'app/**/*.ts' 'utils/**/*.ts'")
-        expect(out).not.toContain("'src/**/*.ts'")
+        expect(out).toContain("diff \"origin/$BASE_REF\" 'app' 'utils'")
+        expect(out).not.toContain('__MUTATION_ROOTS__')
     })
 
-    it("default roots (['src'] / omitted) leave the template pathspec untouched", () => {
+    it("default roots (['src'] / omitted) render the src helper argument", () => {
         const out = renderQualityGate(template, rootsOpts(undefined))
-        expect(out).toContain("-- 'src/**/*.ts'")
+        expect(out).toContain('diff "origin/$BASE_REF" \'src\'')
     })
 
     it('renderMutationNightly: contracted → rendered with setup, roots, npm rewrite', () => {
         const out = renderMutationNightly(nightly, {...rootsOpts(['app']), packageManager: 'npm'})
         expect(out).not.toBeNull()
-        expect(out).toContain("git ls-files -- 'app/**/*.ts'")
+        expect(out).toContain("shard-mutation-scope.mjs full 'app'")
         expect(out).not.toContain('# factory:mutation-setup')
-        expect(out).toContain('npx stryker run \\')
+        expect(out).toContain('npx stryker run --mutate')
         expect(out).not.toContain('pnpm exec stryker')
         expect(out).toContain('actions/cache/save')
     })
 
     it('renderMutationNightly: pnpm keeps pnpm exec', () => {
         const out = renderMutationNightly(nightly, {...PNPM_OPTS})
-        expect(out).toContain('pnpm exec stryker run \\')
+        expect(out).toContain('pnpm exec stryker run --mutate')
     })
 
     it('renderMutationNightly: mutation waived → null (no nightly workflow)', () => {
@@ -367,55 +366,25 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
         expect(() => renderMutationNightly(nightly, {...NPM_OPTS, contract})).toThrow(/not supported/)
     })
 
-    it('PR and nightly render ONE identical mutable-source exclude predicate (S11 drift lock)', () => {
-        const grepLines = (text: string) => text.split('\n').filter((l) => l.includes('grep -Ev'))
-        const pr = grepLines(renderQualityGate(template, rootsOpts(undefined)))
-        const nightlyOut = grepLines(renderMutationNightly(nightly, rootsOpts(undefined)) ?? '')
-        expect(pr).toHaveLength(1)
-        expect(nightlyOut).toHaveLength(1)
-        const pattern = /grep -Ev '([^']*)'/
-        expect(pattern.exec(nonNull(pr[0]))?.[1]).toBe(pattern.exec(nonNull(nightlyOut[0]))?.[1])
-        // The clause that drifted stays present in BOTH.
-        expect(nonNull(pr[0])).toContain('robots|sitemap')
+    it('PR mutation is cold while full caches use stable restore prefixes and unique save keys', () => {
+        const pr = renderQualityGate(template, PNPM_OPTS)
+        const full = renderMutationNightly(nightly, PNPM_OPTS) ?? ''
+        expect(pr).not.toContain('actions/cache/restore')
+        expect(pr).not.toContain('--incrementalFile')
+        expect(full).toContain('${{ runner.os }}-stryker-shard-${{ matrix.shard }}-')
+        expect(full).toContain('${{ steps.source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}')
+        expect(full).toContain('restore-keys:')
     })
 
-    it('PR shard cache SAVES on always() — a below-threshold run still warms the incremental base', () => {
-        const lines = renderQualityGate(template, rootsOpts(undefined)).split('\n')
-        const idx = lines.findIndex((l) => l.includes('- name: Save Stryker incremental cache'))
-        expect(idx).toBeGreaterThan(-1)
-        expect(nonNull(lines[idx + 1]).trim()).toBe("if: always() && steps.slice.outputs.slice != ''")
-    })
-
-    it('throws loud when the grep -Ev exclude anchor is missing from the template', () => {
-        const stripped = template
-            .split('\n')
-            .filter((l) => !l.includes('grep -Ev'))
-            .join('\n')
-        expect(() => renderQualityGate(stripped, rootsOpts(undefined))).toThrow(/grep -Ev/)
-    })
-
-    it('throws loud (not a silent no-op) when the grep -Ev line is re-quoted so the substitution regex no longer matches', () => {
-        // The line still contains the substring "grep -Ev" so a substring-only
-        // anchor check would miss this drift; the single-quoted-pattern regex the
-        // replace itself uses must be what counts matches too.
-        const requoted = template.replace(/grep -Ev '[^']*'/, (m) => `grep -Ev "${m.slice("grep -Ev '".length, -1)}"`)
-        expect(requoted).toContain('grep -Ev "')
-        expect(() => renderQualityGate(requoted, rootsOpts(undefined))).toThrow(/grep -Ev/)
-    })
-
-    it('throws loud when non-default roots find no default pathspec to re-point', () => {
-        const stripped = template.replaceAll("'src/**/*.ts'", "'lib/**/*.ts'")
-        expect(() => renderQualityGate(stripped, rootsOpts(['app']))).toThrow(/default-roots pathspec/)
-    })
-
-    it('default roots do not require the pathspec literal to be present', () => {
-        const stripped = template.replaceAll("'src/**/*.ts'", "'lib/**/*.ts'")
-        expect(() => renderQualityGate(stripped, rootsOpts(undefined))).not.toThrow()
-    })
-
-    it('PR and nightly shard cache keys share one scheme (restore-keys prefix alignment)', () => {
-        const key = /key: \$\{\{ runner\.os \}\}-stryker-shard-\$\{\{ matrix\.shard \}\}-\$\{\{ github\.sha \}\}/
-        expect(template).toMatch(key)
-        expect(nightly).toMatch(key)
+    it('full workflow is manual-only and chunks sequentially with partial-progress saves', () => {
+        const out = renderMutationNightly(nightly, PNPM_OPTS) ?? ''
+        expect(out).toContain('name: Mutation Full (Manual)')
+        expect(out).toContain('workflow_dispatch:')
+        expect(out).not.toContain('schedule:')
+        expect(out).not.toContain('cron:')
+        expect(out).toContain('CHUNK: 8')
+        expect(out).toContain('CAP_MIN: 330')
+        expect(out).toContain('if [ "$i" -gt 0 ]')
+        expect(out).toContain('if: always() && steps.slice.outputs.slice')
     })
 })

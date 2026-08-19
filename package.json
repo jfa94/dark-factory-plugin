@@ -1,51 +1,51 @@
 {
-  "name": "factory-plugin",
-  "version": "1.47.1",
-  "private": true,
-  "type": "module",
-  "description": "Factory plugin build tooling (Node + TypeScript rewrite). NOT the scaffold shipped into target repos (see templates/package.scaffold.json).",
-  "engines": {
-    "node": ">=22"
-  },
-  "packageManager": "pnpm@11.9.0",
-  "bin": {
-    "factory": "dist/factory.js",
-    "factory-hook": "dist/factory-hook.js"
-  },
-  "scripts": {
-    "build": "node scripts/build.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint . --max-warnings 0",
-    "check:circular": "madge --circular --extensions ts src/",
-    "verify": "pnpm run typecheck && pnpm run check:circular && pnpm run lint && pnpm run test && pnpm run build",
-    "lint:fix": "eslint . --fix",
-    "version:check": "node scripts/version.mjs check",
-    "version:sync": "node scripts/version.mjs sync",
-    "audit": "npm audit --audit-level=high --omit=dev"
-  },
-  "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@types/node": "^22.0.0",
-    "@types/proper-lockfile": "^4.1.4",
-    "@vitest/coverage-v8": "^3.2.7",
-    "esbuild": "^0.25.0",
-    "eslint": "^9.39.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.4",
-    "eslint-plugin-security": "^4.0.0",
-    "fast-check": "^4.9.0",
-    "globals": "^17.4.0",
-    "madge": "^8.0.0",
-    "prettier": "3.7.4",
-    "proper-lockfile": "^4.1.2",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "typescript-eslint": "^8.49.0",
-    "vitest": "^3.0.0",
-    "zod": "^3.24.0"
-  }
+    "name": "factory-plugin",
+    "version": "1.47.1",
+    "private": true,
+    "type": "module",
+    "description": "Factory plugin build tooling (Node + TypeScript rewrite). NOT the scaffold shipped into target repos (see templates/package.scaffold.json).",
+    "engines": {
+        "node": ">=22"
+    },
+    "packageManager": "pnpm@11.9.0",
+    "bin": {
+        "factory": "dist/factory.js",
+        "factory-hook": "dist/factory-hook.js"
+    },
+    "scripts": {
+        "build": "node scripts/build.mjs",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "lint": "eslint . --max-warnings 0",
+        "check:circular": "madge --circular --extensions ts src/",
+        "verify": "pnpm run typecheck && pnpm run check:circular && pnpm run lint && pnpm run test && pnpm run build",
+        "lint:fix": "eslint . --fix",
+        "version:check": "node scripts/version.mjs check",
+        "version:sync": "node scripts/version.mjs sync",
+        "audit": "npm audit --audit-level=high --omit=dev"
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.39.1",
+        "@types/node": "^22.0.0",
+        "@types/proper-lockfile": "^4.1.4",
+        "@vitest/coverage-v8": "^3.2.7",
+        "esbuild": "^0.25.0",
+        "eslint": "^9.39.1",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-prettier": "^5.5.4",
+        "eslint-plugin-security": "^4.0.0",
+        "fast-check": "^4.9.0",
+        "globals": "^17.4.0",
+        "madge": "^8.0.0",
+        "prettier": "3.7.4",
+        "proper-lockfile": "^4.1.2",
+        "tsx": "^4.19.0",
+        "typescript": "^5.7.0",
+        "typescript-eslint": "^8.49.0",
+        "vitest": "^3.0.0",
+        "zod": "^3.24.0"
+    }
 }

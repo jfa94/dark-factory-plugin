@@ -2,9 +2,12 @@
  * Tests for `factory autonomy` — inline-settings form (v1.47, Slice 6).
  *
  * The settings are built IN MEMORY from `templates/settings.autonomous.json`
- * merged with the user's settings (placeholder substitution + env-baking +
- * statusLine wiring) and passed to `claude` as exactly ONE `--settings <json>`
+ * ONLY (placeholder substitution + env-baking + the user's own statusLine
+ * chained) and passed to `claude` as exactly ONE `--settings <json>`
  * argument via a typed {@link RelaunchSpec} + the single audited POSIX renderer.
+ * The user's own `~/.claude/settings.json` is never re-serialized into that
+ * argument (it would land in argv/transcript/shell-history) — it still applies
+ * as an underlying layer beneath `--settings`.
  * Nothing is written to disk; the FACTORY_SETTINGS_HASH staleness machinery is
  * gone. The relaunch command carries NO permission-mode override — the
  * permissive merged settings are the point (Decision 67 amendment; the 2026-08-17
@@ -60,7 +63,6 @@ describe('materializeMergedSettings', () => {
     it('substitutes ROOT, DATA and DATA_TILDE placeholders everywhere', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {},
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -84,7 +86,6 @@ describe('materializeMergedSettings', () => {
     it('bakes CLAUDE_PLUGIN_DATA into the env block', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {},
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -97,7 +98,6 @@ describe('materializeMergedSettings', () => {
     it('wires statusLine to factory statusline (NOT a copied wrapper script)', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {},
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -111,7 +111,7 @@ describe('materializeMergedSettings', () => {
     it("chains the user's existing statusLine via FACTORY_ORIGINAL_STATUSLINE", () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {statusLine: {type: 'command', command: '~/my/statusline.sh'}},
+            userStatusLine: '~/my/statusline.sh',
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -127,7 +127,7 @@ describe('materializeMergedSettings', () => {
     it('does NOT set FACTORY_ORIGINAL_STATUSLINE when the user already points at factory statusline', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {statusLine: {command: `${PLUGIN_ROOT}/bin/factory statusline`}},
+            userStatusLine: `${PLUGIN_ROOT}/bin/factory statusline`,
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -141,7 +141,7 @@ describe('materializeMergedSettings', () => {
         // treated as ours; any other factory subcommand the user wired is preserved.
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {statusLine: {command: `${PLUGIN_ROOT}/bin/factory some-other-cmd`}},
+            userStatusLine: `${PLUGIN_ROOT}/bin/factory some-other-cmd`,
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -150,16 +150,9 @@ describe('materializeMergedSettings', () => {
         expect(env.FACTORY_ORIGINAL_STATUSLINE).toBe(`${PLUGIN_ROOT}/bin/factory some-other-cmd`)
     })
 
-    it('DROPS a stale FACTORY_ORIGINAL_STATUSLINE when the user statusLine is now ours', () => {
-        // A prior autonomous relaunch baked FACTORY_ORIGINAL_STATUSLINE into the user's
-        // env; now the user points at the factory writer, so there is nothing to chain —
-        // the stale value must not survive (else the writer would chain to itself).
+    it('does not set FACTORY_ORIGINAL_STATUSLINE when the user has no statusLine at all', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {
-                statusLine: {command: `${PLUGIN_ROOT}/bin/factory statusline`},
-                env: {FACTORY_ORIGINAL_STATUSLINE: '/old/stale.sh'},
-            },
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -168,49 +161,27 @@ describe('materializeMergedSettings', () => {
         expect(env.FACTORY_ORIGINAL_STATUSLINE).toBeUndefined()
     })
 
-    it('DROPS a stale FACTORY_ORIGINAL_STATUSLINE when the user has no statusLine at all', () => {
+    it('the inline payload carries NOTHING from the user settings beyond the statusLine command (security regression)', () => {
+        // Even if a caller mistakenly passed user secrets through some other
+        // channel, materializeMergedSettings has no field to receive them — the
+        // template is the only source for everything but userStatusLine.
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {env: {FACTORY_ORIGINAL_STATUSLINE: '/old/stale.sh'}},
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
         })
+        expect(out.model).toBeUndefined()
         const env = out.env as Record<string, string>
-        expect(env.FACTORY_ORIGINAL_STATUSLINE).toBeUndefined()
-    })
-
-    it('uses the user settings as the base, overlaying template permissions/env/hooks', () => {
-        const out = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {
-                model: 'opus',
-                env: {MY_KEY: 'v'},
-                permissions: {allow: ['Bash(mine:*)']},
-            },
-            dataDir: DATA_DIR,
-            pluginRoot: PLUGIN_ROOT,
-            home: HOME,
-        })
-        // User-only keys survive.
-        expect(out.model).toBe('opus')
-        // env is a union: user keys + template keys + baked DATA.
-        const env = out.env as Record<string, string>
-        expect(env.MY_KEY).toBe('v')
-        expect(env.FACTORY_AUTONOMOUS_MODE).toBe('1')
-        expect(env.CLAUDE_PLUGIN_DATA).toBe(DATA_DIR)
-        // permissions.allow unions user + template (template entries substituted).
+        expect(Object.keys(env).sort()).toEqual(['CLAUDE_PLUGIN_DATA', 'FACTORY_AUTONOMOUS_MODE'])
         const allow = (out.permissions as {allow: string[]}).allow
-        expect(allow).toContain('Bash(mine:*)')
-        expect(allow).toContain('Bash(*)')
-        expect(allow).toContain(`Read(${DATA_DIR}/**)`)
+        expect(allow).toEqual(['Bash(*)', `Read(${DATA_DIR}/**)`])
     })
 
     it('throws LOUD when the template is not valid JSON', () => {
         expect(() =>
             materializeMergedSettings({
                 template: 'not json at all {{{',
-                userSettings: {},
                 dataDir: DATA_DIR,
                 pluginRoot: PLUGIN_ROOT,
                 home: HOME,
@@ -222,7 +193,6 @@ describe('materializeMergedSettings', () => {
         expect(() =>
             materializeMergedSettings({
                 template: JSON.stringify([1, 2, 3]),
-                userSettings: {},
                 dataDir: DATA_DIR,
                 pluginRoot: PLUGIN_ROOT,
                 home: HOME,
@@ -230,21 +200,9 @@ describe('materializeMergedSettings', () => {
         ).toThrow(/not a JSON object/)
     })
 
-    it('DROPS an inherited FACTORY_SETTINGS_HASH (the staleness machinery is gone)', () => {
-        const out = materializeMergedSettings({
-            template: TEMPLATE,
-            userSettings: {env: {FACTORY_SETTINGS_HASH: 'stale-from-a-pre-1.47-relaunch'}},
-            dataDir: DATA_DIR,
-            pluginRoot: PLUGIN_ROOT,
-            home: HOME,
-        })
-        expect((out.env as Record<string, string>).FACTORY_SETTINGS_HASH).toBeUndefined()
-    })
-
     it('emits valid JSON (round-trips through stringify/parse)', () => {
         const out = materializeMergedSettings({
             template: TEMPLATE,
-            userSettings: {},
             dataDir: DATA_DIR,
             pluginRoot: PLUGIN_ROOT,
             home: HOME,
@@ -373,8 +331,40 @@ describe('runAutonomyEnsure', () => {
             writeStdout: (t) => out.push(t),
         })
         const settings = settingsOf(result.spec)
-        expect(settings.model).toBe('opus')
+        expect(settings.model).toBeUndefined() // only the statusLine crosses — not other user keys
         expect((settings.env as Record<string, string>).FACTORY_ORIGINAL_STATUSLINE).toBe(`${HOME}/mine.sh`)
+    })
+
+    it("SECURITY: the printed command and spec never carry the user's env/apiKeyHelper/other settings keys", async () => {
+        const userSettingsPath = join(pluginRoot, 'user-settings.json')
+        // Non-realistic placeholder values (never a real-shaped secret vector) —
+        // the repo's commit-time secret scanner blocks realistic ones.
+        await writeFile(
+            userSettingsPath,
+            JSON.stringify({
+                env: {ANTHROPIC_API_KEY: 'user-secret-value-marker', AWS_SECRET_ACCESS_KEY: 'another-secret-marker'},
+                apiKeyHelper: 'echo user-secret-value-marker',
+                model: 'opus',
+            }),
+            'utf8'
+        )
+        const result = await runAutonomyEnsure({
+            dataDir,
+            pluginRoot,
+            userSettingsPath,
+            home: HOME,
+            writeStdout: (t) => out.push(t),
+        })
+        expect(result.relaunchCommand).not.toContain('user-secret-value-marker')
+        expect(result.relaunchCommand).not.toContain('another-secret-marker')
+        expect(result.relaunchCommand).not.toContain('apiKeyHelper')
+        expect(JSON.stringify(result.spec)).not.toContain('user-secret-value-marker')
+        const settings = settingsOf(result.spec)
+        expect(settings.model).toBeUndefined()
+        expect(settings.apiKeyHelper).toBeUndefined()
+        // The legitimate payload still comes through.
+        expect(result.relaunchCommand).toContain('FACTORY_AUTONOMOUS_MODE')
+        expect((settings.env as Record<string, string>).CLAUDE_PLUGIN_DATA).toBe(dataDir)
     })
 
     it("degrades to an empty base (no throw) when the user's settings.json is unparseable", async () => {

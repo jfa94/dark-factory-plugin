@@ -183,12 +183,14 @@ Preflight is two-state (v1.47): the session is **autonomous** (`FACTORY_AUTONOMO
 however it got set — a prior inline-settings relaunch or a directly-exported env, the
 sanctioned CI path) → proceed; it is **not** → print the relaunch command and halt. Nothing
 is written to disk — the old `merged-settings.json` artifact and its staleness/hash machinery
-are gone; every relaunch carries the current settings by construction. `ensure` merges
-`templates/settings.autonomous.json` with the user's `~/.claude/settings.json` (placeholders
-substituted, `CLAUDE_PLUGIN_DATA` baked into `env`, `statusLine` wired to `factory statusline`, the
-user's own statusline chained via `FACTORY_ORIGINAL_STATUSLINE`), then prints
-`claude --worktree --settings '<json>'` — the whole settings object passed inline as exactly
-one shell-quoted argument. Relaunching with that command sets
+are gone; every relaunch carries the current settings by construction. `ensure` builds the
+payload from `templates/settings.autonomous.json` **only** (placeholders substituted,
+`CLAUDE_PLUGIN_DATA` baked into `env`, `statusLine` wired to `factory statusline`, the user's own
+statusline chained via `FACTORY_ORIGINAL_STATUSLINE`) — the user's `~/.claude/settings.json` is
+never re-serialized into the payload (it would land in argv/transcript/shell-history), and still
+applies as an underlying layer beneath `--settings`. `ensure` then prints
+`claude --worktree --settings '<json>'` — the template-derived settings object passed inline as
+exactly one shell-quoted argument. Relaunching with that command sets
 `FACTORY_AUTONOMOUS_MODE=1` and produces a fresh `usage-cache.json` on the first turn, which the
 quota pacer reads. The relaunch is irreducible: Claude Code reads settings only at
 launch, so a running session can never make _itself_ autonomous — automation covers the scaffold,

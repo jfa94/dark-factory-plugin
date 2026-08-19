@@ -15,10 +15,13 @@
  * docs/explanation/decisions.md for the full spike record.
  *
  * What is PRESERVED from the merged-settings era (all in-memory now):
- *   - template + user-settings merge semantics ({@link materializeMergedSettings}):
- *     user settings as base, template overlay, env union with
- *     `CLAUDE_PLUGIN_DATA` baked, permissions.allow union, statusLine chaining
- *     via `FACTORY_ORIGINAL_STATUSLINE`;
+ *   - the TEMPLATE-ONLY payload ({@link materializeMergedSettings}): the user's
+ *     settings.json is never re-serialized into the inline argument (it would
+ *     land in argv/transcript/shell-history) — only `env.CLAUDE_PLUGIN_DATA`
+ *     baked in and the user's own statusLine chained via
+ *     `FACTORY_ORIGINAL_STATUSLINE`. The user's settings still apply as an
+ *     underlying layer beneath `--settings` (deny unions, hooks from both
+ *     layers fire — Decision 13 spike item 2), so nothing is lost;
  *   - placeholder substitution ({@link substitutePlaceholders});
  *   - the `ci-raw-env` path: `FACTORY_AUTONOMOUS_MODE=1` exported directly (CI)
  *     satisfies the gate with no settings involved at all.
@@ -55,11 +58,12 @@ const HELP = `factory autonomy <ensure|status|preflight> — manage / inspect au
 The pipeline runs unattended: \`run create\`/\`run resume\` HALT unless the session
 is autonomous (FACTORY_AUTONOMOUS_MODE=1). There is no opt-out.
 
-ensure     Builds the autonomous settings in memory (templates/settings.autonomous.json
-           merged with your existing settings — placeholders substituted, env baked,
-           statusLine wired to \`factory statusline\`) and prints the relaunch command,
-           with the settings passed inline as one --settings argument. Nothing is
-           written to disk.
+ensure     Builds the autonomous settings in memory from templates/settings.autonomous.json
+           (placeholders substituted, env baked, statusLine wired to \`factory statusline\`
+           and your own statusLine chained) and prints the relaunch command, with the
+           settings passed inline as one --settings argument. Nothing is written to disk.
+           Your existing ~/.claude/settings.json is NOT re-serialized into this payload
+           (it would land in argv/transcript) — it still applies as an underlying layer.
 
 status     Reports whether THIS session is autonomous (FACTORY_AUTONOMOUS_MODE=1).
            Exits 0 when autonomous, 1 when not (never throws).
@@ -146,8 +150,18 @@ function statusLineCommandOf(settings: Record<string, unknown>): string | undefi
 export interface MaterializeInput {
     /** The raw `templates/settings.autonomous.json` text. */
     readonly template: string
-    /** The user's existing settings object (or `{}` when none / unparseable). */
-    readonly userSettings: Record<string, unknown>
+    /**
+     * The user's OWN statusLine command, if they have one (undefined otherwise).
+     * This is the ONLY thing read from the user's `~/.claude/settings.json` — the
+     * rest of that file (env, permissions, apiKeyHelper, ...) must never reach
+     * this function: the result becomes one inline `--settings` argv element,
+     * which lands in process argv, the session transcript, and (once pasted)
+     * shell history — none of them confidential. The user's own settings still
+     * apply as an UNDERLYING layer beneath `--settings` (Decision 13 spike item
+     * 2: deny unions, hooks from both layers fire), so nothing is lost by not
+     * re-serializing them here.
+     */
+    readonly userStatusLine?: string | undefined
     /** Resolved `$CLAUDE_PLUGIN_DATA` (real value). */
     readonly dataDir: string
     /** Resolved `$CLAUDE_PLUGIN_ROOT` (real value). */
@@ -157,11 +171,12 @@ export interface MaterializeInput {
 }
 
 /**
- * Build the merged settings object: user settings as the base, the
- * placeholder-substituted template overlaid (permissions/env/statusLine/hooks),
- * `env.CLAUDE_PLUGIN_DATA` baked, and the user's own statusLine chained via
- * `env.FACTORY_ORIGINAL_STATUSLINE`. Pure — no IO. In-memory only since v1.47:
- * the result becomes the inline `--settings` argument, never a file.
+ * Build the inline settings object from the placeholder-substituted TEMPLATE
+ * ONLY (`env.CLAUDE_PLUGIN_DATA` baked in), plus the user's own statusLine
+ * chained via `env.FACTORY_ORIGINAL_STATUSLINE` when they have one of their
+ * own. Pure — no IO. In-memory only since v1.47: the result becomes the inline
+ * `--settings` argument, never a file — see {@link MaterializeInput} for why
+ * nothing else from the user's settings crosses this boundary.
  */
 export function materializeMergedSettings(input: MaterializeInput): Record<string, unknown> {
     const {dataDir, pluginRoot, home} = input
@@ -176,48 +191,23 @@ export function materializeMergedSettings(input: MaterializeInput): Record<strin
         dataDirTilde: tildeShorten(dataDir, home),
     }) as Record<string, unknown>
 
-    // User settings is the base; template keys overlay it (template wins on
-    // conflicts — autonomous mode's permissions/hooks/statusLine must take effect).
-    // NOTE: a top-level `hooks` in the template REPLACES the user's `hooks` (object
-    // spread is shallow). That is intentional and NOT a security regression: the
-    // factory's enforcement hooks load independently via `hooks/hooks.json` (the
-    // plugin's own hook wiring), so the guard boundary holds regardless of what the
-    // inline settings carry. The template's `hooks` here only configures the
-    // autonomous *session*, not the enforcement layer.
-    const merged: Record<string, unknown> = {...input.userSettings, ...template}
+    const merged: Record<string, unknown> = {...template}
 
-    // env: union user + template, then bake CLAUDE_PLUGIN_DATA. Both user and
-    // template envs are preserved (template wins on key conflicts) so the pin and
-    // FACTORY_AUTONOMOUS_MODE always survive.
-    const userEnv = isObject(input.userSettings.env) ? input.userSettings.env : {}
     const templateEnv = isObject(template.env) ? template.env : {}
-    const env: Record<string, unknown> = {...userEnv, ...templateEnv}
+    const env: Record<string, unknown> = {...templateEnv}
     env.CLAUDE_PLUGIN_DATA = dataDir
-
-    // permissions.allow: union user + template (deny/other keys: template wins).
-    const userPerms = isObject(input.userSettings.permissions) ? input.userSettings.permissions : {}
-    const templatePerms = isObject(template.permissions) ? template.permissions : {}
-    const userAllow = Array.isArray(userPerms.allow)
-        ? userPerms.allow.filter((e): e is string => typeof e === 'string')
-        : []
-    const templateAllow = Array.isArray(templatePerms.allow)
-        ? templatePerms.allow.filter((e): e is string => typeof e === 'string')
-        : []
-    const unionedAllow = [...userAllow, ...templateAllow.filter((e) => !userAllow.includes(e))]
-    merged.permissions = {...userPerms, ...templatePerms, allow: unionedAllow}
 
     // statusLine chaining: if the user has their OWN statusLine that is NOT the
     // factory writer, preserve it via FACTORY_ORIGINAL_STATUSLINE (tilde-expanded)
     // so `factory statusline` chains to it. The template's statusLine (the factory
     // writer) always wins as the displayed command.
     const ourPath = factoryBinPath(pluginRoot) // ".../bin/factory"
-    const userStatusLine = statusLineCommandOf(input.userSettings)
     // Resolve the user's OWN (non-factory) statusLine to chain, if any.
     const chained = ((): string | undefined => {
-        if (userStatusLine === undefined) {
+        if (input.userStatusLine === undefined) {
             return undefined
         }
-        const expanded = tildeExpand(userStatusLine, home)
+        const expanded = tildeExpand(input.userStatusLine, home)
         const parts = expanded.split(/\s+/)
         const expandedPath = parts[0] ?? expanded
         const expandedSub = parts[1]
@@ -229,20 +219,9 @@ export function materializeMergedSettings(input: MaterializeInput): Record<strin
         const isOurs = expandedPath === ourPath && expandedSub === 'statusline'
         return isOurs ? undefined : expanded
     })()
-    // Set the chained original, or DROP a stale one. The env block is seeded from the
-    // user's own env (`{...userEnv, ...templateEnv}`), so a FACTORY_ORIGINAL_STATUSLINE
-    // left over from a PRIOR autonomous relaunch can ride along; when there is nothing
-    // legitimate to chain (no user statusLine, or it IS our writer) it must be deleted,
-    // else `factory statusline` would chain to a phantom command — or to itself.
     if (chained !== undefined) {
         env.FACTORY_ORIGINAL_STATUSLINE = chained
-    } else {
-        delete env.FACTORY_ORIGINAL_STATUSLINE
     }
-
-    // A FACTORY_SETTINGS_HASH inherited from a pre-v1.47 merged-settings relaunch is
-    // dead weight (the staleness machinery is gone) — drop it rather than re-export it.
-    delete env.FACTORY_SETTINGS_HASH
 
     merged.env = env
 
@@ -299,13 +278,13 @@ export function buildRelaunchSpec(settings: Record<string, unknown>): RelaunchSp
 /** Options for {@link runAutonomyEnsure}; all paths injectable for tests. */
 export interface AutonomyEnsureOptions {
     /** Resolved data dir (defaults to {@link resolveDataDir}). */
-    readonly dataDir?: string
+    readonly dataDir?: string | undefined
     /** Resolved plugin root (defaults to {@link resolvePluginRoot}). */
-    readonly pluginRoot?: string
+    readonly pluginRoot?: string | undefined
     /** User-settings source path (defaults to `~/.claude/settings.json`). */
     readonly userSettingsPath?: string | undefined
     /** `$HOME` (defaults to os.homedir()). */
-    readonly home?: string
+    readonly home?: string | undefined
     /** stdout sink (defaults to process.stdout). */
     readonly writeStdout?: (text: string) => void
 }
@@ -330,14 +309,16 @@ export async function runAutonomyEnsure(opts: AutonomyEnsureOptions = {}): Promi
     const userSettingsPath = opts.userSettingsPath ?? join(home, '.claude', 'settings.json')
     const write = opts.writeStdout ?? ((t: string) => process.stdout.write(t))
 
-    const userSettings = await readUserSettings(userSettingsPath)
+    // Only the user's statusLine command crosses into the inline settings — see
+    // the confidentiality note on {@link MaterializeInput}.
+    const userStatusLine = statusLineCommandOf(await readUserSettings(userSettingsPath))
 
     // Read the template from the plugin install.
     const templatePath = join(pluginRoot, 'templates', 'settings.autonomous.json')
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed template path under the resolved plugin root
     const template = await readFile(templatePath, 'utf8')
 
-    const merged = materializeMergedSettings({template, userSettings, dataDir, pluginRoot, home})
+    const merged = materializeMergedSettings({template, userStatusLine, dataDir, pluginRoot, home})
     const spec = buildRelaunchSpec(merged)
     const relaunchCommand = renderPosixCommand(spec)
 
@@ -425,9 +406,9 @@ export async function evaluateAutonomyPreflight(opts: AutonomyPreflightOptions =
         return {state: 'ready'}
     }
     const ensured = await runAutonomyEnsure({
-        ...(opts.dataDir !== undefined ? {dataDir: opts.dataDir} : {}),
-        ...(opts.pluginRoot !== undefined ? {pluginRoot: opts.pluginRoot} : {}),
-        ...(opts.home !== undefined ? {home: opts.home} : {}),
+        dataDir: opts.dataDir,
+        pluginRoot: opts.pluginRoot,
+        home: opts.home,
         userSettingsPath: opts.userSettingsPath,
         writeStdout: opts.writeStdout ?? ((): void => undefined),
     })

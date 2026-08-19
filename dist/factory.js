@@ -21469,11 +21469,12 @@ var HELP10 = `factory autonomy <ensure|status|preflight> \u2014 manage / inspect
 The pipeline runs unattended: \`run create\`/\`run resume\` HALT unless the session
 is autonomous (FACTORY_AUTONOMOUS_MODE=1). There is no opt-out.
 
-ensure     Builds the autonomous settings in memory (templates/settings.autonomous.json
-           merged with your existing settings \u2014 placeholders substituted, env baked,
-           statusLine wired to \`factory statusline\`) and prints the relaunch command,
-           with the settings passed inline as one --settings argument. Nothing is
-           written to disk.
+ensure     Builds the autonomous settings in memory from templates/settings.autonomous.json
+           (placeholders substituted, env baked, statusLine wired to \`factory statusline\`
+           and your own statusLine chained) and prints the relaunch command, with the
+           settings passed inline as one --settings argument. Nothing is written to disk.
+           Your existing ~/.claude/settings.json is NOT re-serialized into this payload
+           (it would land in argv/transcript) \u2014 it still applies as an underlying layer.
 
 status     Reports whether THIS session is autonomous (FACTORY_AUTONOMOUS_MODE=1).
            Exits 0 when autonomous, 1 when not (never throws).
@@ -21539,24 +21540,16 @@ function materializeMergedSettings(input) {
     dataDir,
     dataDirTilde: tildeShorten(dataDir, home)
   });
-  const merged = { ...input.userSettings, ...template };
-  const userEnv = isObject2(input.userSettings.env) ? input.userSettings.env : {};
+  const merged = { ...template };
   const templateEnv = isObject2(template.env) ? template.env : {};
-  const env = { ...userEnv, ...templateEnv };
+  const env = { ...templateEnv };
   env.CLAUDE_PLUGIN_DATA = dataDir;
-  const userPerms = isObject2(input.userSettings.permissions) ? input.userSettings.permissions : {};
-  const templatePerms = isObject2(template.permissions) ? template.permissions : {};
-  const userAllow = Array.isArray(userPerms.allow) ? userPerms.allow.filter((e) => typeof e === "string") : [];
-  const templateAllow = Array.isArray(templatePerms.allow) ? templatePerms.allow.filter((e) => typeof e === "string") : [];
-  const unionedAllow = [...userAllow, ...templateAllow.filter((e) => !userAllow.includes(e))];
-  merged.permissions = { ...userPerms, ...templatePerms, allow: unionedAllow };
   const ourPath = factoryBinPath(pluginRoot);
-  const userStatusLine = statusLineCommandOf(input.userSettings);
   const chained = (() => {
-    if (userStatusLine === void 0) {
+    if (input.userStatusLine === void 0) {
       return void 0;
     }
-    const expanded = tildeExpand(userStatusLine, home);
+    const expanded = tildeExpand(input.userStatusLine, home);
     const parts = expanded.split(/\s+/);
     const expandedPath = parts[0] ?? expanded;
     const expandedSub = parts[1];
@@ -21565,10 +21558,7 @@ function materializeMergedSettings(input) {
   })();
   if (chained !== void 0) {
     env.FACTORY_ORIGINAL_STATUSLINE = chained;
-  } else {
-    delete env.FACTORY_ORIGINAL_STATUSLINE;
   }
-  delete env.FACTORY_SETTINGS_HASH;
   merged.env = env;
   return merged;
 }
@@ -21603,10 +21593,10 @@ async function runAutonomyEnsure(opts = {}) {
   const pluginRoot = opts.pluginRoot ?? resolvePluginRoot();
   const userSettingsPath = opts.userSettingsPath ?? join32(home, ".claude", "settings.json");
   const write = opts.writeStdout ?? ((t) => process.stdout.write(t));
-  const userSettings = await readUserSettings(userSettingsPath);
+  const userStatusLine = statusLineCommandOf(await readUserSettings(userSettingsPath));
   const templatePath = join32(pluginRoot, "templates", "settings.autonomous.json");
   const template = await readFile21(templatePath, "utf8");
-  const merged = materializeMergedSettings({ template, userSettings, dataDir, pluginRoot, home });
+  const merged = materializeMergedSettings({ template, userStatusLine, dataDir, pluginRoot, home });
   const spec = buildRelaunchSpec(merged);
   const relaunchCommand = renderPosixCommand(spec);
   write(
@@ -21645,9 +21635,9 @@ async function evaluateAutonomyPreflight(opts = {}) {
     return { state: "ready" };
   }
   const ensured = await runAutonomyEnsure({
-    ...opts.dataDir !== void 0 ? { dataDir: opts.dataDir } : {},
-    ...opts.pluginRoot !== void 0 ? { pluginRoot: opts.pluginRoot } : {},
-    ...opts.home !== void 0 ? { home: opts.home } : {},
+    dataDir: opts.dataDir,
+    pluginRoot: opts.pluginRoot,
+    home: opts.home,
     userSettingsPath: opts.userSettingsPath,
     writeStdout: opts.writeStdout ?? (() => void 0)
   });

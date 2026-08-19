@@ -112,13 +112,13 @@ branch's checks come from `git.stagingRequiredStatusChecks` (default empty) at
 factory scaffold [--repo <owner/name>] [--provision] [--waive mutation|coverage] [--force-managed]
 ```
 
-| Flag                  | Required | Notes                                                                                                                                                                                                                                                                                 |
-| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--repo <owner/name>` | no       | Target GitHub repo (used for the protection probe). Auto-derived from the `origin` remote when omitted; an explicit value that disagrees with it fails loud.                                                                                                                          |
-| `--provision`         | no       | Write the mode's at-rest protection on develop (run-scoped: baseline; permanent: strict). Default: refuse when unprotected.                                                                                                                                                           |
-| `--waive mutation`    | no       | Record the mutation gate as deliberately waived in the contract instead of refusing when stryker is not installed.                                                                                                                                                                    |
-| `--waive coverage`    | no       | Record the coverage gate as deliberately waived instead of refusing when no vitest coverage provider is installed.                                                                                                                                                                    |
-| `--force-managed`     | no       | Re-adopt conflicted MANAGED files: overwrite a customized managed file with the plugin template and re-record its hash. Default: refuse (`files_conflict`). Never authorizes DELETING a customized/unknown stale nightly (below) — force only overwrites toward the shipped template. |
+| Flag                  | Required | Notes                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--repo <owner/name>` | no       | Target GitHub repo (used for the protection probe). Auto-derived from the `origin` remote when omitted; an explicit value that disagrees with it fails loud.                                                                                                                                                                                                                                   |
+| `--provision`         | no       | Write the mode's at-rest protection on develop (run-scoped: baseline; permanent: strict). Default: refuse when unprotected.                                                                                                                                                                                                                                                                    |
+| `--waive mutation`    | no       | Record the mutation gate as deliberately waived in the contract instead of refusing when stryker is not installed.                                                                                                                                                                                                                                                                             |
+| `--waive coverage`    | no       | Record the coverage gate as deliberately waived instead of refusing when no vitest coverage provider is installed.                                                                                                                                                                                                                                                                             |
+| `--force-managed`     | no       | Re-adopt conflicted MANAGED files: overwrite a customized managed file with the plugin template and re-record its hash. Default: refuse (`files_conflict`). Never authorizes DELETING a customized/unknown stale nightly (below) — force only overwrites toward the shipped template; such a nightly is warned about and left in place, and does not block the re-adoption of the other files. |
 
 ### Managed-file ownership is fail-safe
 
@@ -149,20 +149,28 @@ workflow is written**, and the managed preflight compares against the same rende
 pass 2 will write. The authoritative `ensureGateContract` still runs after seeds and
 its result is what gets persisted.
 
-**Lock versions.** A `.factory/scaffold.lock` declaring a `version` other than `1`
-(written by a newer plugin) refuses loudly with `UnsupportedLockVersionError` and
-writes nothing — upgrade the plugin, or delete the lock to re-adopt seeds from
-scratch. A missing or malformed **v1** lock still degrades to an empty one (every
-seed then reads as customized — fail-safe) and is rewritten valid on the next
-persist.
+**Lock versions.** A `.factory/scaffold.lock` whose `version` key is present and is
+anything other than the number `1` refuses loudly with `UnsupportedLockVersionError`
+and writes nothing — upgrade the plugin, or delete the lock to re-adopt seeds from
+scratch. The check is by value, not by type: `2`, `"1"`, `"2"`, `true` and any other
+non-`1` value all refuse, and the error renders the offending value JSON-quoted so
+`2` and `"2"` are distinguishable. A lock with **no** `version` key, or one that is
+malformed/unparsable, still degrades to an empty lock (every seed then reads as
+customized — fail-safe) and is rewritten valid on the next persist.
 
 When mutation is **uncontracted** in the gate contract but a previously scaffolded
 `.github/workflows/mutation-nightly.yml` still exists, scaffold removes the stale
 workflow — but only with **current proof**: its bytes must match the lock's
 recorded managed hash (re-verified immediately before the delete). A customized or
-unknown stale nightly is a `files_conflict` refusal that `--force-managed` does
-**not** override — restore it (`git checkout`) or delete it yourself. A successful
-removal drops the lock entry and lands in `files_removed`.
+unknown stale nightly is never deleted; `--force-managed` cannot authorize it:
+
+| Stale nightly, bytes match neither render nor lock hash | Outcome                                                                                        |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| no `--force-managed`                                    | `files_conflict` refusal — zero writes, the nightly named alongside any other conflicts        |
+| `--force-managed`                                       | **warn, leave in place** — other conflicted managed files are still re-adopted in the same run |
+
+Restore it (`git checkout`) or delete it yourself. A successful removal drops the lock
+entry and lands in `files_removed`.
 
 Emits a `ScaffoldReport`: `{ repo, files_created, files_present, files_updated,
 files_removed, protection, settings }`. `files_removed` (always present) carries
@@ -1186,23 +1194,34 @@ Autonomous mode is **mandatory** for a run (`run create`/`resume` halt without i
 ### `autonomy ensure`
 
 Default verb. Builds the autonomous settings **in memory** (nothing is written to
-disk — v1.47 retired the `merged-settings.json` artifact). Merges
-`templates/settings.autonomous.json` with your existing user settings: placeholders
-(`${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}`) substituted, `env.CLAUDE_PLUGIN_DATA`
-baked, `permissions.allow` unioned (template wins on other keys), and the
-`statusLine` wired to `factory statusline`. If your own (non-factory) `statusLine`
-is present it is preserved by chaining it through `FACTORY_ORIGINAL_STATUSLINE`;
-a stale chain value is dropped. Then prints the relaunch command, with the whole
-settings object as exactly ONE shell-quoted inline `--settings` argument (a typed
-`RelaunchSpec` — executable + argv — rendered by a single audited POSIX quoter).
+disk — v1.47 retired the `merged-settings.json` artifact) from
+`templates/settings.autonomous.json` **only**: placeholders (`${CLAUDE_PLUGIN_ROOT}` /
+`${CLAUDE_PLUGIN_DATA}`) substituted, `env.CLAUDE_PLUGIN_DATA` baked, and the
+`statusLine` wired to `factory statusline`. If you have your own (non-factory)
+`statusLine` it is preserved by chaining it through `FACTORY_ORIGINAL_STATUSLINE`.
+Then prints the relaunch command, with that settings object as exactly ONE
+shell-quoted inline `--settings` argument (a typed `RelaunchSpec` — executable +
+argv — rendered by a single audited POSIX quoter).
+
+**Your `~/.claude/settings.json` is never re-serialized into the payload** (v1.47.1).
+Your `statusLine` command is the only field read from it. The rest — `env`,
+`permissions`, `apiKeyHelper` — stays out by construction, because the inline argument
+lands in process argv, the session transcript, and (once you paste the command) shell
+history, none of which are confidential. Nothing is lost: your settings still apply as
+an **underlying layer** beneath `--settings` — `permissions.deny` unions across layers
+and hooks from both layers fire (Decision 13, spike item 2 + the v1.47.1 amendment). A
+consequence of the same change: `permissions.allow` is no longer unioned with your layer
+(the template is the sole source), and stale `FACTORY_ORIGINAL_STATUSLINE` /
+`FACTORY_SETTINGS_HASH` values from a prior relaunch can no longer ride along, so they
+are no longer scrubbed.
 
 ```
 factory autonomy ensure [--user-settings <path>]
 ```
 
-| Flag                     | Required | Notes                                                                   |
-| ------------------------ | -------- | ----------------------------------------------------------------------- |
-| `--user-settings <path>` | no       | Override the user-settings source (default: `~/.claude/settings.json`). |
+| Flag                     | Required | Notes                                                                                                          |
+| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `--user-settings <path>` | no       | Override the user-settings source (default: `~/.claude/settings.json`). Only its `statusLine` command is read. |
 
 Prints a human-readable relaunch message to stdout that includes the command
 
@@ -1259,10 +1278,10 @@ factory autonomy preflight [--user-settings <path>]
 The verdict is **two-state** (v1.47 — the staleness/hash state machine died with the
 on-disk artifact; every relaunch carries the current settings by construction):
 
-| Autonomous?                            | Outcome                                                    |
-| -------------------------------------- | ---------------------------------------------------------- |
-| yes (however the env got set, incl. a directly-exported CI env) | **proceed** (exit 0, nothing built) |
-| no                                     | **build in memory + print relaunch + halt** (exit 1)       |
+| Autonomous?                                                     | Outcome                                              |
+| --------------------------------------------------------------- | ---------------------------------------------------- |
+| yes (however the env got set, incl. a directly-exported CI env) | **proceed** (exit 0, nothing built)                  |
+| no                                                              | **build in memory + print relaunch + halt** (exit 1) |
 
 On a halt it delegates to `ensure` and prints the same inline-settings
 `claude --worktree --settings '<json>'` relaunch block ([see `ensure`](#autonomy-ensure)),

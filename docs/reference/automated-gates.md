@@ -128,14 +128,22 @@ skip the local-vs-CI decision. No new CI steps were added by this pinning; `sast
 guarded, because a silently-missed one renders a workflow that looks valid and gates
 the wrong thing:
 
-| Anchor                                     | Substitution                                                                        | On zero matches                                     |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------- |
-| the `grep -Ev '…'` mutable-source filter   | the single-sourced `MUTABLE_SOURCE_EXCLUDE` predicate                               | **throws** — the mutation scope would be unfiltered |
-| the default roots pathspec `'src/**/*.ts'` | the contract's `gates.mutation.roots` (skipped when the contract keeps the default) | **throws** — mutation would run on the wrong roots  |
+| Anchor                                                 | Substitution                                                                        | On zero matches                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------- |
+| the single-quoted `grep -Ev '…'` mutable-source filter | the single-sourced `MUTABLE_SOURCE_EXCLUDE` predicate                               | **throws** — the mutation scope would be unfiltered |
+| the default roots pathspec `'src/**/*.ts'`             | the contract's `gates.mutation.roots` (skipped when the contract keeps the default) | **throws** — mutation would run on the wrong roots  |
 
-If you edit `templates/.github/workflows/quality-gate.yml`, keep both anchors intact;
-a rename that drops one fails the render loudly at scaffold time instead of shipping a
-mis-scoped mutation run.
+**The guard counts what it substitutes.** The mutable-source guard once detected
+candidate lines with a broad substring test (`includes('grep -Ev')`) while substituting
+with a narrower pattern that also required the single-quoted argument. A template edit
+that merely re-quoted the line (double quotes instead of single) would have satisfied the
+detector, passed the guard, and then silently no-op'd the replacement — shipping an
+unfiltered mutation scope with no error. Detection and substitution now use the **same**
+regex, so "the anchor is present" and "the substitution happened" cannot diverge.
+
+If you edit `templates/.github/workflows/quality-gate.yml`, keep both anchors intact
+**in their exact quoted form**; a rename or a re-quote that drops one fails the render
+loudly at scaffold time instead of shipping a mis-scoped mutation run.
 
 ### Extra CI setup steps (`setup_steps`)
 

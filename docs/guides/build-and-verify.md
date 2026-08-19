@@ -165,8 +165,10 @@ the manifest versions by hand — `version:check` is a CI step and will fail on 
 Both verbs fail loud rather than guessing:
 
 - `package.json#version` must be **canonical SemVer 2.0.0** (core triple, optional
-  prerelease and build metadata). A non-conforming value aborts both verbs instead
-  of being propagated into the manifests.
+  prerelease and build metadata), validated against the official semver.org suggested
+  regex, copied verbatim into `scripts/version.mjs` as a single constant. A
+  non-conforming value aborts both verbs instead of being propagated into the
+  manifests.
 - `sync` does a targeted replace of the `"version"` literal only — a full
   re-serialize would reformat unrelated manifest content on every bump. If the
   expected literal is absent from a manifest, it throws naming that file rather

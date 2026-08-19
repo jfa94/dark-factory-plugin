@@ -360,6 +360,19 @@ The cap is `HOLDOUT_EVALUATOR_RETRY_CAP = 2` (`src/orchestrator/record.ts`);
 exhausting it fails the task **`blocked-environmental`** — the evaluator is broken,
 so charging the producer would be a lie.
 
+**Observability.** A retry emits one warning, and that warning is the _only_ emitted
+signal for an evaluator fault (the counter itself is state, not output). It carries the
+task and run identity, matching the identity-prefix convention of the other records in
+`src/orchestrator/record.ts`:
+
+```
+task '<task-id>' (run <run-id>): holdout evaluator failure (retry 1/2): <reason> — re-running the verify wave at the same rung
+```
+
+The prefix is load-bearing under parallelism: several tasks' warns interleave in one
+runner session, and an unprefixed line cannot be attributed to the task whose evaluator
+broke.
+
 **Lifetime — the counter tracks _consecutive_ evaluator faults:**
 
 - incremented on each evaluator failure (as above);

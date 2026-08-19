@@ -167,9 +167,22 @@ failed `factory scaffold` leaves the working tree exactly as it found it.
 One conflict `--force-managed` will **not** clear: a stale
 `.github/workflows/mutation-nightly.yml` (mutation is uncontracted) whose bytes do
 not match the recorded hash. Force authorizes overwriting toward the shipped
-template, never deleting content of unknown provenance. Restore it
-(`git checkout .github/workflows/mutation-nightly.yml`) and re-scaffold to have it
-removed cleanly, or delete the file yourself.
+template, never deleting content of unknown provenance. Under `--force-managed` this
+one file is **warned about and left in place** — it does not abort the run, and the
+other conflicted managed files are still re-adopted:
+
+```
+--force-managed: re-adopting customized managed file(s): .github/workflows/quality-gate.yml
+--force-managed: Note: .github/workflows/mutation-nightly.yml is STALE (mutation is
+uncontracted) and its bytes don't match the recorded scaffold hash — --force-managed
+cannot authorize DELETING unproven content; restore it (git checkout) or delete the
+file yourself.
+```
+
+To clear it, restore it (`git checkout .github/workflows/mutation-nightly.yml`) and
+re-scaffold to have it removed cleanly, or delete the file yourself. Without
+`--force-managed` it is still a hard `files_conflict` refusal, listed alongside every
+other conflicting managed file.
 
 ## 2a. Handle an unsupported lock version
 
@@ -184,6 +197,13 @@ working around it — the older engine cannot know the newer lock's shape, and
 rewriting it as v1 would destroy the record. Deleting the lock is the escape hatch
 of last resort: every seed then reads as customized (project-owned) until it is
 re-adopted.
+
+The refusal is by **value**, not by type: `"version": "2"` (a string) refuses exactly
+like `2`, and the message quotes the value as JSON so the two are distinguishable in
+the output. Do not "fix" the refusal by editing the `version` key — either upgrade the
+plugin or delete the lock. A lock with no `version` key at all, or an unparsable one,
+is not an unsupported version: it degrades fail-safe to an empty lock and every seed
+reads as project-owned until re-adopted.
 
 ## 3. Handle a protection refusal
 

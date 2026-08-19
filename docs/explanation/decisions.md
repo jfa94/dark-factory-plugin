@@ -274,6 +274,14 @@ _Spike evidence (live, 2026-08-17, Claude Code 2.1.233, isolated temp data dir +
 
 _Chosen branch (per the pre-registered gate):_ the **inline-settings fallback** — no `--permission-mode` flag, today's permissive allow + short deny (Decision 65). Auto mode was rejected because a required pipeline op remained uncoverable by `autoMode.allow` (item 4) and its classifier is not deterministic (item 5). _Retained controls:_ env export, the `.claude/` guard hook, Prettier + related-tests hooks, factory statusLine + chaining, user settings as the underlying layer, `--add-dir` data-dir access, and the deterministic deny rules — all verified live under the inline form (the inline-JSON relaunch was exercised end-to-end: env exported, guard hook blocked a `.claude/` read).
 
+**Amendment (2026-08-19, v1.47.1 — the inline payload is TEMPLATE-ONLY; the user's settings are never re-serialized into it). This amends spike item 2 above.** The "merge semantics unchanged" clause of the 2026-08-17 amendment was a faithful port of the file-based era — and under the inline form it was a confidentiality defect. Merging the user's entire `~/.claude/settings.json` into the payload meant their `env` block (API keys and other secrets) and `apiKeyHelper` were serialized into a single argv element, which lands in process argv (world-readable on a shared host), the session transcript, and — once the operator pastes the printed command — shell history. None of those are confidential stores, and the settings file's own contents had no business being copied into them.
+
+Item 2 of the spike is what makes the fix free rather than a trade-off: the user's settings **already apply as an underlying layer beneath `--settings`** (deny rules union, hooks from both layers fire, user `autoMode` sections merge). Re-serializing them into the inline argument was therefore redundant _as well as_ unsafe — the relaunched session sees the same effective configuration either way. Read item 2 as the licence to stop copying, not merely as an observation about precedence.
+
+`materializeMergedSettings` (`src/cli/subcommands/autonomy.ts`) now builds the payload from the placeholder-substituted **template alone**, with `env.CLAUDE_PLUGIN_DATA` baked and the user's own (non-factory) statusLine chained via `env.FACTORY_ORIGINAL_STATUSLINE` — that statusLine command is the only value still read out of the user's file. The fix is **structural, not a filter**: `MaterializeInput.userSettings: Record<string, unknown>` was replaced with `userStatusLine?: string`, so the type itself makes leaking any other user key impossible; there is no allow-list to keep in sync and no future edit that can widen the boundary by accident.
+
+Three pieces of the old merge disappear with it, all of them consequences rather than losses: the `permissions.allow` union with the user's layer (the template is now the sole source of the allow list), the `env` union with the user's layer, and the scrubs that existed only _because_ of that env union — deleting a stale `FACTORY_ORIGINAL_STATUSLINE` and a leftover `FACTORY_SETTINGS_HASH` inherited from a prior relaunch. A payload built from the template can carry neither, so there is nothing to scrub.
+
 ---
 
 ## Decision 14: CI Integration and Conflict Handling
@@ -461,6 +469,42 @@ an overwrite whose outcome is a file the plugin can reproduce. Extending it to
 authorize deleting content nobody can prove the provenance of would make one flag mean
 two very different things, and only one of them is reversible from the template.
 
+**Amendment (2026-08-19, v1.47.1 — a nightly conflict no longer disables `--force-managed`
+for unrelated files.)**
+
+The rule above is right; its first implementation over-applied it. The stale nightly was
+pushed onto the same `conflicts` list as every other managed file, and a single flag
+(`staleNightlyConflict`) then suppressed the whole `--force-managed` path. So a repo with
+a customized `quality-gate.yml` _and_ a customized stale nightly could not re-adopt the
+workflow it was entitled to re-adopt: force refused everything because of the one file it
+could never authorize. That conflated "force cannot delete this" with "force is off".
+
+`preflightManagedFiles` now tracks the nightly conflict **separately** from the rest:
+
+- **without `--force-managed`** — unchanged: `files_conflict`, zero writes, the error
+  naming all conflicts including the nightly, with the same explanatory note;
+- **with `--force-managed`** — unrelated conflicted managed files are re-adopted (warn +
+  overwrite, as before), and the nightly **warns instead of throwing** and is left exactly
+  where it is. Force still never authorizes deleting unproven content — that invariant is
+  untouched; it simply no longer blocks work it was never about.
+
+The nightly is also excluded from the deletion path on the force route by construction (the
+proven-pristine hash is never returned there), so "left in place" is a property of the
+return value rather than a check someone must remember to write. A pure refactor rode along:
+the preflight returns the proven hash directly instead of wrapping it in a one-key object.
+
+**Amendment (2026-08-19, v1.47.1 — the lock-version guard covers non-numeric versions.)**
+
+The 2026-08-17 "unsupported version refuses loudly" guard tested `typeof version === 'number'
+&& version !== 1`, which is exactly the shape a hand-edited or foreign-engine lock is least
+likely to have. A lock declaring `"version": "2"` (the string) fell straight through the
+guard, was read as v1, and was then rewritten as v1 — the precise data destruction the
+guard exists to prevent, reachable by a one-character difference. The guard now refuses any
+version that is not `undefined`, `null`, or exactly `1`, and `UnsupportedLockVersionError`
+takes `unknown` and renders the offending value with `JSON.stringify` so the message
+distinguishes `2` from `"2"`. Missing-key and non-object locks still degrade fail-safe to an
+empty lock, unchanged — unreadable bytes carry nothing to destroy.
+
 ---
 
 ## Decision 16: Asymmetric Auto-Merge Strategy
@@ -537,6 +581,7 @@ So E2 substitutes the placeholder to the resolved absolute path at `factory auto
 **Amendment (2026-08-17, v1.47.0).** The coarse `Bash(*)` allow now travels inside the inline `--settings` JSON instead of `merged-settings.json` (Decision 13 amendment); scope and rationale unchanged. The 2026-08-17 spike confirmed the hook-enforced defense-in-depth fires identically under the inline form.
 
 ---
+
 ## Decision 18: Reviewer Model is Fixed, Not Quota-Routed
 
 > **Refined by Decision 21** (layered model/effort): the "fixed, not quota-routed" principle stands; the canonical tier becomes Opus and an effort dimension is added.
@@ -852,6 +897,7 @@ Both are subscription-only; there is no headless `claude -p` / API-token path.
 **Amendment (2026-08-17, v1.47.0 — the staleness state machine is retired; preflight is two-state).** With no on-disk artifact (Decision 13 amendment) there is nothing to be stale: every relaunch carries the current settings by construction, so `decideAutonomyPreflight` and the `FACTORY_SETTINGS_HASH` stamp were deleted. Preflight now decides over the env alone — autonomous (however set, including a directly-exported CI env, the preserved `ci-raw-env` path) → proceed; not → build in memory, print the inline relaunch, halt (`AutonomyPreflightResult`: `ready` | `relaunch` with a `RelaunchSpec`). The `regenerate ⟹ halt` invariant survives trivially (the relaunch is still irreducible). **Breaking:** `autonomy status --json` now emits only `{ autonomous, envSet }` — `mergedSettingsPresent`/`mergedSettingsPath` are gone.
 
 ---
+
 ## Decision 32: Ship Live by Default; Boolean `--workflow` / `--no-ship` Run-Entry Flags
 
 **Choice:** A no-flag `/factory:run` resolves to **session mode + live ship**: the in-session runner loop drives the run, each task auto-merges into staging, and the staging→develop rollup merges into develop. The two deviations from that default are terse booleans on the user-facing lifecycle verbs:
@@ -2824,6 +2870,7 @@ structurally can't cover. Continues the Close-the-Loop stall-elimination line
 **Amendment (2026-08-17, v1.47.0).** The 2026-08-17 spike validated this decision's premise from the other side: native auto-mode classification approved an out-of-root write and blocked a required op non-deterministically, so the short deterministic deny list (now carried in the inline `--settings` JSON — Decision 13 amendment) stays the accident-prevention layer and native classification was rejected as a substitute. Deny rules union across settings layers and cannot be overridden by any `--settings` layer (spike item 2).
 
 ---
+
 ## Decision 66 — Hung-Spawn Hard Wall Clock + Bounded Re-Drive Budget
 
 **Date:** 2026-07-10
@@ -2998,6 +3045,7 @@ paused runs' on-disk layout, and doesn't fix the orchestrator-worktree case.
 **Amendment (2026-08-17, v1.47.0).** The no-permission-mode-override property this decision made possible now applies to the inline `--settings` relaunch (Decision 13 amendment) — the command still carries no permission-mode flag; the 2026-08-17 spike's rejection of `--permission-mode auto` (probabilistic classification) makes that explicit rather than incidental.
 
 ---
+
 ## Decision 68 — Anti-Ratcheting: Disposition Ledger + Fixer Scope Limits + Parsimony Fold-In
 
 **Date:** 2026-07-15

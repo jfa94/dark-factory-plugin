@@ -784,14 +784,15 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
     // would be empty and never existed is skipped only in the sense that nothing
     // marks it dirty (no `{seeds:{}}` noise on non-node targets).
     let lockReported = false
-    const persistLock = async (): Promise<void> => {
-        if (!lock.dirty) {
+    // First call wins; later calls no-op (closure so TS CFA doesn't over-narrow
+    // the closure-mutated flag). `saved` distinguishes a just-written lock
+    // (created or present, per whether it existed before) from an unchanged
+    // existing lock that still needs to show up in the report as `present`.
+    const reportLock = (saved: boolean): void => {
+        if (lockReported) {
             return
         }
-        const toSave: ScaffoldLock = {version: 1, seeds: lock.seeds, managed: lock.managed}
-        await saveScaffoldLock(opts.targetRoot, toSave)
-        lock.dirty = false
-        if (!lockReported) {
+        if (saved) {
             lockReported = true
             if (lockLoad.existed) {
                 lists.present.push(SCAFFOLD_LOCK_REL)
@@ -799,15 +800,19 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
                 lists.created.push(SCAFFOLD_LOCK_REL)
                 log.info(`wrote ${SCAFFOLD_LOCK_REL} (pristine-tracking) — COMMIT it alongside the seeds`)
             }
-        }
-    }
-    // An unchanged existing lock still shows up in the report as `present`
-    // (closure so TS CFA doesn't over-narrow the closure-mutated flag).
-    const reportLockPresentIfUnsaved = (): void => {
-        if (!lockReported && lockLoad.existed) {
+        } else if (lockLoad.existed) {
             lists.present.push(SCAFFOLD_LOCK_REL)
             lockReported = true
         }
+    }
+    const persistLock = async (): Promise<void> => {
+        if (!lock.dirty) {
+            return
+        }
+        const toSave: ScaffoldLock = {version: 1, seeds: lock.seeds, managed: lock.managed}
+        await saveScaffoldLock(opts.targetRoot, toSave)
+        lock.dirty = false
+        reportLock(true)
     }
 
     // 1. SEED template artifacts (Δ Z): baseline when absent, auto-refreshed only
@@ -824,7 +829,7 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
         await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock)
     }
     await persistLock()
-    reportLockPresentIfUnsaved()
+    reportLock(false)
 
     // 2. The GATE CONTRACT (S7, Decision 46): resolve the stack + write
     //    `.factory/gates.json` (seed-like — an existing VALID contract is

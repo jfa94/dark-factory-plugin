@@ -20362,14 +20362,11 @@ async function runScaffold(opts) {
   });
   const staleNightlyHash = await preflightManagedFiles(opts, lock2, preflightContract);
   let lockReported = false;
-  const persistLock = async () => {
-    if (!lock2.dirty) {
+  const reportLock = (saved) => {
+    if (lockReported) {
       return;
     }
-    const toSave = { version: 1, seeds: lock2.seeds, managed: lock2.managed };
-    await saveScaffoldLock(opts.targetRoot, toSave);
-    lock2.dirty = false;
-    if (!lockReported) {
+    if (saved) {
       lockReported = true;
       if (lockLoad.existed) {
         lists.present.push(SCAFFOLD_LOCK_REL);
@@ -20377,13 +20374,19 @@ async function runScaffold(opts) {
         lists.created.push(SCAFFOLD_LOCK_REL);
         log36.info(`wrote ${SCAFFOLD_LOCK_REL} (pristine-tracking) \u2014 COMMIT it alongside the seeds`);
       }
-    }
-  };
-  const reportLockPresentIfUnsaved = () => {
-    if (!lockReported && lockLoad.existed) {
+    } else if (lockLoad.existed) {
       lists.present.push(SCAFFOLD_LOCK_REL);
       lockReported = true;
     }
+  };
+  const persistLock = async () => {
+    if (!lock2.dirty) {
+      return;
+    }
+    const toSave = { version: 1, seeds: lock2.seeds, managed: lock2.managed };
+    await saveScaffoldLock(opts.targetRoot, toSave);
+    lock2.dirty = false;
+    reportLock(true);
   };
   for (const entry of TEMPLATE_MANIFEST) {
     if (CI_NET_RELS.includes(entry.rel) || entry.rel === STRYKER_SEED_REL) {
@@ -20395,7 +20398,7 @@ async function runScaffold(opts) {
     await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock2);
   }
   await persistLock();
-  reportLockPresentIfUnsaved();
+  reportLock(false);
   const gates = await ensureGateContract({
     targetRoot: opts.targetRoot,
     securityCommand: opts.config.quality.securityCommand,

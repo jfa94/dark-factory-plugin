@@ -394,6 +394,15 @@ describe('mutation roots substitution (A4) + renderMutationNightly (A2)', () => 
         expect(() => renderQualityGate(stripped, rootsOpts(undefined))).toThrow(/grep -Ev/)
     })
 
+    it('throws loud (not a silent no-op) when the grep -Ev line is re-quoted so the substitution regex no longer matches', () => {
+        // The line still contains the substring "grep -Ev" so a substring-only
+        // anchor check would miss this drift; the single-quoted-pattern regex the
+        // replace itself uses must be what counts matches too.
+        const requoted = template.replace(/grep -Ev '[^']*'/, (m) => `grep -Ev "${m.slice("grep -Ev '".length, -1)}"`)
+        expect(requoted).toContain('grep -Ev "')
+        expect(() => renderQualityGate(requoted, rootsOpts(undefined))).toThrow(/grep -Ev/)
+    })
+
     it('throws loud when non-default roots find no default pathspec to re-point', () => {
         const stripped = template.replaceAll("'src/**/*.ts'", "'lib/**/*.ts'")
         expect(() => renderQualityGate(stripped, rootsOpts(['app']))).toThrow(/default-roots pathspec/)

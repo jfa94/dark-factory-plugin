@@ -295,18 +295,20 @@ const DEFAULT_ROOTS_PATHSPEC = "'src/**/*.ts'"
  */
 const MUTABLE_SOURCE_EXCLUDE = String.raw`\.(test|spec|d)\.ts$|/types/|/data/|/index\.ts$|src/app/(robots|sitemap)\.ts`
 
+const GREP_EV_EXCLUDE = /grep -Ev '[^']*'/
+
 function applyMutableSourceExclude(lines: string[]): string[] {
     let matches = 0
     const out = lines.map((l) => {
-        if (!l.includes('grep -Ev')) {
+        if (!GREP_EV_EXCLUDE.test(l)) {
             return l
         }
         matches++
-        return l.replace(/grep -Ev '[^']*'/, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`)
+        return l.replace(GREP_EV_EXCLUDE, `grep -Ev '${MUTABLE_SOURCE_EXCLUDE}'`)
     })
     if (matches === 0) {
         throw new Error(
-            'renderQualityGate: template has no `grep -Ev` mutable-source exclude line — ' +
+            "renderQualityGate: template has no `grep -Ev '...'` mutable-source exclude line — " +
                 'the anchor the single-predicate replacement (S11) targets is gone'
         )
     }

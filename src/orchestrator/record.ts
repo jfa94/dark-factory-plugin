@@ -343,7 +343,7 @@ export async function applyRecordHoldout(
             spawn_in_flight: undefined,
         }))
         log.warn(
-            `holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} — re-running the verify wave at the same rung`
+            `task '${taskId}' (run ${runId}): holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} — re-running the verify wave at the same rung`
         )
         const step: TaskStep = {done: false, phase: 'verify'}
         await persistStepCursor(deps, runId, taskId, step)

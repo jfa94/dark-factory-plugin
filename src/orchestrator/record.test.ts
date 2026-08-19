@@ -252,7 +252,16 @@ describe('applyRecordHoldout record', () => {
                 spawn_in_flight: {phase: 'verify', rung: 0, tip_sha: 'sha-tip', spawned_at: 123, redrives: 1},
             }))
 
-            const result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, mk())
+            const cap = captureStream(process.stderr)
+            let result
+            try {
+                result = await applyRecordHoldout(deps, RUN_ID, 't1', 0, verdictStore, mk())
+            } finally {
+                cap.restore()
+            }
+            // The retry warn is the only emitted signal for an evaluator fault — it
+            // must carry the task/run identity so parallel-task warns are attributable.
+            expect(cap.read()).toMatch(new RegExp(`task 't1' \\(run ${RUN_ID}\\)`))
 
             expect(result.kind).toBe('evaluator-failure')
             if (result.kind !== 'evaluator-failure') {

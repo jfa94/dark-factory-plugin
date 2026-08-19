@@ -15291,7 +15291,7 @@ async function applyRecordHoldout(deps, runId, taskId, rung, verdictStore, raw) 
       spawn_in_flight: void 0
     }));
     log24.warn(
-      `holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} \u2014 re-running the verify wave at the same rung`
+      `task '${taskId}' (run ${runId}): holdout evaluator failure (retry ${used + 1}/${HOLDOUT_EVALUATOR_RETRY_CAP}): ${classified.reason} \u2014 re-running the verify wave at the same rung`
     );
     const step = { done: false, phase: "verify" };
     await persistStepCursor(deps, runId, taskId, step);

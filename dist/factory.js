@@ -19944,7 +19944,7 @@ async function loadScaffoldLock(targetRoot) {
   try {
     const parsed = JSON.parse(await readFile18(path7, "utf8"));
     const version = typeof parsed === "object" && parsed !== null ? parsed.version : null;
-    if (typeof version === "number" && version !== 1) {
+    if (version !== null && version !== void 0 && version !== 1) {
       throw new UnsupportedLockVersionError(version);
     }
     const seeds = typeof parsed === "object" && parsed !== null ? parsed.seeds : null;
@@ -19974,7 +19974,7 @@ async function loadScaffoldLock(targetRoot) {
 var UnsupportedLockVersionError = class extends Error {
   constructor(version) {
     super(
-      `scaffold: ${SCAFFOLD_LOCK_REL} declares version ${version}, but this engine supports only version 1 \u2014 upgrade the factory plugin (or delete the lock to re-adopt seeds). Nothing was written.`
+      `scaffold: ${SCAFFOLD_LOCK_REL} declares version ${JSON.stringify(version)}, but this engine supports only version 1 \u2014 upgrade the factory plugin (or delete the lock to re-adopt seeds). Nothing was written.`
     );
     this.name = "UnsupportedLockVersionError";
   }

@@ -832,6 +832,24 @@ describe('runScaffold', () => {
             await expect(runScaffold(baseArgs())).resolves.toBeDefined()
         })
 
+        it('REFUSES a non-numeric version string before any write (5d)', async () => {
+            // A string "2" must not fall through the numeric-only guard and be
+            // silently read as v1.
+            await mkdir(join(root, '.factory'), {recursive: true})
+            const stringVersion = JSON.stringify({version: '2', seeds: {}, managed: {}}) + '\n'
+            await writeFile(lockPath(), stringVersion, 'utf8')
+
+            await expect(runScaffold(baseArgs())).rejects.toThrow(/version "2"/)
+            expect(await readFile(lockPath(), 'utf8')).toBe(stringVersion) // preserved byte-for-byte
+            expect(existsSync(join(root, 'eslint.config.mjs'))).toBe(false) // zero writes
+        })
+
+        it('a null version degrades to the fail-safe empty lock (5d)', async () => {
+            await mkdir(join(root, '.factory'), {recursive: true})
+            await writeFile(lockPath(), JSON.stringify({version: null, seeds: {}, managed: {}}), 'utf8')
+            await expect(runScaffold(baseArgs())).resolves.toBeDefined()
+        })
+
         it('delete-and-rescaffold re-adopts a seed into pristine tracking', async () => {
             await runScaffold(baseArgs())
             await rm(join(root, '.stryker.config.json'))

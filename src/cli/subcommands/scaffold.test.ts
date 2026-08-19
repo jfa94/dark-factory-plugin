@@ -6,6 +6,7 @@
  */
 import {describe, it, expect, beforeEach, afterEach} from 'vitest'
 import {mkdtemp, rm, readFile, writeFile, mkdir, cp} from 'node:fs/promises'
+import {captureStream} from '../test-helpers.js'
 import {existsSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
@@ -1270,11 +1271,43 @@ describe('runScaffold', () => {
 
             // --force-managed does NOT authorize DELETING a customized file (5c):
             // re-adoption overwrites toward the template; deletion of unproven
-            // content stays refused.
-            await expect(runScaffold({...baseArgs(), forceManaged: true})).rejects.toThrow(
-                /files_conflict.*mutation-nightly/s
-            )
+            // content stays refused. It also does not throw — a nightly-only
+            // conflict warns and proceeds, leaving the file untouched.
+            const cap = captureStream(process.stderr)
+            let report
+            try {
+                report = await runScaffold({...baseArgs(), forceManaged: true})
+            } finally {
+                cap.restore()
+            }
+            expect(report.files_removed).toEqual([])
             expect(await readFile(nightlyPath, 'utf8')).toBe(customized)
+            expect(cap.read()).toMatch(/mutation-nightly.*cannot authorize DELETING/s)
+        })
+
+        it('--force-managed re-adopts an unrelated drifted managed file even with a customized stale nightly present (5c)', async () => {
+            await runScaffold(baseArgs())
+            const gatesPath = join(root, '.factory', 'gates.json')
+            const contract = JSON.parse(await readFile(gatesPath, 'utf8')) as {gates: {mutation: unknown}}
+            contract.gates.mutation = {contracted: false, reason: 'waived via --waive mutation'}
+            await writeFile(gatesPath, JSON.stringify(contract, null, 2) + '\n', 'utf8')
+
+            const nightlyPath = join(root, '.github', 'workflows', 'mutation-nightly.yml')
+            const customizedNightly = 'name: my own nightly\n'
+            await writeFile(nightlyPath, customizedNightly, 'utf8')
+
+            const qualityGatePath = join(root, '.github', 'workflows', 'quality-gate.yml')
+            await writeFile(qualityGatePath, 'name: my own quality gate\n', 'utf8')
+
+            // Without force: still refuses (zero writes), naming both conflicts.
+            await expect(runScaffold(baseArgs())).rejects.toThrow(/files_conflict/)
+            expect(await readFile(qualityGatePath, 'utf8')).toBe('name: my own quality gate\n')
+
+            // With force: the unrelated file is re-adopted, the nightly is left alone.
+            const report = await runScaffold({...baseArgs(), forceManaged: true})
+            expect(report.files_updated).toContain('.github/workflows/quality-gate.yml')
+            expect(await readFile(qualityGatePath, 'utf8')).not.toBe('name: my own quality gate\n')
+            expect(await readFile(nightlyPath, 'utf8')).toBe(customizedNightly)
         })
 
         it('removeStaleNightly re-proves pristineness immediately before deletion (TOCTOU guard, 5c)', async () => {

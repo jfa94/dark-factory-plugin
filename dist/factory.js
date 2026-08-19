@@ -20270,11 +20270,11 @@ function managedTransform(rel, contract, facts, gateEnv) {
 }
 async function preflightManagedFiles(opts, lock2, contract) {
   if (contract.stack !== "npm") {
-    return { staleNightlyHash: void 0 };
+    return void 0;
   }
   const facts = await readWorkflowFacts(opts.targetRoot);
   const conflicts = [];
-  let staleNightlyConflict = false;
+  let nightlyConflict = false;
   let staleNightlyHash;
   for (const entry of TEMPLATE_MANIFEST) {
     if (entry.policy !== "managed") {
@@ -20291,8 +20291,7 @@ async function preflightManagedFiles(opts, lock2, contract) {
       if (destHash === lock2.managed[entry.rel]) {
         staleNightlyHash = destHash;
       } else {
-        staleNightlyConflict = true;
-        conflicts.push(entry.rel);
+        nightlyConflict = true;
       }
       continue;
     }
@@ -20311,15 +20310,22 @@ async function preflightManagedFiles(opts, lock2, contract) {
     }
     conflicts.push(entry.rel);
   }
-  if (conflicts.length === 0) {
-    return { staleNightlyHash };
+  if (conflicts.length === 0 && !nightlyConflict) {
+    return staleNightlyHash;
   }
-  if (opts.forceManaged === true && !staleNightlyConflict) {
-    log36.warn(`--force-managed: re-adopting customized managed file(s): ${conflicts.join(", ")}`);
-    return { staleNightlyHash };
+  const nightlyNote = `Note: ${MUTATION_NIGHTLY_REL} is STALE (mutation is uncontracted) and its bytes don't match the recorded scaffold hash \u2014 --force-managed cannot authorize DELETING unproven content; restore it (git checkout) or delete the file yourself.`;
+  if (opts.forceManaged === true) {
+    if (conflicts.length > 0) {
+      log36.warn(`--force-managed: re-adopting customized managed file(s): ${conflicts.join(", ")}`);
+    }
+    if (nightlyConflict) {
+      log36.warn(`--force-managed: ${nightlyNote}`);
+    }
+    return void 0;
   }
+  const allConflicts = nightlyConflict ? [...conflicts, MUTATION_NIGHTLY_REL] : conflicts;
   throw new UsageError(
-    `files_conflict: managed file(s) differ from both the shipped template and the recorded scaffold hash: ${conflicts.join(", ")}. Nothing was written (no seeds, gate contract, lock, or protection changes). Managed files are plugin-authored by contract \u2014 restore them (git checkout) or pass --force-managed to overwrite them with the plugin template and re-record their hashes.` + (staleNightlyConflict ? ` Note: ${MUTATION_NIGHTLY_REL} is STALE (mutation is uncontracted) and its bytes don't match the recorded scaffold hash \u2014 --force-managed cannot authorize DELETING unproven content; restore it (git checkout) or delete the file yourself.` : "")
+    `files_conflict: managed file(s) differ from both the shipped template and the recorded scaffold hash: ${allConflicts.join(", ")}. Nothing was written (no seeds, gate contract, lock, or protection changes). Managed files are plugin-authored by contract \u2014 restore them (git checkout) or pass --force-managed to overwrite them with the plugin template and re-record their hashes.` + (nightlyConflict ? ` ${nightlyNote}` : "")
   );
 }
 async function removeStaleNightly(targetRoot, expectedHash, lists, lock2) {
@@ -20354,7 +20360,7 @@ async function runScaffold(opts) {
     waiveCoverage: opts.waiveCoverage === true,
     projectedSeedFiles
   });
-  const nightlyPreflight = await preflightManagedFiles(opts, lock2, preflightContract);
+  const staleNightlyHash = await preflightManagedFiles(opts, lock2, preflightContract);
   let lockReported = false;
   const persistLock = async () => {
     if (!lock2.dirty) {
@@ -20438,8 +20444,8 @@ async function runScaffold(opts) {
       const transform = managedTransform(entry.rel, gates.contract, facts, opts.config.quality.gateEnv);
       await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock2, transform);
     }
-    if (!gates.contract.gates.mutation.contracted && nightlyPreflight.staleNightlyHash !== void 0) {
-      await removeStaleNightly(opts.targetRoot, nightlyPreflight.staleNightlyHash, lists, lock2);
+    if (!gates.contract.gates.mutation.contracted && staleNightlyHash !== void 0) {
+      await removeStaleNightly(opts.targetRoot, staleNightlyHash, lists, lock2);
     }
     await persistLock();
     await ensurePrettierignore(opts.targetRoot, lists);

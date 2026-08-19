@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "dispositions": [
+    {
+      "id": 1,
+      "status": "refuted",
+      "fingerprint": {
+        "file": "src/hooks/notification.ts",
+        "title": "Notification hook drops permission telemetry with zero diagnostic trail when run-resolution misses",
+        "keywords": []
+      },
+      "reason": "null-return at notification.ts:37 is the documented/tested/precedented no-op for genuine absence of an active run; real failures throw and are log.error'd; tests notification.test.ts:82-103 pin this contract; same idiom in pipeline-guards.ts:239-241",
+      "decidedBy": "report",
+      "decidedAt": "2026-07-15T18:55:15.570Z",
+      "runId": "20260715T184122Z-focused-Bmka5R"
+    },
+    {
+      "id": 2,
+      "status": "refuted",
+      "fingerprint": {
+        "file": "src/cli/subcommands/autonomy.ts",
+        "title": "FACTORY_SETTINGS_HASH is trusted verbatim from the merged-settings.json it is supposed to verify",
+        "keywords": []
+      },
+      "reason": "FACTORY_SETTINGS_HASH is a staleness/source-drift detector (stored stamp vs independent from-source recomputation of template + user settings), not an artifact-integrity check of merged-settings.json's own bytes; docs/explanation/decisions.md:772 documents exactly this contract. Reachability also fails: the file is written only by the local operator's own 'factory autonomy ensure'; the only party able to tamper already has full local privilege.",
+      "decidedBy": "report",
+      "decidedAt": "2026-08-14T14:39:30.936Z",
+      "runId": "20260813T204144Z-comprehensive-kfPBBm"
+    },
+    {
+      "id": 3,
+      "status": "refuted",
+      "fingerprint": {
+        "file": "src/core/state/schema.ts",
+        "title": "holdout_evaluator_retries documented as same-rung budget but stored as lifetime total",
+        "keywords": []
+      },
+      "reason": "'Same-rung' describes what the retry does to the escalation rung (re-runs verify at the same rung), not a per-rung budget that resets; docs/reference/state-model.md:342-346 and record.test.ts:230-259 document and confirm a task-lifetime cap of 2 by design (catch a persistently-broken evaluator). No reset semantics are documented or implemented; the code matches its contract.",
+      "decidedBy": "report",
+      "decidedAt": "2026-08-14T14:39:37.798Z",
+      "runId": "20260813T204144Z-comprehensive-kfPBBm"
+    },
+    {
+      "id": 4,
+      "status": "refuted",
+      "fingerprint": {
+        "file": "src/ci/render-quality-gate.ts",
+        "title": "Two anchor-replacement helpers are now line-for-line duplicates",
+        "keywords": []
+      },
+      "reason": "The two functions are not line-for-line duplicates. applyMutationRoots (src/ci/render-quality-gate.ts:320-341) takes an extra `contract: GateContract` parameter, computes `roots`/`spec` via `mutationRoots(contract)` and `rootsPathspec(roots)`, and has an early-return branch absent from applyMutableSourceExclude: `if (spec === DEFAULT_ROOTS_PATHSPEC) { return lines }` (line 323-325). Its match predicate checks `l.includes(DEFAULT_ROOTS_PATHSPEC)` and replaces the pathspec literal with `spec`, whereas applyMutableSourceExclude (298-314) checks `l.includes('grep -Ev')` and replaces via a regex `/grep -Ev '[^']*'/` with the constant MUTABLE_SOURCE_EXCLUDE — different signature, different predicate, different replace target, an extra branch, and different error messages. They share a similar map/count/throw shape (arguably a legitimate simplification opportunity to extract a shared helper) but are demonstrably not 'line-for-line duplicates' as claimed.",
+      "decidedBy": "report",
+      "decidedAt": "2026-08-17T20:46:20.080Z",
+      "runId": "20260817T203421Z-focused-iKiwGG"
+    },
+    {
+      "id": 5,
+      "status": "refuted",
+      "fingerprint": {
+        "file": "src/cli/subcommands/autonomy.ts",
+        "title": "Unparseable ~/.claude/settings.json silently drops the whole user settings layer, yet the relaunch command still prints as if complete",
+        "keywords": []
+      },
+      "reason": "The finding mischaracterizes both the mechanism and the intent. (1) Not silent: log.warn (src/shared/logging.ts) writes '[TS] [WARN] autonomy: could not parse <path> (<msg>); ignoring' to stderr before the relaunch command is printed (unless FACTORY_QUIET=1 or FACTORY_LOG_LEVEL raises the floor) — the operator running `factory autonomy ensure`/`preflight` interactively sees the warning right above the command. (2) Documented/intended: the function's own JSDoc at autonomy.ts:252 states 'Best-effort read of a user settings.json: missing / unparseable / non-object -> {}.' — dropping an unparseable settings.json and falling back to {} (continuing with template-only settings) is the explicit, documented contract, not an unintended silent failure. The relaunch command is correct to still print: the gate only requires FACTORY_AUTONOMOUS_MODE=1 to be set via the printed command's inline env block; a malformed user settings.json (e.g. hand-edited JSON syntax error) doesn't and shouldn't block autonomy setup — best-effort degrade-to-template is the stated design.",
+      "decidedBy": "report",
+      "decidedAt": "2026-08-17T20:46:20.114Z",
+      "runId": "20260817T203421Z-focused-iKiwGG"
+    },
+    {
+      "id": 6,
+      "status": "refuted",
+      "fingerprint": {
+        "file": "src/cli/subcommands/scaffold.ts",
+        "title": "Stale mutation-nightly refusal has no converging repair when the lock has no managed entry — the documented `git checkout` + re-scaffold recovery re-derives the same refusal, and --force-managed is disabled",
+        "keywords": []
+      },
+      "reason": "All four anchors check out at their stated locations (scaffold.ts:657,660,683; scaffold-lock.ts:91), and the scenario (waived mutation + unmodified pre-lock-tracking nightly file → staleNightlyConflict=true → --force-managed vetoed) is accurately traced. But the finding misses a converging repair path that the code's own error message documents and that the logic actually honors: at scaffold.ts:653-655, `if (!existsSync(dest)) { continue // nothing rendered, nothing stale }` — the stale-nightly check is only entered when the file exists on disk. The thrown error text at scaffold.ts:693-696 explicitly offers this: \"restore it (git checkout) or delete the file yourself.\" The finding fixates only on the 'git checkout' half of that sentence (which indeed reproduces the same bytes and re-derives the identical refusal, as claimed), but ignores the other documented option — deleting the file — which the code demonstrably resolves: once the operator runs `rm .github/workflows/mutation-nightly.yml` (or equivalent) and re-runs `factory scaffold`, `existsSync(dest)` is false, the loop `continue`s before ever comparing hashes, no conflict is recorded for that entry, and the run proceeds without needing `--force-managed` at all. This is a genuine, code-verified, already-documented exit from the stuck state, so the claim that the refusal is unconditionally non-convergent (recovery path 3 of the refutation criteria) is false.",
+      "decidedBy": "report",
+      "decidedAt": "2026-08-17T20:46:20.144Z",
+      "runId": "20260817T203421Z-focused-iKiwGG"
+    }
+  ]
+}

@@ -628,19 +628,22 @@ function managedTransform(
  * Bytes matching the lock's managed hash make it eligible for deletion (the
  * returned hash is re-proven immediately before the delete); anything else is a
  * files_conflict that even `--force-managed` cannot resolve — force authorizes
- * overwriting TOWARD the shipped template, never deleting unproven content.
+ * overwriting TOWARD the shipped template, never deleting unproven content. A
+ * customized stale nightly is tracked SEPARATELY from other managed conflicts
+ * (`--force-managed` re-adopts everything else; the nightly note above is the
+ * one thing it can never authorize).
  */
 async function preflightManagedFiles(
     opts: ScaffoldOptions,
     lock: LockState,
     contract: GateContract
-): Promise<{staleNightlyHash: string | undefined}> {
+): Promise<string | undefined> {
     if (contract.stack !== 'npm') {
-        return {staleNightlyHash: undefined} // no CI net is written for non-npm stacks
+        return undefined // no CI net is written for non-npm stacks
     }
     const facts = await readWorkflowFacts(opts.targetRoot)
     const conflicts: string[] = []
-    let staleNightlyConflict = false
+    let nightlyConflict = false
     let staleNightlyHash: string | undefined
     for (const entry of TEMPLATE_MANIFEST) {
         if (entry.policy !== 'managed') {
@@ -657,8 +660,7 @@ async function preflightManagedFiles(
             if (destHash === lock.managed[entry.rel]) {
                 staleNightlyHash = destHash
             } else {
-                staleNightlyConflict = true
-                conflicts.push(entry.rel)
+                nightlyConflict = true
             }
             continue
         }
@@ -677,24 +679,32 @@ async function preflightManagedFiles(
         }
         conflicts.push(entry.rel)
     }
-    if (conflicts.length === 0) {
-        return {staleNightlyHash}
+    if (conflicts.length === 0 && !nightlyConflict) {
+        return staleNightlyHash
     }
-    if (opts.forceManaged === true && !staleNightlyConflict) {
-        log.warn(`--force-managed: re-adopting customized managed file(s): ${conflicts.join(', ')}`)
-        return {staleNightlyHash}
+    const nightlyNote =
+        `Note: ${MUTATION_NIGHTLY_REL} is STALE (mutation is uncontracted) and its bytes don't match ` +
+        `the recorded scaffold hash — --force-managed cannot authorize DELETING unproven content; ` +
+        `restore it (git checkout) or delete the file yourself.`
+    if (opts.forceManaged === true) {
+        if (conflicts.length > 0) {
+            log.warn(`--force-managed: re-adopting customized managed file(s): ${conflicts.join(', ')}`)
+        }
+        if (nightlyConflict) {
+            log.warn(`--force-managed: ${nightlyNote}`)
+        }
+        // force never re-adopts the nightly — it stays out of scope for deletion,
+        // so staleNightlyHash is never set on this path.
+        return undefined
     }
+    const allConflicts = nightlyConflict ? [...conflicts, MUTATION_NIGHTLY_REL] : conflicts
     throw new UsageError(
         `files_conflict: managed file(s) differ from both the shipped template and the recorded ` +
-            `scaffold hash: ${conflicts.join(', ')}. Nothing was written (no seeds, gate contract, ` +
+            `scaffold hash: ${allConflicts.join(', ')}. Nothing was written (no seeds, gate contract, ` +
             `lock, or protection changes). Managed files are plugin-authored by contract — restore ` +
             `them (git checkout) or pass --force-managed to overwrite them with the plugin template ` +
             `and re-record their hashes.` +
-            (staleNightlyConflict
-                ? ` Note: ${MUTATION_NIGHTLY_REL} is STALE (mutation is uncontracted) and its bytes ` +
-                  `don't match the recorded scaffold hash — --force-managed cannot authorize DELETING ` +
-                  `unproven content; restore it (git checkout) or delete the file yourself.`
-                : '')
+            (nightlyConflict ? ` ${nightlyNote}` : '')
     )
 }
 
@@ -766,7 +776,7 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
     })
 
     // 0b. S10 managed-file preflight — a conflict must abort BEFORE any write.
-    const nightlyPreflight = await preflightManagedFiles(opts, lock, preflightContract)
+    const staleNightlyHash = await preflightManagedFiles(opts, lock, preflightContract)
 
     // Persist the lock whenever a pass left it dirty (5a) — keyed on lock.dirty
     // itself, never inferred from the report file lists (a byte-equal managed
@@ -885,8 +895,8 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
         }
         // 5c: mutation uncontracted + a preflight-proven-pristine stale nightly →
         // delete it (re-proving the bytes immediately before the unlink).
-        if (!gates.contract.gates.mutation.contracted && nightlyPreflight.staleNightlyHash !== undefined) {
-            await removeStaleNightly(opts.targetRoot, nightlyPreflight.staleNightlyHash, lists, lock)
+        if (!gates.contract.gates.mutation.contracted && staleNightlyHash !== undefined) {
+            await removeStaleNightly(opts.targetRoot, staleNightlyHash, lists, lock)
         }
         // Persist newly recorded managed hashes — including byte-equal adoptions
         // that never touch created/updated (5a) — and any nightly removal.

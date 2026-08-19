@@ -898,13 +898,16 @@ export async function runScaffold(opts: ScaffoldOptions): Promise<ScaffoldReport
             const transform = managedTransform(entry.rel, gates.contract, facts, opts.config.quality.gateEnv)
             await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock, transform)
         }
+        // Persist the CI-net hashes now, before the stale-nightly removal below can
+        // throw — persistLock() is dirty-keyed and idempotent, so a throw there can
+        // no longer strand these already-written files' hashes (they're durable).
+        await persistLock()
         // 5c: mutation uncontracted + a preflight-proven-pristine stale nightly →
         // delete it (re-proving the bytes immediately before the unlink).
         if (!gates.contract.gates.mutation.contracted && staleNightlyHash !== undefined) {
             await removeStaleNightly(opts.targetRoot, staleNightlyHash, lists, lock)
         }
-        // Persist newly recorded managed hashes — including byte-equal adoptions
-        // that never touch created/updated (5a) — and any nightly removal.
+        // Persist the nightly removal, if any (no-op when nothing changed above).
         await persistLock()
         // The shard script above is an esbuild bundle in the plugin's own style —
         // exclude it from the target's prettier pass the same way the plugin repo does.

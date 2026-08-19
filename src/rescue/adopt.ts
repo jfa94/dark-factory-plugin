@@ -24,7 +24,7 @@
  * all-or-nothing, so each call site applies its own outage policy).
  */
 import {reconcileRun, type Drift, type DriftClass, type ReconcileReport} from './reconcile.js'
-import {doneTaskRow} from './apply.js'
+import {doneTaskRow, reopenFields} from './apply.js'
 import {isTerminalRunStatus} from '../types/index.js'
 import {nonNull} from '../shared/index.js'
 import type {StateManager} from '../core/state/index.js'
@@ -223,7 +223,7 @@ export async function applyAdoptions(
             // Reopen re-verified on the LOCKED snapshot: a landed rollup still armed, or
             // (after this pass's flips) EVERY task now `done`. A raced-away condition just
             // leaves the run terminal — forward-only, finalize recomputes either way.
-            let reopenFields: Partial<RunState> = {}
+            let reopenPatch: Partial<RunState> = {}
             if (plan.reopen !== false && isTerminalRunStatus(run.status)) {
                 if (plan.reopen === 'rollup' && run.rollup?.merged === false) {
                     reopened = 'rollup'
@@ -231,8 +231,7 @@ export async function applyAdoptions(
                     reopened = 'all-done'
                 }
                 if (reopened !== false) {
-                    // terminal_reason must go too: the schema forbids running+reason.
-                    reopenFields = {status: 'running', ended_at: null, terminal_reason: undefined}
+                    reopenPatch = reopenFields(true)
                     actions.push({
                         class: reopened === 'rollup' ? 'rollup-landed' : 'all-done',
                         action: 'reopen',
@@ -240,7 +239,7 @@ export async function applyAdoptions(
                 }
             }
 
-            return {...run, tasks, ...reopenFields}
+            return {...run, tasks, ...reopenPatch}
         })
     }
 

@@ -14259,7 +14259,7 @@ async function applyAdoptions(deps, runId, plan, opts) {
         tasks[id] = rest;
         actions.push({ class: "stale-pr-number", action: "clear", task_id: id });
       }
-      let reopenFields2 = {};
+      let reopenPatch = {};
       if (plan.reopen !== false && isTerminalRunStatus(run9.status)) {
         if (plan.reopen === "rollup" && run9.rollup?.merged === false) {
           reopened = "rollup";
@@ -14267,14 +14267,14 @@ async function applyAdoptions(deps, runId, plan, opts) {
           reopened = "all-done";
         }
         if (reopened !== false) {
-          reopenFields2 = { status: "running", ended_at: null, terminal_reason: void 0 };
+          reopenPatch = reopenFields(true);
           actions.push({
             class: reopened === "rollup" ? "rollup-landed" : "all-done",
             action: "reopen"
           });
         }
       }
-      return { ...run9, tasks, ...reopenFields2 };
+      return { ...run9, tasks, ...reopenPatch };
     });
   }
   const repushed = [];
@@ -20447,6 +20447,7 @@ async function runScaffold(opts) {
       const transform = managedTransform(entry.rel, gates.contract, facts, opts.config.quality.gateEnv);
       await applyTemplate(entry, opts.templatesDir, opts.targetRoot, lists, lock2, transform);
     }
+    await persistLock();
     if (!gates.contract.gates.mutation.contracted && staleNightlyHash !== void 0) {
       await removeStaleNightly(opts.targetRoot, staleNightlyHash, lists, lock2);
     }

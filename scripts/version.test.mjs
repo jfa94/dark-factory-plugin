@@ -23,6 +23,9 @@ describe('readCanonicalVersion', () => {
         ['non-semver string', pkg('v1.46.1')],
         ['leading zero', pkg('01.2.3')],
         ['two segments', pkg('1.46')],
+        ['leading-zero prerelease identifier', pkg('1.2.3-01')],
+        ['empty prerelease', pkg('1.2.3-')],
+        ['empty build', pkg('1.2.3+')],
     ])('rejects a %s version', (_label, text) => {
         expect(() => readCanonicalVersion(text)).toThrow(/not a canonical SemVer/)
     })
